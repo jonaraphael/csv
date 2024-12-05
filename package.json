@@ -1,39 +1,33 @@
 {
-  "name": "csv-perfect",
-  "displayName": "csv-perfect",
+  "name": "csv",
+  "displayName": "CSV",
   "publisher": "ReprEng",
-  "description": "Display CSVs Perfectly",
+  "description": "Seamlessly Display and Edit CSVs",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jonaraphael/csv-perfect.git"
+    "url": "https://github.com/jonaraphael/csv.git"
   },
   "version": "0.0.1",
   "engines": {
-    "vscode": "^1.95.0"
+    "vscode": "^1.93.0"
   },
   "categories": [
     "Other"
   ],
   "activationEvents": [
-    "onCustomEditor:csv-perfect.editor"
+    "onCustomEditor:csv.editor"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "customEditors": [
       {
-        "viewType": "csv-perfect.editor",
-        "displayName": "CSV Perfect Editor",
+        "viewType": "csv.editor",
+        "displayName": "CSV",
         "selector": [
           {
             "filenamePattern": "*.csv"
           }
         ]
-      }
-    ],
-    "commands": [
-      {
-        "command": "csv-perfect.helloWorld",
-        "title": "Hello World"
       }
     ]
   },
@@ -46,14 +40,14 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/vscode": "^1.95.0",
     "@types/mocha": "^10.0.9",
     "@types/node": "20.x",
+    "@types/vscode": "^1.93.0",
     "@typescript-eslint/eslint-plugin": "^8.10.0",
     "@typescript-eslint/parser": "^8.7.0",
-    "eslint": "^9.13.0",
-    "typescript": "^5.6.3",
     "@vscode/test-cli": "^0.0.10",
-    "@vscode/test-electron": "^2.4.1"
+    "@vscode/test-electron": "^2.4.1",
+    "eslint": "^9.13.0",
+    "typescript": "^5.6.3"
   }
 }

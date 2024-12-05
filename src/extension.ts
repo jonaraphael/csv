@@ -1,12 +1,12 @@
 import * as vscode from 'vscode';
 
 export function activate(context: vscode.ExtensionContext) {
-  console.log('csv-perfect: Extension activated');
+  console.log('CSV: Extension activated');
 
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(
-      CsvPerfectEditorProvider.viewType,
-      new CsvPerfectEditorProvider(context),
+      CsvEditorProvider.viewType,
+      new CsvEditorProvider(context),
       {
         supportsMultipleEditorsPerDocument: false
       }
@@ -15,11 +15,11 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
-  console.log('csv-perfect: Extension deactivated');
+  console.log('CSV: Extension deactivated');
 }
 
-class CsvPerfectEditorProvider implements vscode.CustomTextEditorProvider {
-  public static readonly viewType = 'csv-perfect.editor';
+class CsvEditorProvider implements vscode.CustomTextEditorProvider {
+  public static readonly viewType = 'csv.editor';
   private isUpdatingDocument: boolean = false;
 
 
@@ -46,7 +46,7 @@ class CsvPerfectEditorProvider implements vscode.CustomTextEditorProvider {
     webviewPanel: vscode.WebviewPanel,
     _token: vscode.CancellationToken
   ): Promise<void> {
-    console.log('csv-perfect: resolveCustomTextEditor called');
+    console.log('CSV: resolveCustomTextEditor called');
 
     this.currentWebviewPanel = webviewPanel;
 
@@ -73,13 +73,13 @@ class CsvPerfectEditorProvider implements vscode.CustomTextEditorProvider {
 			// Skip updating the webview content when we are the source of the change
 			return;
 		  }
-		  console.log('csv-perfect: Document changed externally, updating webview');
+		  console.log('CSV: Document changed externally, updating webview');
 		  this.updateWebviewContent(document, webviewPanel.webview);
 		}
 	  });
 	  
     webviewPanel.onDidDispose(() => {
-      console.log('csv-perfect: Webview disposed');
+      console.log('CSV: Webview disposed');
       changeDocumentSubscription.dispose();
       this.currentWebviewPanel = undefined;
     });
@@ -107,7 +107,7 @@ class CsvPerfectEditorProvider implements vscode.CustomTextEditorProvider {
     const success = await vscode.workspace.applyEdit(edit);
 	this.isUpdatingDocument = false;  
     if (success) {
-      console.log(`csv-perfect: Updated row ${row + 1}, column ${col + 1} to "${value}"`);
+      console.log(`CSV: Updated row ${row + 1}, column ${col + 1} to "${value}"`);
       // Send a message back to the webview to update the specific cell without re-rendering
       if (this.currentWebviewPanel) {
         this.currentWebviewPanel.webview.postMessage({
@@ -118,7 +118,7 @@ class CsvPerfectEditorProvider implements vscode.CustomTextEditorProvider {
         });
       }
     } else {
-      console.error('csv-perfect: Failed to apply edit');
+      console.error('CSV: Failed to apply edit');
     }
   }
 
@@ -132,19 +132,19 @@ class CsvPerfectEditorProvider implements vscode.CustomTextEditorProvider {
   }
 
   private updateWebviewContent(document: vscode.TextDocument, webview: vscode.Webview) {
-    console.log('csv-perfect: Updating webview content');
+    console.log('CSV: Updating webview content');
     const text = document.getText();
     try {
       const html = this.getHtmlForWebview(webview, text);
       webview.html = html;
-      console.log('csv-perfect: Webview content updated');
+      console.log('CSV: Webview content updated');
     } catch (error) {
-      console.error('csv-perfect: Error updating webview content', error);
+      console.error('CSV: Error updating webview content', error);
     }
   }
 
   private getHtmlForWebview(webview: vscode.Webview, text: string): string {
-    console.log('csv-perfect: Generating HTML for webview');
+    console.log('CSV: Generating HTML for webview');
 
     // Determine the current theme (light or dark)
     const isDark = this.getIsDarkTheme();
@@ -152,7 +152,7 @@ class CsvPerfectEditorProvider implements vscode.CustomTextEditorProvider {
 
     // Parse CSV and generate HTML table
     const data = this.parseCsv(text);
-    console.log(`csv-perfect: Parsed CSV data with ${data.length} rows`);
+    console.log(`CSV: Parsed CSV data with ${data.length} rows`);
 
     if (data.length === 0) {
       return `
@@ -160,12 +160,12 @@ class CsvPerfectEditorProvider implements vscode.CustomTextEditorProvider {
         <html>
         <head>
           <meta charset="UTF-8">
-          <title>csv-perfect</title>
+          <title>CSV</title>
           <style>
             body { 
               font-family: monospace; 
               padding: 10px; 
-              background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; 
+              background-color: #1e1e1e; 
               color: ${isDark ? '#d4d4d4' : '#000000'}; 
             }
           </style>
@@ -178,10 +178,10 @@ class CsvPerfectEditorProvider implements vscode.CustomTextEditorProvider {
     }
 
     const columnWidths = this.computeColumnWidths(data);
-    console.log(`csv-perfect: Computed column widths: ${columnWidths}`);
+    console.log(`CSV: Computed column widths: ${columnWidths}`);
 
     const colors = this.assignColorsToColumns(data[0].length, isDark);
-    console.log(`csv-perfect: Assigned colors: ${colors}`);
+    console.log(`CSV: Assigned colors: ${colors}`);
 
     // Generate HTML table
     let tableHtml = '<table>';
@@ -193,7 +193,7 @@ class CsvPerfectEditorProvider implements vscode.CustomTextEditorProvider {
       const cell = header[i];
       const width = columnWidths[i];
       const color = colors[i % colors.length];
-      tableHtml += `<th style="min-width: ${width}ch; background-color: ${isDark ? '#1e1e1e' : '#f1f1f1'}; color: ${color}; text-align: left;" contenteditable="true" data-col="${i}">${cell}</th>`;
+      tableHtml += `<th style="min-width: ${width}ch; background-color: #1e1e1e; color: ${color}; text-align: left;" contenteditable="true" data-col="${i}">${cell}</th>`;
     }
     tableHtml += '</tr></thead>';
 
@@ -222,13 +222,13 @@ class CsvPerfectEditorProvider implements vscode.CustomTextEditorProvider {
         <meta charset="UTF-8">
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>csv-perfect</title>
+        <title>CSV</title>
         <style nonce="${nonce}">
           body { 
             font-family: monospace; 
             margin: 0; 
             padding: 0; 
-            background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; 
+            background-color: #1e1e1e; 
             color: ${isDark ? '#d4d4d4' : '#000000'}; 
           }
           .table-container {
@@ -249,7 +249,7 @@ class CsvPerfectEditorProvider implements vscode.CustomTextEditorProvider {
             position: sticky; 
             top: 0; 
             z-index: 2; /* Ensure the header stays above other cells */
-            background-color: ${isDark ? '#333333' : '#f1f1f1'}; /* Set based on theme */
+            background-color: #1e1e1e; /* Set based on theme */
           }
         </style>
       </head>
@@ -351,18 +351,18 @@ class CsvPerfectEditorProvider implements vscode.CustomTextEditorProvider {
   }
 
   private assignColorsToColumns(numColumns: number, isDark: boolean): string[] {
-    console.log('csv-perfect: Assigning colors to columns based on theme');
+    console.log('CSV: Assigning colors to columns based on theme');
     const lightPalette: string[] = [
-      '#DDEEFF', // Light Blue
-      '#FFEEDD', // Light Orange
-      '#DDFFDD', // Light Green
-      '#FFDDDD', // Light Red
-      '#EEDDEE', // Light Purple
-      '#F5ECCE', // Light Brown
-      '#FFE6F0', // Light Pink
-      '#F0F0F0', // Light Gray
-      '#FFFFDD', // Light Olive
-      '#DDFFFF'  // Light Cyan
+      '#1f77b4', // Blue
+      '#ff7f0e', // Orange
+      '#2ca02c', // Green
+      '#d62728', // Red
+      '#9467bd', // Purple
+      '#8c564b', // Brown
+      '#e377c2', // Pink
+      '#7f7f7f', // Gray
+      '#bcbd22', // Olive
+      '#17becf'  // Cyan
     ];
 
     const darkPalette: string[] = [
@@ -385,12 +385,12 @@ class CsvPerfectEditorProvider implements vscode.CustomTextEditorProvider {
       const color = palette[i % palette.length];
       colors.push(color);
     }
-    console.log(`csv-perfect: Column colors: ${colors}`);
+    console.log(`CSV: Column colors: ${colors}`);
     return colors;
   }
 
   private parseCsv(text: string): string[][] {
-    console.log('csv-perfect: Parsing CSV');
+    console.log('CSV: Parsing CSV');
     const lines = text.split(/\r?\n/);
     const data = lines.map(line => this.parseCsvLine(line));
     return data;
@@ -424,7 +424,7 @@ class CsvPerfectEditorProvider implements vscode.CustomTextEditorProvider {
   }
 
   private computeColumnWidths(data: string[][]): number[] {
-    console.log('csv-perfect: Computing column widths');
+    console.log('CSV: Computing column widths');
     const numColumns = Math.max(...data.map(row => row.length));
     const widths = new Array(numColumns).fill(0);
 
@@ -435,7 +435,7 @@ class CsvPerfectEditorProvider implements vscode.CustomTextEditorProvider {
       }
     }
 
-    console.log(`csv-perfect: Column widths: ${widths}`);
+    console.log(`CSV: Column widths: ${widths}`);
     return widths;
   }
 }

@@ -1,4 +1,4 @@
-# **csv-perfect**
+# **CSV**
 
 **Seamlessly Display and Edit CSVs in Visual Studio Code**
 
@@ -33,12 +33,12 @@
 
 - Open Visual Studio Code.
 - Go to the Extensions view (`Ctrl+Shift+X` or `Cmd+Shift+X` on macOS).
-- Search for **`csv-perfect`** and click **Install**.
+- Search for **`CSV`** and click **Install**.
 
 ### **2. Open a CSV File**
 
 - Open any `.csv` file in Visual Studio Code.
-- The file will automatically use the **csv-perfect** editor.
+- The file will automatically use the **CSV** editor.
 
 ### **3. Edit Cells**
 
@@ -85,14 +85,7 @@
 
 Encountered an issue? Have a suggestion? Let us know!
 
-- Open an issue on [GitHub](https://github.com/your-repo/csv-perfect/issues).
-- Reach out via [email or contact form](mailto:support@csv-perfect.com).
-
----
-
-## **Contributing**
-
-We welcome contributions! See [CONTRIBUTING.md](https://github.com/your-repo/csv-perfect/blob/main/CONTRIBUTING.md) for guidelines.
+- Open an issue on [GitHub](https://github.com/jonaraphael/csv.git/issues).
 
 ---
 
@@ -100,13 +93,3 @@ We welcome contributions! See [CONTRIBUTING.md](https://github.com/your-repo/csv
 
 This extension is licensed under the [MIT License](https://opensource.org/licenses/MIT).
 
----
-
-## **For Developers**
-
-Want to customize or extend `csv-perfect`? Follow these steps:
-
-1. Clone the repository from [GitHub](https://github.com/your-repo/csv-perfect).
-2. Install dependencies:
-   ```bash
-   npm install
