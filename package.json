@@ -3,6 +3,10 @@
   "displayName": "csv-perfect",
   "publisher": "ReprEng",
   "description": "Display CSVs Perfectly",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jonaraphael/csv-perfect.git"
+  },
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.95.0"
