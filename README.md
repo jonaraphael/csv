@@ -23,7 +23,10 @@
 
 ## **Screenshots**
 
-<!-- Include screenshots or animations of the extension in action, if available -->
+
+![Screenshot 1]("./images/Screenshot_dark.png")
+![Screenshot 2]("./images/Screenshot_light.png")
+
 
 ---
 
@@ -70,7 +73,6 @@
 
 - **Make Columns Colored By Estimated Datatype**
 - **Insert Row Or Column**
-- **Cut Off Values Longer Than 100 Characters**
 - **Select Contiguous Cells For Copy To Clipboard**
 
 ---
