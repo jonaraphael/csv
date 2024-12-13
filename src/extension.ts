@@ -45,9 +45,19 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         case 'editCell':
           this.updateDocument(document, e.row, e.col, e.value);
           return;
+        case 'save':
+          // Save the document
+          document.save().then(success => {
+            if (!success) {
+              console.error('CSV: Failed to save document');
+            } else {
+              console.log('CSV: Document saved');
+            }
+          });
+          return;
       }
     });
-
+    
     const changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument(e => {
       if (e.document.uri.toString() === document.uri.toString()) {
         if (this.isUpdatingDocument) return;
@@ -121,14 +131,12 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
 
   private getHtmlForWebview(webview: vscode.Webview, text: string): string {
     console.log('CSV: Generating HTML for webview');
-
-    // Use the official VSCode API to detect theme instead of configuration
+  
     const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
     const nonce = getNonce();
-
     const data = this.parseCsv(text);
     console.log(`CSV: Parsed CSV data with ${data.length} rows`);
-
+  
     if (data.length === 0) {
       return `
         <!DOCTYPE html>
@@ -149,36 +157,59 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         </html>
       `;
     }
-
+  
     const columnWidths = this.computeColumnWidths(data);
     console.log(`CSV: Computed column widths: ${columnWidths}`);
-
+  
     const colors = isDark ? this.darkPalette : this.lightPalette;
-
+  
     let tableHtml = '<table>';
     const header = data[0];
     tableHtml += '<thead><tr>';
     for (let i = 0; i < header.length; i++) {
-      const width = columnWidths[i];
+      const width = Math.min(columnWidths[i], 100); // enforce max width of 100 chars
       const color = colors[i % colors.length];
-      tableHtml += `<th style="min-width: ${width}ch; border: 1px solid #555; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: ${color};" contenteditable="true" data-row="0" data-col="${i}">${header[i]}</th>`;
+      // Note: no contenteditable here by default. We'll handle editing on click.
+      tableHtml += `<th style="
+        min-width: ${width}ch; 
+        max-width: 100ch;
+        border: 1px solid #555; 
+        background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; 
+        color: ${color};
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        "
+        data-row="0" 
+        data-col="${i}"
+        >${header[i]}</th>`;
     }
     tableHtml += '</tr></thead>';
-
+  
     tableHtml += '<tbody>';
     for (let rowIndex = 1; rowIndex < data.length; rowIndex++) {
       const row = data[rowIndex];
       tableHtml += '<tr>';
       for (let i = 0; i < row.length; i++) {
-        const width = columnWidths[i];
+        const width = Math.min(columnWidths[i], 100); // enforce max width of 100 chars
         const color = colors[i % colors.length];
-        tableHtml += `<td tabindex="0" style="min-width: ${width}ch; border: 1px solid #555; color: ${color};" contenteditable="true" data-row="${rowIndex}" data-col="${i}">${row[i]}</td>`;
+        tableHtml += `<td tabindex="0" style="
+          min-width: ${width}ch; 
+          max-width: 100ch; 
+          border: 1px solid #555; 
+          color: ${color};
+          overflow: hidden; 
+          white-space: nowrap; 
+          text-overflow: ellipsis;"
+          data-row="${rowIndex}" 
+          data-col="${i}"
+          >${row[i]}</td>`;
       }
       tableHtml += '</tr>';
     }
     tableHtml += '</tbody>';
     tableHtml += '</table>';
-
+  
     return `
       <!DOCTYPE html>
       <html>
@@ -192,6 +223,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
             font-family: monospace; 
             margin: 0; 
             padding: 0; 
+            user-select: none;
           }
           .table-container {
             overflow-x: auto;
@@ -204,12 +236,21 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           th, td { 
             padding: 4px 8px; 
             overflow: hidden; 
-            cursor: text;
+            cursor: default;
+            position: relative;
           }
           th { 
             position: sticky; 
             top: 0; 
             z-index: 2;
+          }
+          td.selected, th.selected {
+            background-color: ${isDark ? '#333333' : '#cce0ff'} !important;
+          }
+          td.editing, th.editing {
+            overflow: visible !important;
+            white-space: normal !important;
+            max-width: none !important;
           }
         </style>
       </head>
@@ -220,71 +261,204 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         <script nonce="${nonce}">
           const vscode = acquireVsCodeApi();
           let isUpdating = false;
+          let isSelecting = false;
+          let anchorCell = null;
+          let currentSelection = [];
+          let startCell = null; 
+          let endCell = null;
+          let editingCell = null;
+  
+          const table = document.querySelector('table');
+  
+          // Utility function to get cell coordinates
+          function getCellCoords(cell) {
+            const row = parseInt(cell.getAttribute('data-row'));
+            const col = parseInt(cell.getAttribute('data-col'));
+            return {row, col};
+          }
+  
+          // Function to clear current selection
+          function clearSelection() {
+            currentSelection.forEach(c => c.classList.remove('selected'));
+            currentSelection = [];
+          }
+  
+          // Function to select a range of cells
+          function selectRange(start, end) {
+            clearSelection();
+            const startRow = Math.min(start.row, end.row);
+            const endRow = Math.max(start.row, end.row);
+            const startCol = Math.min(start.col, end.col);
+            const endCol = Math.max(start.col, end.col);
+  
+            for (let r = startRow; r <= endRow; r++) {
+              let rowCells = r === 0 ? table.querySelectorAll(\`thead th[data-row="0"]\`) : table.querySelectorAll(\`tbody tr:nth-child(\${r}) td[data-row="\${r}"]\`);
+              for (let c = startCol; c <= endCol; c++) {
+                const selCell = table.querySelector((r === 0 ? 'th' : 'td')+\`[data-row="\${r}"][data-col="\${c}"]\`);
+                if (selCell) {
+                  selCell.classList.add('selected');
+                  currentSelection.push(selCell);
+                }
+              }
+            }
+          }
+  
+          // Mouse events for click+drag selection
+          table.addEventListener('mousedown', (e) => {
+            if (e.target.tagName !== 'TD' && e.target.tagName !== 'TH') return;
 
-          document.querySelectorAll('th[contenteditable="true"], td[contenteditable="true"]').forEach(cell => {
-            cell.addEventListener('blur', () => {
-              if (isUpdating) return;
-              const row = parseInt(cell.getAttribute('data-row'));
-              const col = parseInt(cell.getAttribute('data-col'));
-              const value = cell.innerText;
+            // If we are editing a cell, exit edit mode first
+            if (editingCell && editingCell !== e.target) {
+              editingCell.blur();
+            }
+
+            if (e.shiftKey) {
+              // Shift key is pressed: Keep the startCell and update endCell
+              if (!startCell) {
+                // If no startCell is set yet, initialize it with the current target
+                startCell = e.target;
+              }
+              endCell = e.target;
+              isSelecting = true;
+            } else {
+              // Normal behavior: Set both startCell and endCell to the current cell
+              startCell = e.target;
+              endCell = e.target;
+              isSelecting = true;
+            }
+
+            // Prevent cell from being immediately editable on mousedown
+            // We'll decide on mouseup whether it was a click or a drag.
+            e.preventDefault();
+          });
+  
+          table.addEventListener('mousemove', (e) => {
+            if (!isSelecting) return;
+            if (e.target.tagName === 'TD' || e.target.tagName === 'TH') {
+              endCell = e.target;
+              selectRange(getCellCoords(startCell), getCellCoords(endCell));
+            }
+          });
+  
+          table.addEventListener('mouseup', (e) => {
+            if (!isSelecting) return;
+            isSelecting = false;
+            if (startCell === endCell) {
+              // Single click: start editing that cell
+              clearSelection();
+              editCell(startCell);
+            } else {
+              // We have selected multiple cells
+              // Set anchorCell as the start cell for shift-click operations
+              anchorCell = startCell;
+            }
+          });
+  
+          // Shift-click to select range
+          table.addEventListener('click', (e) => {
+            if (e.shiftKey && anchorCell && (e.target.tagName === 'TD' || e.target.tagName === 'TH')) {
+              selectRange(getCellCoords(anchorCell), getCellCoords(e.target));
+            } else if (!e.shiftKey && (e.target.tagName === 'TD' || e.target.tagName === 'TH')) {
+              // Update anchor cell if single clicked a different cell
+              anchorCell = e.target;
+            }
+          });
+  
+          // Start editing a cell
+          function editCell(cell) {
+            if (editingCell === cell) return; // Already editing
+            if (editingCell) {
+              // End editing of previously editing cell
+              editingCell.blur();
+            }
+            editingCell = cell;
+            cell.classList.add('editing');
+            cell.setAttribute('contenteditable', 'true');
+            cell.focus();
+            document.execCommand('selectAll', false, null);
+          }
+  
+          // Handle blur event to stop editing
+          table.addEventListener('blur', (e) => {
+            if (!editingCell) return;
+            if (e.target === editingCell) {
+              // Commit changes
+              const row = parseInt(editingCell.getAttribute('data-row'));
+              const col = parseInt(editingCell.getAttribute('data-col'));
+              const value = editingCell.innerText;
+              editingCell.removeAttribute('contenteditable');
+              editingCell.classList.remove('editing');
+              editingCell = null;
               vscode.postMessage({
                 type: 'editCell',
                 row: row,
                 col: col,
                 value: value
               });
-            });
-
-            cell.addEventListener('click', () => {
-              cell.focus();
-            });
-
-            cell.addEventListener('keydown', (e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                cell.blur();
-              } else if (e.key === 'Tab') {
-                e.preventDefault();
-                e.stopPropagation();
-                navigateToNextCell(cell, e.shiftKey);
+            }
+          }, true);
+  
+          // Keyboard events
+          table.addEventListener('keydown', (e) => {
+            if (editingCell && (e.key === 'Enter' || ((e.ctrlKey || e.metaKey) && e.key === 's'))) {
+              e.preventDefault();
+              editingCell.blur();
+              if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                vscode.postMessage({ type: 'save' });
               }
-            });
+            }
+  
+            if (editingCell && e.key === 'Escape') {
+              e.preventDefault();
+              // Revert to original value?
+              // We do not currently store originalCellValue, but we could if needed.
+              // For now, just blur without saving changes:
+              editingCell.innerText = editingCell.innerText; // No revert logic added here, but can be implemented
+              editingCell.blur();
+            }
+  
+            // Copy selected cells with Ctrl+C
+            if ((e.ctrlKey || e.metaKey) && e.key === 'c' && currentSelection.length > 0) {
+              e.preventDefault();
+              copySelectionToClipboard();
+            }
           });
-
-          function navigateToNextCell(currentCell, isShift) {
-            const row = parseInt(currentCell.getAttribute('data-row'));
-            const col = parseInt(currentCell.getAttribute('data-col'));
-            const table = currentCell.closest('table');
-            let targetRow = row;
-            let targetCol = col + (isShift ? -1 : 1);
-
-            const maxDataRows = table.querySelectorAll('tbody tr').length;  
-            const maxCol = table.querySelectorAll('thead th').length - 1;
-
-            if (targetCol < 0) {
-              targetCol = maxCol;
-              targetRow = row - 1 >= 0 ? row - 1 : maxDataRows;
-            } else if (targetCol > maxCol) {
-              targetCol = 0;
-              targetRow = row + 1 <= maxDataRows ? row + 1 : 0;
+  
+          // Implement copy selection to clipboard
+          function copySelectionToClipboard() {
+            // Convert selected cells to CSV text
+            if (currentSelection.length === 0) return;
+            const coords = currentSelection.map(cell => getCellCoords(cell));
+            const minRow = Math.min(...coords.map(c => c.row));
+            const maxRow = Math.max(...coords.map(c => c.row));
+            const minCol = Math.min(...coords.map(c => c.col));
+            const maxCol = Math.max(...coords.map(c => c.col));
+  
+            let csv = '';
+            for (let r = minRow; r <= maxRow; r++) {
+              let rowVals = [];
+              for (let c = minCol; c <= maxCol; c++) {
+                const cell = table.querySelector((r === 0 ? 'th' : 'td')+\`[data-row="\${r}"][data-col="\${c}"]\`);
+                rowVals.push((cell && cell.innerText) || '');
+              }
+              csv += rowVals.join(',') + '\\n';
             }
-
-            const cellSelector = targetRow === 0 ? 'th' : 'td';
-            const targetCell = table.querySelector(cellSelector + '[data-row="' + targetRow + '"][data-col="' + targetCol + '"]');
-
-            if (targetCell) {
-              targetCell.focus();
-              document.execCommand('selectAll', false, null);
-            }
+  
+            // Copy to clipboard
+            navigator.clipboard.writeText(csv.trimEnd()).then(() => {
+              console.log('CSV: Copied selection to clipboard');
+            }).catch(err => {
+              console.error('CSV: Failed to copy', err);
+            });
           }
-
+  
           window.addEventListener('message', event => {
             const message = event.data;
             switch (message.type) {
               case 'updateCell':
                 isUpdating = true;
                 const { row, col, value } = message;
-                const cell = document.querySelector('td[data-row="' + row + '"][data-col="' + col + '"]');
+                const cell = table.querySelector('td[data-row="' + row + '"][data-col="' + col + '"]');
                 if (cell) {
                   cell.innerText = value;
                 }
@@ -297,7 +471,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       </html>
     `;
   }
-
+  
   private lightPalette: string[] = [
     '#243F62','#5D429F','#631A1A','#6A4A25','#266096','#695C5D','#6A4A25','#744042','#191F69','#81477A','#5B1B1B','#723333','#4D5C2C','#243F5F','#723333','#631A1A','#723F29','#191F69','#631A1A','#695C5D','#7F4B25','#191F69','#703568','#5B1B1B','#754820','#52325A','#4B3A65','#7034A8','#793C30','#59543C'
   ];
