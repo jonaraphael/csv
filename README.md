@@ -24,8 +24,8 @@
 ## **Screenshots**
 
 
-![Screenshot 1]("./images/Screenshot_dark.png")
-![Screenshot 2]("./images/Screenshot_light.png")
+![Screenshot 1](images/Screenshot_dark.png)
+![Screenshot 2](images/Screenshot_light.png)
 
 
 ---
