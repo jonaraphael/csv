@@ -60,8 +60,6 @@
 
 ## **Known Issues**
 
-- **Can't Save Row 1 Edits:** If you have edited a cell in row 1, you can't save that change.
-- **Can't Save Cells With Commas:** If you add a comma inside a cell, you can't save that change.
 - **Weird Behavior Around Solitary Quotes:** If you add a double quote inside a cell, you may not be able to save that change.
 - **Large CSV Files:** Performance might degrade for files with thousands of rows. Best suited for medium-sized datasets.
 - **Complex CSV Structures:** Files with irregular formatting or deeply nested commas may require additional parsing support.
@@ -71,8 +69,6 @@
 ## **Planned Improvements**
 
 - **Make Columns Colored By Estimated Datatype**
-- **Improve Color Palette**
-- **Make Reactive Editor Color Theme**
 - **Insert Row Or Column**
 - **Cut Off Values Longer Than 100 Characters**
 - **Select Contiguous Cells For Copy To Clipboard**

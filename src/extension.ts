@@ -21,22 +21,6 @@ export function deactivate() {
 class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   public static readonly viewType = 'csv.editor';
   private isUpdatingDocument: boolean = false;
-
-
-  private static readonly colorPalette: string[] = [
-    '#1f77b4', // Blue
-    '#ff7f0e', // Orange
-    '#2ca02c', // Green
-    '#d62728', // Red
-    '#9467bd', // Purple
-    '#8c564b', // Brown
-    '#e377c2', // Pink
-    '#7f7f7f', // Gray
-    '#bcbd22', // Olive
-    '#17becf'  // Cyan
-  ];
-
-  // Store a reference to the current webview panel
   private currentWebviewPanel: vscode.WebviewPanel | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) { }
@@ -51,13 +35,11 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     this.currentWebviewPanel = webviewPanel;
 
     webviewPanel.webview.options = {
-      enableScripts: true, // Enable scripts in the webview
+      enableScripts: true,
     };
 
-    // Initial render
     this.updateWebviewContent(document, webviewPanel.webview);
 
-    // Listen for messages from the webview
     webviewPanel.webview.onDidReceiveMessage(e => {
       switch (e.type) {
         case 'editCell':
@@ -66,18 +48,14 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       }
     });
 
-    // Listen for document changes
-	const changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument(e => {
-		if (e.document.uri.toString() === document.uri.toString()) {
-		  if (this.isUpdatingDocument) {
-			// Skip updating the webview content when we are the source of the change
-			return;
-		  }
-		  console.log('CSV: Document changed externally, updating webview');
-		  this.updateWebviewContent(document, webviewPanel.webview);
-		}
-	  });
-	  
+    const changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument(e => {
+      if (e.document.uri.toString() === document.uri.toString()) {
+        if (this.isUpdatingDocument) return;
+        console.log('CSV: Document changed externally, updating webview');
+        this.updateWebviewContent(document, webviewPanel.webview);
+      }
+    });
+
     webviewPanel.onDidDispose(() => {
       console.log('CSV: Webview disposed');
       changeDocumentSubscription.dispose();
@@ -86,13 +64,12 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   }
 
   private async updateDocument(document: vscode.TextDocument, row: number, col: number, value: string) {
-	this.isUpdatingDocument = true;
-	const edit = new vscode.WorkspaceEdit();
+    this.isUpdatingDocument = true;
+    const edit = new vscode.WorkspaceEdit();
     const line = document.lineAt(row).text;
     const parsed = this.parseCsvLine(line);
-    
+
     if (col >= parsed.length) {
-      // If the column doesn't exist, append empty cells
       while (parsed.length <= col) {
         parsed.push('');
       }
@@ -105,10 +82,9 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     edit.replace(document.uri, range, newLine);
 
     const success = await vscode.workspace.applyEdit(edit);
-	this.isUpdatingDocument = false;  
+    this.isUpdatingDocument = false;
     if (success) {
       console.log(`CSV: Updated row ${row + 1}, column ${col + 1} to "${value}"`);
-      // Send a message back to the webview to update the specific cell without re-rendering
       if (this.currentWebviewPanel) {
         this.currentWebviewPanel.webview.postMessage({
           type: 'updateCell',
@@ -146,11 +122,10 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   private getHtmlForWebview(webview: vscode.Webview, text: string): string {
     console.log('CSV: Generating HTML for webview');
 
-    // Determine the current theme (light or dark)
-    const isDark = this.getIsDarkTheme();
+    // Use the official VSCode API to detect theme instead of configuration
+    const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
     const nonce = getNonce();
 
-    // Parse CSV and generate HTML table
     const data = this.parseCsv(text);
     console.log(`CSV: Parsed CSV data with ${data.length} rows`);
 
@@ -165,8 +140,6 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
             body { 
               font-family: monospace; 
               padding: 10px; 
-              background-color: #1e1e1e; 
-              color: ${isDark ? '#d4d4d4' : '#000000'}; 
             }
           </style>
         </head>
@@ -180,41 +153,32 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     const columnWidths = this.computeColumnWidths(data);
     console.log(`CSV: Computed column widths: ${columnWidths}`);
 
-    const colors = this.assignColorsToColumns(data[0].length, isDark);
-    console.log(`CSV: Assigned colors: ${colors}`);
+    const colors = isDark ? this.darkPalette : this.lightPalette;
 
-    // Generate HTML table
     let tableHtml = '<table>';
-    
-    // Generate header row
     const header = data[0];
     tableHtml += '<thead><tr>';
     for (let i = 0; i < header.length; i++) {
-      const cell = header[i];
       const width = columnWidths[i];
       const color = colors[i % colors.length];
-      tableHtml += `<th style="min-width: ${width}ch; background-color: #1e1e1e; color: ${color}; text-align: left;" contenteditable="true" data-col="${i}">${cell}</th>`;
+      tableHtml += `<th style="min-width: ${width}ch; border: 1px solid #555; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: ${color};" contenteditable="true" data-row="0" data-col="${i}">${header[i]}</th>`;
     }
     tableHtml += '</tr></thead>';
 
-    // Generate body rows
     tableHtml += '<tbody>';
     for (let rowIndex = 1; rowIndex < data.length; rowIndex++) {
       const row = data[rowIndex];
       tableHtml += '<tr>';
       for (let i = 0; i < row.length; i++) {
-        const cell = row[i];
         const width = columnWidths[i];
         const color = colors[i % colors.length];
-        tableHtml += `<td tabindex="0" style="min-width: ${width}ch; color: ${color}; text-align: left;" contenteditable="true" data-row="${rowIndex}" data-col="${i}">${cell}</td>`;
+        tableHtml += `<td tabindex="0" style="min-width: ${width}ch; border: 1px solid #555; color: ${color};" contenteditable="true" data-row="${rowIndex}" data-col="${i}">${row[i]}</td>`;
       }
       tableHtml += '</tr>';
     }
     tableHtml += '</tbody>';
-
     tableHtml += '</table>';
 
-    // Return full HTML with scripts to handle editing and navigation
     return `
       <!DOCTYPE html>
       <html>
@@ -228,8 +192,6 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
             font-family: monospace; 
             margin: 0; 
             padding: 0; 
-            background-color: #1e1e1e; 
-            color: ${isDark ? '#d4d4d4' : '#000000'}; 
           }
           .table-container {
             overflow-x: auto;
@@ -241,15 +203,13 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           }
           th, td { 
             padding: 4px 8px; 
-            border: 1px solid #555; /* Mid-tone grey gridlines */
             overflow: hidden; 
             cursor: text;
           }
           th { 
             position: sticky; 
             top: 0; 
-            z-index: 2; /* Ensure the header stays above other cells */
-            background-color: #1e1e1e; /* Set based on theme */
+            z-index: 2;
           }
         </style>
       </head>
@@ -259,11 +219,9 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         </div>
         <script nonce="${nonce}">
           const vscode = acquireVsCodeApi();
-
-          // Flag to prevent multiple updates
           let isUpdating = false;
 
-          document.querySelectorAll('td[contenteditable="true"]').forEach(cell => {
+          document.querySelectorAll('th[contenteditable="true"], td[contenteditable="true"]').forEach(cell => {
             cell.addEventListener('blur', () => {
               if (isUpdating) return;
               const row = parseInt(cell.getAttribute('data-row'));
@@ -275,55 +233,51 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
                 col: col,
                 value: value
               });
-			cell.addEventListener('click', () => {
-			  cell.focus();
-			  });
             });
 
-			cell.addEventListener('keydown', (e) => {
-			if (e.key === 'Enter') {
-				e.preventDefault();
-				cell.blur();
-			} else if (e.key === 'Tab') {
-				e.preventDefault();
-				e.stopPropagation();
-				navigateToNextCell(cell, e.shiftKey);
-			}
-			});
+            cell.addEventListener('click', () => {
+              cell.focus();
+            });
+
+            cell.addEventListener('keydown', (e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                cell.blur();
+              } else if (e.key === 'Tab') {
+                e.preventDefault();
+                e.stopPropagation();
+                navigateToNextCell(cell, e.shiftKey);
+              }
+            });
           });
 
-          /**
-           * Function to navigate to the next or previous cell.
-           * @param currentCell The current cell element.
-           * @param isShift Whether the Shift key is pressed (for reverse navigation).
-           */
-			function navigateToNextCell(currentCell, isShift) {
-				const row = parseInt(currentCell.getAttribute('data-row'));
-				const col = parseInt(currentCell.getAttribute('data-col'));
-				const table = currentCell.closest('table');
-				let targetRow = row;
-				let targetCol = col + (isShift ? -1 : 1);
+          function navigateToNextCell(currentCell, isShift) {
+            const row = parseInt(currentCell.getAttribute('data-row'));
+            const col = parseInt(currentCell.getAttribute('data-col'));
+            const table = currentCell.closest('table');
+            let targetRow = row;
+            let targetCol = col + (isShift ? -1 : 1);
 
-				const maxRow = table.querySelectorAll('tbody tr').length;
-				const maxCol = table.querySelectorAll('thead th').length - 1;
+            const maxDataRows = table.querySelectorAll('tbody tr').length;  
+            const maxCol = table.querySelectorAll('thead th').length - 1;
 
-				if (targetCol < 0) {
-					targetCol = maxCol;
-					targetRow = row - 1 >= 1 ? row - 1 : maxRow;
-				} else if (targetCol > maxCol) {
-					targetCol = 0;
-					targetRow = row + 1 <= maxRow ? row + 1 : 1;
-				}
+            if (targetCol < 0) {
+              targetCol = maxCol;
+              targetRow = row - 1 >= 0 ? row - 1 : maxDataRows;
+            } else if (targetCol > maxCol) {
+              targetCol = 0;
+              targetRow = row + 1 <= maxDataRows ? row + 1 : 0;
+            }
 
-				const targetCell = table.querySelector('td[data-row="' + targetRow + '"][data-col="' + targetCol + '"]');
-				if (targetCell) {
-					targetCell.focus();
-					// Optionally select the cell's content
-					document.execCommand('selectAll', false, null);
-				}
-			}
+            const cellSelector = targetRow === 0 ? 'th' : 'td';
+            const targetCell = table.querySelector(cellSelector + '[data-row="' + targetRow + '"][data-col="' + targetCol + '"]');
 
-          // Listen for messages from the extension to update cells
+            if (targetCell) {
+              targetCell.focus();
+              document.execCommand('selectAll', false, null);
+            }
+          }
+
           window.addEventListener('message', event => {
             const message = event.data;
             switch (message.type) {
@@ -344,50 +298,13 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     `;
   }
 
-  private getIsDarkTheme(): boolean {
-    const config = vscode.workspace.getConfiguration('workbench');
-    const colorTheme = config.get<string>('colorTheme') || 'Default Dark+';
-    return colorTheme.toLowerCase().includes('dark');
-  }
+  private lightPalette: string[] = [
+    '#243F62','#5D429F','#631A1A','#6A4A25','#266096','#695C5D','#6A4A25','#744042','#191F69','#81477A','#5B1B1B','#723333','#4D5C2C','#243F5F','#723333','#631A1A','#723F29','#191F69','#631A1A','#695C5D','#7F4B25','#191F69','#703568','#5B1B1B','#754820','#52325A','#4B3A65','#7034A8','#793C30','#59543C'
+  ];
 
-  private assignColorsToColumns(numColumns: number, isDark: boolean): string[] {
-    console.log('CSV: Assigning colors to columns based on theme');
-    const lightPalette: string[] = [
-      '#1f77b4', // Blue
-      '#ff7f0e', // Orange
-      '#2ca02c', // Green
-      '#d62728', // Red
-      '#9467bd', // Purple
-      '#8c564b', // Brown
-      '#e377c2', // Pink
-      '#7f7f7f', // Gray
-      '#bcbd22', // Olive
-      '#17becf'  // Cyan
-    ];
-
-    const darkPalette: string[] = [
-      '#1f77b4', // Blue
-      '#ff7f0e', // Orange
-      '#2ca02c', // Green
-      '#d62728', // Red
-      '#9467bd', // Purple
-      '#8c564b', // Brown
-      '#e377c2', // Pink
-      '#7f7f7f', // Gray
-      '#bcbd22', // Olive
-      '#17becf'  // Cyan
-    ];
-
-    const palette = isDark ? darkPalette : lightPalette;
-
-    const colors = [];
-    for (let i = 0; i < numColumns; i++) {
-      const color = palette[i % palette.length];
-      colors.push(color);
-    }
-    console.log(`CSV: Column colors: ${colors}`);
-    return colors;
-  }
+  private darkPalette: string[] = [
+    '#577282','#8F737C','#A9AB9B','#5CABA8','#8D7B73','#A9AB73','#8F767B','#5CABA8','#A9ABA8','#AB7373','#8CABA8','#5C7BAB','#AB7373','#8C747B','#97AB8A','#5CABA8','#8C747B','#8D7B73','#B77B7A','#5CABA8','#A9ACA8','#B1AA7A','#B1AC7A','#616C61','#9491A4','#B27C7B','#9C7C71','#8C8B61'  
+  ];
 
   private parseCsv(text: string): string[][] {
     console.log('CSV: Parsing CSV');
@@ -406,7 +323,6 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
 
       if (char === '"') {
         if (inQuotes && i + 1 < line.length && line.charAt(i + 1) === '"') {
-          // Escaped quote
           currentCell += '"';
           i++;
         } else {
@@ -440,9 +356,6 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   }
 }
 
-/**
- * Generates a nonce for Content Security Policy
- */
 function getNonce() {
   let text = '';
   const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
