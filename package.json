@@ -3,15 +3,18 @@
   "displayName": "CSV",
   "publisher": "ReprEng",
   "description": "Seamlessly Display and Edit CSVs",
+  "icon": "images/icon.jpg",
   "repository": {
     "type": "git",
     "url": "https://github.com/jonaraphael/csv.git"
   },
-  "version": "1.0.3",
+  "version": "1.0.4",
   "engines": {
     "vscode": "^1.93.0"
   },
   "categories": [
+    "Data Science",
+    "Programming Languages",
     "Other"
   ],
   "activationEvents": [
