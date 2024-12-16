@@ -18,15 +18,17 @@
 - **Enhanced Readability:** 
   - Consistent row and header coloring.
   - Mid-tone gridlines (`#ccc`) for a clean, organized look.
+- **Clipboard Integration:** Copy selected cells as CSV directly to the clipboard using `Ctrl + C` (or `Cmd + C` on macOS).
+- **Column Type Detection:** Automatically detects and highlights data types (e.g., boolean, date, float, integer, etc.) with corresponding color codes.
+- **Efficient Multi-Cell Selection:** Click and drag or use `Shift + Click` to select a range of cells for copying.
+- **Error-Free Editing:** Handles special characters like quotes, commas, and backslashes correctly during editing.
 
 ---
 
 ## **Screenshots**
 
-
 ![Screenshot 1](images/Screenshot_dark.png)
 ![Screenshot 2](images/Screenshot_light.png)
-
 
 ---
 
@@ -63,21 +65,26 @@
 
 ## **Known Issues**
 
-- **Weird Behavior Around Solitary Quotes:** If you add a double quote inside a cell, you may not be able to save that change.
+- **Copy:** Copying a group of cells sometimes fails.
 - **Large CSV Files:** Performance might degrade for files with thousands of rows. Best suited for medium-sized datasets.
-- **Complex CSV Structures:** Files with irregular formatting or deeply nested commas may require additional parsing support.
 
 ---
 
 ## **Planned Improvements**
 
-- **Make Columns Colored By Estimated Datatype**
 - **Insert Row Or Column**
-- **Select Contiguous Cells For Copy To Clipboard**
+- **Drag-and-Drop Support:** Move rows or columns dynamically.
 
 ---
 
 ## **Release Notes**
+
+### **v1.0.5**
+- **New:** Multi-cell selection and `Shift + Click` for selecting a range of cells.
+- **Enhanced:** Clipboard integration for copying selected cells as CSV directly.
+- **Improved:** Better handling of special characters like quotes, commas, and backslashes during editing.
+- **Added:** Column type detection and color-coded highlighting for boolean, date, float, integer, and string types.
+- **Refined:** Optimized update mechanism for external document changes without disrupting user edits.
 
 ### **v1.0.2**
 - **Improved:** Smooth activation of editing mode when clicking on cells.
@@ -104,4 +111,3 @@ Encountered an issue? Have a suggestion? Let us know!
 ## **License**
 
 This extension is licensed under the [MIT License](https://opensource.org/licenses/MIT).
-
