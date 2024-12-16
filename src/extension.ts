@@ -21,6 +21,7 @@ export function deactivate() {
 class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   public static readonly viewType = 'csv.editor';
   private isUpdatingDocument: boolean = false;
+  private isSaving: boolean = false; // New flag to handle save operations
   private currentWebviewPanel: vscode.WebviewPanel | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) { }
@@ -40,42 +41,56 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
 
     this.updateWebviewContent(document, webviewPanel.webview);
 
-    webviewPanel.webview.onDidReceiveMessage(e => {
+    webviewPanel.webview.onDidReceiveMessage(async e => {
       switch (e.type) {
         case 'editCell':
           this.updateDocument(document, e.row, e.col, e.value);
           return;
         case 'save':
-          // Save the document
-          document.save().then(success => {
-            if (!success) {
-              console.error('CSV: Failed to save document');
-            } else {
-              console.log('CSV: Document saved');
-            }
-          });
+          this.handleSave(document);
+          return;
+        case 'copyToClipboard':
+          await vscode.env.clipboard.writeText(e.text);
+          console.log('CSV: Copied to clipboard from extension side');
           return;
       }
     });
-    
+
     let updateTimeout: NodeJS.Timeout | undefined;
     const changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument(e => {
-        if (e.document.uri.toString() === document.uri.toString()) {
-            if (this.isUpdatingDocument) return;
-    
-            clearTimeout(updateTimeout); // Clear any existing timeout
-            updateTimeout = setTimeout(() => {
-                console.log('CSV: Document changed externally, updating webview');
-                this.updateWebviewContent(document, webviewPanel.webview);
-            }, 250); // Wait 250ms before updating
-        }
+      if (e.document.uri.toString() === document.uri.toString()) {
+        if (this.isUpdatingDocument || this.isSaving) return;
+
+        clearTimeout(updateTimeout);
+        updateTimeout = setTimeout(() => {
+          console.log('CSV: Document changed externally, updating webview');
+          this.updateWebviewContent(document, webviewPanel.webview);
+        }, 250);
+      }
     });
-    
+
     webviewPanel.onDidDispose(() => {
       console.log('CSV: Webview disposed');
       changeDocumentSubscription.dispose();
       this.currentWebviewPanel = undefined;
     });
+  }
+
+  // Refactored handleSave method using try...catch...finally
+  private async handleSave(document: vscode.TextDocument) {
+    this.isSaving = true; // Set the saving flag
+    try {
+      const success = await document.save();
+      if (!success) {
+        console.error('CSV: Failed to save document');
+      } else {
+        console.log('CSV: Document saved');
+      }
+    } catch (error) {
+      console.error('CSV: Error saving document', error);
+    } finally {
+      this.isSaving = false; // Reset the saving flag
+    }
   }
 
   private async updateDocument(document: vscode.TextDocument, row: number, col: number, value: string) {
@@ -115,7 +130,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
 
   private constructCsvLine(cells: string[]): string {
     return cells.map(cell => {
-      if (cell.includes('"') || cell.includes(',') || cell.includes('\n') || cell.includes('\\')) { // Add backslash to the check
+      if (cell.includes('"') || cell.includes(',') || cell.includes('\n') || cell.includes('\\')) { // Added backslash check
         return `"${cell.replace(/"/g, '""').replace(/\\/g, '\\\\')}"`; // Escape backslashes as well
       }
       return cell;
@@ -135,45 +150,57 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   }
 
   private isDate(value: string): boolean {
-    // A simple date checker. You may want to improve this
-    // This tries to parse and checks if not NaN. 
-    // For more robust date detection, consider regex or 
-    // known date formats.
     const timestamp = Date.parse(value);
     return !isNaN(timestamp);
   }
 
   private estimateColumnDataType(column: string[]): string {
-    let allEmpty = true;
     let allBoolean = true;
     let allDate = true;
-    let allNumber = true;
-    let anyFloat = false;
+    let allInteger = true;
+    let allFloat = true;
+    let allEmpty = true;
 
     for (const cell of column) {
-      const trimmed = cell.trim();
-      if (trimmed === "") {
-        continue;
-      }
+      // Split by comma and trim whitespace
+      const items = cell.split(',').map(item => item.trim());
+      for (const item of items) {
+        if (item === '') {
+          continue; // Skip empty items
+        }
+        allEmpty = false;
 
-      allEmpty = false;
+        // Check for boolean
+        const lower = item.toLowerCase();
+        if (!(lower === 'true' || lower === 'false')) {
+          allBoolean = false;
+        }
 
-      const lower = trimmed.toLowerCase();
-      const isBool = (lower === "true" || lower === "false");
-      if (!isBool) { allBoolean = false; }
+        // Check for date
+        if (!this.isDate(item)) {
+          allDate = false;
+        }
 
-      if (!this.isDate(trimmed)) { allDate = false; }
+        // Check for integer
+        const num = Number(item);
+        if (!Number.isInteger(num)) {
+          allInteger = false;
+        }
 
-      const num = Number(trimmed);
-      if (isNaN(num)) {
-        allNumber = false;
-      } else {
-        if (trimmed.includes(".")) {
-          anyFloat = true;
+        // Check for float
+        if (isNaN(num)) {
+          allFloat = false;
+        } else {
+          if (item.includes('.')) {
+            // It's a float
+          } else {
+            // It's an integer
+          }
         }
       }
     }
 
+    // Determine the most specific type
     if (allEmpty) {
       return "empty";
     }
@@ -183,68 +210,54 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     if (allDate) {
       return "date";
     }
-    if (allNumber) {
-      return anyFloat ? "float" : "integer";
+    if (allInteger) {
+      return "integer";
+    }
+    if (allFloat) {
+      return "float";
     }
     return "string";
   }
 
-  // This function picks a color based on data type and theme.
-  // We assign each data type to a color group:
-  // boolean -> Greens
-  // date -> Blues
-  // float -> Purples (light theme only, else fallback to similar muted tone)
-  // integer -> Oranges
-  // string -> Reds
-  // If theme is dark, colors will be lighter and muted.
-  // If theme is light, colors will be darker and muted.
   private getColumnColor(type: string, isDark: boolean, columnIndex: number): string {
-    let hueRange = 0; // Default hue
-    let isDefault = false; // Flag to identify default case
+    let hueRange = 0; 
+    let isDefault = false;
 
-    // Assign hue ranges based on data type and theme
     switch (type) {
         case "boolean":
-            hueRange = 30;  // Orange
+            hueRange = 30;  
             break;
         case "date":
-            hueRange = 210; // Blue
+            hueRange = 210; 
             break;
         case "float":
-            hueRange = isDark ? 60 : 270; // Yellow in Dark Mode, Purple in Light Mode
+            hueRange = isDark ? 60 : 270; 
             break;
         case "integer":
-            hueRange = 120; // Green
+            hueRange = 120; 
             break;
         case "string":
-            hueRange = 0;   // Red
+            hueRange = 0;   
             break;
-        default:
-            isDefault = true; // Mark as default to assign white color
+        case "empty":
+            isDefault = true; 
             break;
     }
 
     if (isDefault) {
-        // Directly return white color for default case
-        
         return isDark ? "#BBB" : "#444";
     }
 
-      // Set saturation and lightness for vibrant colors
-      const saturationOffset = ((columnIndex * 7) % 31) - 15; // Generates values between ±15
-      const saturation = saturationOffset + (isDark ? 60 : 80); // Higher saturation for more vibrant colors
-  
-      const lightnessOffset = ((columnIndex * 13) % 31) - 15; // Generates values between ±15
-      const lightness = lightnessOffset + (isDark ? 50 : 60);  // Balanced lightness for readability
-  
-      const hueOffset = ((columnIndex * 17) % 31) - 15; // Generates values between ±15 degrees
-      const finalHue = (hueRange + hueOffset + 360) % 360;   // Ensure hue stays within 0-359 degrees
-  
-      // Convert HSL to Hex format for CSS
-      return this.hslToHex(finalHue, saturation, lightness);
+    const saturationOffset = ((columnIndex * 7) % 31) - 15; 
+    const saturation = saturationOffset + (isDark ? 60 : 80); 
+    const lightnessOffset = ((columnIndex * 13) % 31) - 15; 
+    const lightness = lightnessOffset + (isDark ? 50 : 60);  
+    const hueOffset = ((columnIndex * 17) % 31) - 15; 
+    const finalHue = (hueRange + hueOffset + 360) % 360;   
+
+    return this.hslToHex(finalHue, saturation, lightness);
   }
 
-  // Utility to convert HSL to Hex
   private hslToHex(h: number, s: number, l: number): string {
     s /= 100;
     l /= 100;
@@ -258,7 +271,6 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     const toHex = (x: number) => x.toString(16).padStart(2, '0');
     return "#" + toHex(r) + toHex(g) + toHex(b);
   }
-
 
   private getHtmlForWebview(webview: vscode.Webview, text: string): string {
     console.log('CSV: Generating HTML for webview');
@@ -292,20 +304,16 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     const columnWidths = this.computeColumnWidths(data);
     console.log(`CSV: Computed column widths: ${columnWidths}`);
 
-    // Extract column data to determine column types, **excluding the header row**
     const numColumns = Math.max(...data.map(row => row.length));
     const columnData: string[][] = Array.from({ length: numColumns }, () => []);
-    for (let rowIndex = 1; rowIndex < data.length; rowIndex++) { // Start from index 1 to skip headers
+    for (let rowIndex = 1; rowIndex < data.length; rowIndex++) {
         const row = data[rowIndex];
         for (let i = 0; i < numColumns; i++) {
             columnData[i].push(row[i] || "");
         }
     }
 
-    // Precompute column types based on data rows only
     const columnTypes = columnData.map(col => this.estimateColumnDataType(col));
-
-    // Precompute column colors once per column
     const columnColors = columnTypes.map((type, index) => this.getColumnColor(type, isDark, index));
 
     let tableHtml = '<table>';
@@ -313,7 +321,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     tableHtml += '<thead><tr>';
     for (let i = 0; i < header.length; i++) {
         const width = Math.min(columnWidths[i], 100); 
-        const color = columnColors[i]; // Use precomputed color
+        const color = columnColors[i];
         tableHtml += `<th style="
             min-width: ${width}ch; 
             max-width: 100ch;
@@ -335,7 +343,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         tableHtml += '<tr>';
         for (let i = 0; i < row.length; i++) {
             const width = Math.min(columnWidths[i], 100); 
-            const color = columnColors[i]; // Use the same color as header
+            const color = columnColors[i]; 
             tableHtml += `<td tabindex="0" style="
                 min-width: ${width}ch; 
                 max-width: 100ch; 
@@ -410,30 +418,30 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           let startCell = null; 
           let endCell = null;
           let editingCell = null;
-  
+          let originalCellValue = null;
+
           const table = document.querySelector('table');
-  
-          // Utility function to get cell coordinates
+          const container = document.querySelector('.table-container');
+
+          // Selection and Editing logic
           function getCellCoords(cell) {
             const row = parseInt(cell.getAttribute('data-row'));
             const col = parseInt(cell.getAttribute('data-col'));
             return {row, col};
           }
-  
-          // Function to clear current selection
+
           function clearSelection() {
             currentSelection.forEach(c => c.classList.remove('selected'));
             currentSelection = [];
           }
-  
-          // Function to select a range of cells
+
           function selectRange(start, end) {
             clearSelection();
             const startRow = Math.min(start.row, end.row);
             const endRow = Math.max(start.row, end.row);
             const startCol = Math.min(start.col, end.col);
             const endCol = Math.max(start.col, end.col);
-  
+
             for (let r = startRow; r <= endRow; r++) {
               let rowCells = r === 0 ? table.querySelectorAll(\`thead th[data-row="0"]\`) : table.querySelectorAll(\`tbody tr:nth-child(\${r}) td[data-row="\${r}"]\`);
               for (let c = startCol; c <= endCol; c++) {
@@ -445,8 +453,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
               }
             }
           }
-  
-          // Mouse events for click+drag selection
+
           table.addEventListener('mousedown', (e) => {
             if (editingCell && (e.target.tagName === 'TD' || e.target.tagName === 'TH')) {
               // Allow text selection within the editing cell
@@ -455,31 +462,25 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
 
             if (e.target.tagName !== 'TD' && e.target.tagName !== 'TH') return;
 
-            // If we are editing a cell, exit edit mode first
             if (editingCell && editingCell !== e.target) {
               editingCell.blur();
             }
 
             if (e.shiftKey) {
-              // Shift key is pressed: Keep the startCell and update endCell
               if (!startCell) {
-                // If no startCell is set yet, initialize it with the current target
                 startCell = e.target;
               }
               endCell = e.target;
               isSelecting = true;
             } else {
-              // Normal behavior: Set both startCell and endCell to the current cell
               startCell = e.target;
               endCell = e.target;
               isSelecting = true;
             }
 
-            // Prevent cell from being immediately editable on mousedown
-            // We'll decide on mouseup whether it was a click or a drag.
             e.preventDefault();
           });
-  
+
           table.addEventListener('mousemove', (e) => {
             if (!isSelecting) return;
             if (e.target.tagName === 'TD' || e.target.tagName === 'TH') {
@@ -487,36 +488,42 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
               selectRange(getCellCoords(startCell), getCellCoords(endCell));
             }
           });
-  
+
           table.addEventListener('mouseup', (e) => {
             if (!isSelecting) return;
             isSelecting = false;
             if (startCell === endCell) {
-              // Single click: start editing that cell
               clearSelection();
               editCell(startCell);
             } else {
-              // We have selected multiple cells
-              // Set anchorCell as the start cell for shift-click operations
               anchorCell = startCell;
             }
           });
-  
-          // Shift-click to select range
+
           table.addEventListener('click', (e) => {
             if (e.shiftKey && anchorCell && (e.target.tagName === 'TD' || e.target.tagName === 'TH')) {
               selectRange(getCellCoords(anchorCell), getCellCoords(e.target));
             } else if (!e.shiftKey && (e.target.tagName === 'TD' || e.target.tagName === 'TH')) {
-              // Update anchor cell if single clicked a different cell
               anchorCell = e.target;
             }
           });
-  
+
+          // Function to set cursor at the end of the cell
+          function setCursorToEnd(cell) {
+            setTimeout(() => { // Delay to ensure the cell is focused and editable
+              const range = document.createRange();
+              range.selectNodeContents(cell);
+              range.collapse(false); // Move cursor to the end
+              const sel = window.getSelection();
+              sel.removeAllRanges();
+              sel.addRange(range);
+            }, 10); // 10ms delay
+          }
+
           // Start editing a cell
           function editCell(cell) {
-            if (editingCell === cell) return; // Already editing
+            if (editingCell === cell) return;
             if (editingCell) {
-              // End editing of previously editing cell
               editingCell.blur();
             }
             originalCellValue = cell.innerText;
@@ -524,20 +531,13 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
             cell.classList.add('editing');
             cell.setAttribute('contenteditable', 'true');
             cell.focus();
-            // Place cursor at the clicked position
-            const range = document.caretRangeFromPoint(event.clientX, event.clientY);
-            if (range) {
-              const sel = window.getSelection();
-              sel.removeAllRanges();
-              sel.addRange(range);
-            }
+            setCursorToEnd(cell); // Set cursor at the end
           }
-  
+
           // Handle blur event to stop editing
           table.addEventListener('blur', (e) => {
             if (!editingCell) return;
             if (e.target === editingCell) {
-              // Commit changes
               const row = parseInt(editingCell.getAttribute('data-row'));
               const col = parseInt(editingCell.getAttribute('data-col'));
               const value = editingCell.innerText;
@@ -552,41 +552,65 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
               });
             }
           }, true);
-  
+
           // Keyboard events
           table.addEventListener('keydown', (e) => {
-            if (editingCell && (e.key === 'Enter' || ((e.ctrlKey || e.metaKey) && e.key === 's'))) {
+            if (editingCell && ((e.ctrlKey || e.metaKey) && e.key === 's')) {
               e.preventDefault();
               editingCell.blur();
-              if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-                vscode.postMessage({ type: 'save' });
+              vscode.postMessage({ type: 'save' });
+            }
+
+            if (editingCell && e.key === 'Enter') {
+              e.preventDefault();
+              const row = parseInt(editingCell.getAttribute('data-row'));
+              const col = parseInt(editingCell.getAttribute('data-col'));
+              editingCell.blur();
+
+              // After committing with Enter, move focus down one cell
+              const nextRow = row + 1;
+              const nextCell = table.querySelector(\`td[data-row="\${nextRow}"][data-col="\${col}"]\`);
+              if (nextCell) {
+                editCell(nextCell);
               }
             }
-  
+
+            if (editingCell && e.key === 'Tab') {
+              e.preventDefault();
+              const row = parseInt(editingCell.getAttribute('data-row'));
+              const col = parseInt(editingCell.getAttribute('data-col'));
+              editingCell.blur();
+
+              // Move focus to the cell to the right
+              const nextCol = col + 1;
+              const nextCell = table.querySelector(\`td[data-row="\${row}"][data-col="\${nextCol}"]\`);
+              if (nextCell) {
+                editCell(nextCell);
+              }
+            }
+
             if (editingCell && e.key === 'Escape') {
               e.preventDefault();
-              // Revert to original value
               editingCell.innerText = originalCellValue;
-              editingCell.blur(); // This exits edit mode without sending changes
+              editingCell.blur();
             }
-  
-            // Copy selected cells with Ctrl+C
+
+            // Copy selection with Ctrl+C
             if ((e.ctrlKey || e.metaKey) && e.key === 'c' && currentSelection.length > 0) {
               e.preventDefault();
               copySelectionToClipboard();
             }
           });
-  
+
           // Implement copy selection to clipboard
           function copySelectionToClipboard() {
-            // Convert selected cells to CSV text
             if (currentSelection.length === 0) return;
             const coords = currentSelection.map(cell => getCellCoords(cell));
             const minRow = Math.min(...coords.map(c => c.row));
             const maxRow = Math.max(...coords.map(c => c.row));
             const minCol = Math.min(...coords.map(c => c.col));
             const maxCol = Math.max(...coords.map(c => c.col));
-  
+
             let csv = '';
             for (let r = minRow; r <= maxRow; r++) {
               let rowVals = [];
@@ -596,15 +620,11 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
               }
               csv += rowVals.join(',') + '\\n';
             }
-  
-            // Copy to clipboard
-            navigator.clipboard.writeText(csv.trimEnd()).then(() => {
-              console.log('CSV: Copied selection to clipboard');
-            }).catch(err => {
-              console.error('CSV: Failed to copy', err);
-            });
+
+            // Send to extension for reliable copy
+            vscode.postMessage({ type: 'copyToClipboard', text: csv.trimEnd() });
           }
-  
+
           window.addEventListener('message', event => {
             const message = event.data;
             switch (message.type) {
@@ -624,14 +644,6 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       </html>
     `;
   }
-  
-  private lightPalette: string[] = [
-    '#243F62','#5D429F','#631A1A','#6A4A25','#266096','#695C5D','#6A4A25','#744042','#191F69','#81477A','#5B1B1B','#723333','#4D5C2C','#243F5F','#723333','#631A1A','#723F29','#191F69','#631A1A','#695C5D','#7F4B25','#191F69','#703568','#5B1B1B','#754820','#52325A','#4B3A65','#7034A8','#793C30','#59543C'
-  ];
-
-  private darkPalette: string[] = [
-    '#577282','#8F737C','#A9AB9B','#5CABA8','#8D7B73','#A9AB73','#8F767B','#5CABA8','#A9ABA8','#AB7373','#8CABA8','#5C7BAB','#AB7373','#8C747B','#97AB8A','#5CABA8','#8C747B','#8D7B73','#B77B7A','#5CABA8','#A9ACA8','#B1AA7A','#B1AC7A','#616C61','#9491A4','#B27C7B','#9C7C71','#8C8B61'  
-  ];
 
   private parseCsv(text: string): string[][] {
     console.log('CSV: Parsing CSV');
@@ -670,7 +682,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     }
     cells.push(currentCell);
     return cells;
-}
+  }
 
   private computeColumnWidths(data: string[][]): number[] {
     console.log('CSV: Computing column widths');
