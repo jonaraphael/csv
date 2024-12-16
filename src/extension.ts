@@ -58,14 +58,19 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       }
     });
     
+    let updateTimeout: NodeJS.Timeout | undefined;
     const changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument(e => {
-      if (e.document.uri.toString() === document.uri.toString()) {
-        if (this.isUpdatingDocument) return;
-        console.log('CSV: Document changed externally, updating webview');
-        this.updateWebviewContent(document, webviewPanel.webview);
-      }
+        if (e.document.uri.toString() === document.uri.toString()) {
+            if (this.isUpdatingDocument) return;
+    
+            clearTimeout(updateTimeout); // Clear any existing timeout
+            updateTimeout = setTimeout(() => {
+                console.log('CSV: Document changed externally, updating webview');
+                this.updateWebviewContent(document, webviewPanel.webview);
+            }, 250); // Wait 250ms before updating
+        }
     });
-
+    
     webviewPanel.onDidDispose(() => {
       console.log('CSV: Webview disposed');
       changeDocumentSubscription.dispose();
@@ -110,8 +115,8 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
 
   private constructCsvLine(cells: string[]): string {
     return cells.map(cell => {
-      if (cell.includes('"') || cell.includes(',') || cell.includes('\n')) {
-        return `"${cell.replace(/"/g, '""')}"`;
+      if (cell.includes('"') || cell.includes(',') || cell.includes('\n') || cell.includes('\\')) { // Add backslash to the check
+        return `"${cell.replace(/"/g, '""').replace(/\\/g, '\\\\')}"`; // Escape backslashes as well
       }
       return cell;
     }).join(',');
@@ -129,136 +134,274 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     }
   }
 
+  private isDate(value: string): boolean {
+    // A simple date checker. You may want to improve this
+    // This tries to parse and checks if not NaN. 
+    // For more robust date detection, consider regex or 
+    // known date formats.
+    const timestamp = Date.parse(value);
+    return !isNaN(timestamp);
+  }
+
+  private estimateColumnDataType(column: string[]): string {
+    let allEmpty = true;
+    let allBoolean = true;
+    let allDate = true;
+    let allNumber = true;
+    let anyFloat = false;
+
+    for (const cell of column) {
+      const trimmed = cell.trim();
+      if (trimmed === "") {
+        continue;
+      }
+
+      allEmpty = false;
+
+      const lower = trimmed.toLowerCase();
+      const isBool = (lower === "true" || lower === "false");
+      if (!isBool) { allBoolean = false; }
+
+      if (!this.isDate(trimmed)) { allDate = false; }
+
+      const num = Number(trimmed);
+      if (isNaN(num)) {
+        allNumber = false;
+      } else {
+        if (trimmed.includes(".")) {
+          anyFloat = true;
+        }
+      }
+    }
+
+    if (allEmpty) {
+      return "empty";
+    }
+    if (allBoolean) {
+      return "boolean";
+    }
+    if (allDate) {
+      return "date";
+    }
+    if (allNumber) {
+      return anyFloat ? "float" : "integer";
+    }
+    return "string";
+  }
+
+  // This function picks a color based on data type and theme.
+  // We assign each data type to a color group:
+  // boolean -> Greens
+  // date -> Blues
+  // float -> Purples (light theme only, else fallback to similar muted tone)
+  // integer -> Oranges
+  // string -> Reds
+  // If theme is dark, colors will be lighter and muted.
+  // If theme is light, colors will be darker and muted.
+  private getColumnColor(type: string, isDark: boolean, columnIndex: number): string {
+    let hueRange = 0; // Default hue
+    let isDefault = false; // Flag to identify default case
+
+    // Assign hue ranges based on data type and theme
+    switch (type) {
+        case "boolean":
+            hueRange = 30;  // Orange
+            break;
+        case "date":
+            hueRange = 210; // Blue
+            break;
+        case "float":
+            hueRange = isDark ? 60 : 270; // Yellow in Dark Mode, Purple in Light Mode
+            break;
+        case "integer":
+            hueRange = 120; // Green
+            break;
+        case "string":
+            hueRange = 0;   // Red
+            break;
+        default:
+            isDefault = true; // Mark as default to assign white color
+            break;
+    }
+
+    if (isDefault) {
+        // Directly return white color for default case
+        
+        return isDark ? "#BBB" : "#444";
+    }
+
+      // Set saturation and lightness for vibrant colors
+      const saturationOffset = ((columnIndex * 7) % 31) - 15; // Generates values between ±15
+      const saturation = saturationOffset + (isDark ? 60 : 80); // Higher saturation for more vibrant colors
+  
+      const lightnessOffset = ((columnIndex * 13) % 31) - 15; // Generates values between ±15
+      const lightness = lightnessOffset + (isDark ? 50 : 60);  // Balanced lightness for readability
+  
+      const hueOffset = ((columnIndex * 17) % 31) - 15; // Generates values between ±15 degrees
+      const finalHue = (hueRange + hueOffset + 360) % 360;   // Ensure hue stays within 0-359 degrees
+  
+      // Convert HSL to Hex format for CSS
+      return this.hslToHex(finalHue, saturation, lightness);
+  }
+
+  // Utility to convert HSL to Hex
+  private hslToHex(h: number, s: number, l: number): string {
+    s /= 100;
+    l /= 100;
+    const k = (n: number) => (n + h / 30) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const f = (n: number) =>
+      l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+    const r = Math.round(255 * f(0));
+    const g = Math.round(255 * f(8));
+    const b = Math.round(255 * f(4));
+    const toHex = (x: number) => x.toString(16).padStart(2, '0');
+    return "#" + toHex(r) + toHex(g) + toHex(b);
+  }
+
+
   private getHtmlForWebview(webview: vscode.Webview, text: string): string {
     console.log('CSV: Generating HTML for webview');
-  
+
     const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
     const nonce = getNonce();
     const data = this.parseCsv(text);
     console.log(`CSV: Parsed CSV data with ${data.length} rows`);
-  
+
     if (data.length === 0) {
-      return `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="UTF-8">
-          <title>CSV</title>
-          <style>
-            body { 
-              font-family: monospace; 
-              padding: 10px; 
-            }
-          </style>
-        </head>
-        <body>
-          <p>No data found in CSV.</p>
-        </body>
-        </html>
-      `;
+        return `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>CSV</title>
+                <style>
+                    body { 
+                        font-family: monospace; 
+                        padding: 10px; 
+                    }
+                </style>
+            </head>
+            <body>
+                <p>No data found in CSV.</p>
+            </body>
+            </html>
+        `;
     }
-  
+
     const columnWidths = this.computeColumnWidths(data);
     console.log(`CSV: Computed column widths: ${columnWidths}`);
-  
-    const colors = isDark ? this.darkPalette : this.lightPalette;
-  
+
+    // Extract column data to determine column types, **excluding the header row**
+    const numColumns = Math.max(...data.map(row => row.length));
+    const columnData: string[][] = Array.from({ length: numColumns }, () => []);
+    for (let rowIndex = 1; rowIndex < data.length; rowIndex++) { // Start from index 1 to skip headers
+        const row = data[rowIndex];
+        for (let i = 0; i < numColumns; i++) {
+            columnData[i].push(row[i] || "");
+        }
+    }
+
+    // Precompute column types based on data rows only
+    const columnTypes = columnData.map(col => this.estimateColumnDataType(col));
+
+    // Precompute column colors once per column
+    const columnColors = columnTypes.map((type, index) => this.getColumnColor(type, isDark, index));
+
     let tableHtml = '<table>';
     const header = data[0];
     tableHtml += '<thead><tr>';
     for (let i = 0; i < header.length; i++) {
-      const width = Math.min(columnWidths[i], 100); // enforce max width of 100 chars
-      const color = colors[i % colors.length];
-      // Note: no contenteditable here by default. We'll handle editing on click.
-      tableHtml += `<th style="
-        min-width: ${width}ch; 
-        max-width: 100ch;
-        border: 1px solid #555; 
-        background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; 
-        color: ${color};
-        overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-        "
-        data-row="0" 
-        data-col="${i}"
-        >${header[i]}</th>`;
+        const width = Math.min(columnWidths[i], 100); 
+        const color = columnColors[i]; // Use precomputed color
+        tableHtml += `<th style="
+            min-width: ${width}ch; 
+            max-width: 100ch;
+            border: 1px solid #555; 
+            background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; 
+            color: ${color};
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;"
+            data-row="0" 
+            data-col="${i}"
+            >${header[i]}</th>`;
     }
     tableHtml += '</tr></thead>';
-  
+
     tableHtml += '<tbody>';
     for (let rowIndex = 1; rowIndex < data.length; rowIndex++) {
-      const row = data[rowIndex];
-      tableHtml += '<tr>';
-      for (let i = 0; i < row.length; i++) {
-        const width = Math.min(columnWidths[i], 100); // enforce max width of 100 chars
-        const color = colors[i % colors.length];
-        tableHtml += `<td tabindex="0" style="
-          min-width: ${width}ch; 
-          max-width: 100ch; 
-          border: 1px solid #555; 
-          color: ${color};
-          overflow: hidden; 
-          white-space: nowrap; 
-          text-overflow: ellipsis;"
-          data-row="${rowIndex}" 
-          data-col="${i}"
-          >${row[i]}</td>`;
-      }
-      tableHtml += '</tr>';
+        const row = data[rowIndex];
+        tableHtml += '<tr>';
+        for (let i = 0; i < row.length; i++) {
+            const width = Math.min(columnWidths[i], 100); 
+            const color = columnColors[i]; // Use the same color as header
+            tableHtml += `<td tabindex="0" style="
+                min-width: ${width}ch; 
+                max-width: 100ch; 
+                border: 1px solid #555; 
+                color: ${color};
+                overflow: hidden; 
+                white-space: nowrap; 
+                text-overflow: ellipsis;"
+                data-row="${rowIndex}" 
+                data-col="${i}"
+                >${row[i]}</td>`;
+        }
+        tableHtml += '</tr>';
     }
     tableHtml += '</tbody>';
     tableHtml += '</table>';
-  
+
     return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>CSV</title>
-        <style nonce="${nonce}">
-          body { 
-            font-family: monospace; 
-            margin: 0; 
-            padding: 0; 
-            user-select: none;
-          }
-          .table-container {
-            overflow-x: auto;
-            max-height: 100vh;
-          }
-          table { 
-            border-collapse: collapse; 
-            width: max-content; 
-          }
-          th, td { 
-            padding: 4px 8px; 
-            overflow: hidden; 
-            cursor: default;
-            position: relative;
-          }
-          th { 
-            position: sticky; 
-            top: 0; 
-            z-index: 2;
-          }
-          td.selected, th.selected {
-            background-color: ${isDark ? '#333333' : '#cce0ff'} !important;
-          }
-          td.editing, th.editing {
-            overflow: visible !important;
-            white-space: normal !important;
-            max-width: none !important;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="table-container">
-          ${tableHtml}
-        </div>
-        <script nonce="${nonce}">
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>CSV</title>
+            <style nonce="${nonce}">
+                body { 
+                    font-family: monospace; 
+                    margin: 0; 
+                    padding: 0; 
+                    user-select: none;
+                }
+                .table-container {
+                    overflow-x: auto;
+                    max-height: 100vh;
+                }
+                table { 
+                    border-collapse: collapse; 
+                    width: max-content; 
+                }
+                th, td { 
+                    padding: 4px 8px; 
+                    overflow: hidden; 
+                    cursor: default;
+                    position: relative;
+                }
+                th { 
+                    position: sticky; 
+                    top: 0; 
+                    z-index: 2;
+                }
+                td.selected, th.selected {
+                    background-color: ${isDark ? '#333333' : '#cce0ff'} !important;
+                }
+                td.editing, th.editing {
+                    overflow: visible !important;
+                    white-space: normal !important;
+                    max-width: none !important;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="table-container">
+                ${tableHtml}
+            </div>
+            <script nonce="${nonce}">
           const vscode = acquireVsCodeApi();
           let isUpdating = false;
           let isSelecting = false;
@@ -305,6 +448,11 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   
           // Mouse events for click+drag selection
           table.addEventListener('mousedown', (e) => {
+            if (editingCell && (e.target.tagName === 'TD' || e.target.tagName === 'TH')) {
+              // Allow text selection within the editing cell
+              return;
+            }
+
             if (e.target.tagName !== 'TD' && e.target.tagName !== 'TH') return;
 
             // If we are editing a cell, exit edit mode first
@@ -371,11 +519,18 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
               // End editing of previously editing cell
               editingCell.blur();
             }
+            originalCellValue = cell.innerText;
             editingCell = cell;
             cell.classList.add('editing');
             cell.setAttribute('contenteditable', 'true');
             cell.focus();
-            document.execCommand('selectAll', false, null);
+            // Place cursor at the clicked position
+            const range = document.caretRangeFromPoint(event.clientX, event.clientY);
+            if (range) {
+              const sel = window.getSelection();
+              sel.removeAllRanges();
+              sel.addRange(range);
+            }
           }
   
           // Handle blur event to stop editing
@@ -410,11 +565,9 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   
             if (editingCell && e.key === 'Escape') {
               e.preventDefault();
-              // Revert to original value?
-              // We do not currently store originalCellValue, but we could if needed.
-              // For now, just blur without saving changes:
-              editingCell.innerText = editingCell.innerText; // No revert logic added here, but can be implemented
-              editingCell.blur();
+              // Revert to original value
+              editingCell.innerText = originalCellValue;
+              editingCell.blur(); // This exits edit mode without sending changes
             }
   
             // Copy selected cells with Ctrl+C
@@ -488,30 +641,36 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   }
 
   private parseCsvLine(line: string): string[] {
-    const cells = [];
+    const cells: string[] = [];
     let currentCell = '';
     let inQuotes = false;
+    let escaped = false;
 
     for (let i = 0; i < line.length; i++) {
-      const char = line.charAt(i);
+        const char = line[i];
 
-      if (char === '"') {
-        if (inQuotes && i + 1 < line.length && line.charAt(i + 1) === '"') {
-          currentCell += '"';
-          i++;
+        if (escaped) {
+            currentCell += char;
+            escaped = false;
+        } else if (char === '"') {
+            if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
+                currentCell += '"';
+                i++; // Skip the next quote
+            } else {
+                inQuotes = !inQuotes;
+            }
+        } else if (char === ',' && !inQuotes) {
+            cells.push(currentCell);
+            currentCell = '';
+        } else if (char === '\\' && inQuotes) { // Handle escape character inside quotes
+          escaped = true;
         } else {
-          inQuotes = !inQuotes;
+            currentCell += char;
         }
-      } else if (char === ',' && !inQuotes) {
-        cells.push(currentCell);
-        currentCell = '';
-      } else {
-        currentCell += char;
-      }
     }
     cells.push(currentCell);
     return cells;
-  }
+}
 
   private computeColumnWidths(data: string[][]): number[] {
     console.log('CSV: Computing column widths');
