@@ -248,12 +248,12 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         return isDark ? "#BBB" : "#444";
     }
 
-    const saturationOffset = ((columnIndex * 7) % 31) - 15; 
-    const saturation = saturationOffset + (isDark ? 60 : 80); 
-    const lightnessOffset = ((columnIndex * 13) % 31) - 15; 
-    const lightness = lightnessOffset + (isDark ? 50 : 60);  
-    const hueOffset = ((columnIndex * 17) % 31) - 15; 
-    const finalHue = (hueRange + hueOffset + 360) % 360;   
+    const saturationOffset = ((columnIndex * 7) % 31) - 15;
+    const saturation = saturationOffset + (isDark ? 77 : 60);
+    const lightnessOffset = ((columnIndex * 13) % 31) - 15;
+    const lightness = lightnessOffset + (isDark ? 78 : 30);
+    const hueOffset = ((columnIndex * 17) % 31) - 15;
+    const finalHue = (hueRange + hueOffset + 360) % 360;  
 
     return this.hslToHex(finalHue, saturation, lightness);
   }
@@ -280,6 +280,11 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     const data = this.parseCsv(text);
     console.log(`CSV: Parsed CSV data with ${data.length} rows`);
 
+    const config = vscode.workspace.getConfiguration('editor');
+    const fontFamily = config.get('fontFamily') || "monospace"; // just to be sure that its a valid font family
+    console.log(`CSV: Setting system font "${fontFamily}"`)
+
+
     if (data.length === 0) {
         return `
             <!DOCTYPE html>
@@ -289,7 +294,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
                 <title>CSV</title>
                 <style>
                     body { 
-                        font-family: monospace; 
+                        font-family: ${fontFamily};
                         padding: 10px; 
                     }
                 </style>
@@ -371,7 +376,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
             <title>CSV</title>
             <style nonce="${nonce}">
                 body { 
-                    font-family: monospace; 
+                    font-family: ${fontFamily};
                     margin: 0; 
                     padding: 0; 
                     user-select: none;
