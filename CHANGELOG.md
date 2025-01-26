@@ -14,6 +14,9 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ### Added
 
 - Pick system configured font values.
+- Structured and Organised Code into multiple files for Maintainability.
+- Add support for multi line values in CSV.
+- Added vite build config and dependency to have bundled output file.
 
 ## [1.0.5]
 

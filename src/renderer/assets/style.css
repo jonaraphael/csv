@@ -1,0 +1,41 @@
+body {
+    font-family: var(--csv-font-family);
+    margin: 0;
+    padding: 0;
+    user-select: none;
+}
+
+.table-container {
+    overflow-x: auto;
+    max-height: 100vh;
+}
+
+table {
+    border-collapse: collapse;
+    width: max-content;
+}
+
+th,
+td {
+    padding: 4px 8px;
+    overflow: hidden;
+    cursor: default;
+    position: relative;
+}
+
+th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+
+td.selected,
+th.selected {
+    background-color: var(--csv-bg-color) !important;
+}
+
+td.editing,
+th.editing {
+    overflow: visible !important;
+    max-width: none !important;
+}
