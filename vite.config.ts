@@ -12,7 +12,6 @@ export default defineConfig({
         },
         outDir: "out",
         sourcemap: true,
-        assetsInlineLimit: 0,  // Ensure assets are inlined (turn off the limit)
     },
 });
 
