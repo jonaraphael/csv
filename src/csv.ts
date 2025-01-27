@@ -1,6 +1,9 @@
 
 // https://stackoverflow.com/a/1293163
 export function parse(strData: string, strDelimiter?: string | undefined): string[][] {
+    // Trim any whitespace to avoid empty rows being created
+    strData = strData.trim();
+
     // Check to see if the delimiter is defined. If not,
     // then default to comma.
     strDelimiter = (strDelimiter || ",");

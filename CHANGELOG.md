@@ -16,7 +16,8 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - Pick system configured font values.
 - Structured and Organised Code into multiple files for Maintainability.
 - Add support for multi line values in CSV.
-- Added vite build config and dependency to have bundled output file.
+- Added vite build config and vite dependency to have bundled output file.
+- Delegated the copying of Csv Array to Extension from WebView script.
 
 ## [1.0.5]
 

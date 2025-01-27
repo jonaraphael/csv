@@ -49,14 +49,13 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     webviewPanel.webview.onDidReceiveMessage(async e => {
       switch (e.type) {
         case 'editCell':
-          this.updateDocument(document, parsedCsv, e.row, e.col, e.value);
+          await this.updateDocument(document, parsedCsv, e.row, e.col, e.value);
           return;
         case 'save':
-          this.handleSave(document);
+          await this.handleSave(document);
           return;
         case 'copyToClipboard':
-          await vscode.env.clipboard.writeText(e.text);
-          console.log('CSV: Copied to clipboard from extension side');
+          await this.handleCopy(parsedCsv, e)
           return;
       }
     });
@@ -89,6 +88,24 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
 
     return parsedCsv;
   }
+
+  private async handleCopy(parsedCsv: string[][], e: any) {
+    const csv: string[][] = [];
+
+    for (let r = e.minRow; r <= e.maxRow; r++) {
+      let cols = [];
+      for (let c = e.minCol; c <= e.maxCol; c++) {
+        const cell = parsedCsv[r]?.[c];
+        cols.push(cell || '');
+      }
+      csv.push(cols);
+    }
+
+    await vscode.env.clipboard.writeText(CSV.stringify(csv));
+
+    console.log('CSV: Copied to clipboard from extension side');
+  }
+
 
   // Refactored handleSave method using try...catch...finally
   private async handleSave(document: vscode.TextDocument) {

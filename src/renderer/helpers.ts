@@ -94,8 +94,8 @@ export function getColumnColor(type: string, isDark: boolean, columnIndex: numbe
         return isDark ? "#BBB" : "#444";
     }
 
-    const saturationOffset = ((columnIndex * 7) % 31) - 10;
-    const saturation = saturationOffset + (isDark ? 80 : 60);
+    const saturationOffset = Math.floor(Math.random() * 13);
+    const saturation = saturationOffset + (isDark ? 85 : 60);
     const lightnessOffset = isDark ? saturation * 0.9 : saturation - 22;
     const lightness = lightnessOffset;
     const hueOffset = ((columnIndex * 17) % 31) - 15;

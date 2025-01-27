@@ -199,18 +199,16 @@ function copySelectionToClipboard() {
     const minCol = Math.min(...coords.map(c => c.col));
     const maxCol = Math.max(...coords.map(c => c.col));
 
-    let csv = '';
-    for (let r = minRow; r <= maxRow; r++) {
-        let rowVals = [];
-        for (let c = minCol; c <= maxCol; c++) {
-            const cell = table.querySelector((r === 0 ? 'th' : 'td') + `[data-row="${r}"][data-col="${c}"]`);
-            rowVals.push((cell && cell.innerText) || '');
-        }
-        csv += rowVals.join(',') + '\n';
-    }
-
     // Send to extension for reliable copy
-    vscode.postMessage({ type: 'copyToClipboard', text: csv.trimEnd() });
+    vscode.postMessage(
+        {
+            type: 'copyToClipboard',
+            minRow,
+            maxRow,
+            minCol,
+            maxCol
+        }
+    );
 }
 
 window.addEventListener('message', event => {
