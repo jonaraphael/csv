@@ -1,6 +1,9 @@
 import * as CsvHelpers from './helpers';
 import { getNonce, htmlElement } from './utils';
+
+// @ts-expect-error
 import cssContent from './assets/style.css?raw';
+// @ts-expect-error
 import jsContent from './assets/script.js?raw';
 
 export class HtmlView {
