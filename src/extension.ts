@@ -55,7 +55,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           await this.handleSave(document);
           return;
         case 'copyToClipboard':
-          await this.handleCopy(parsedCsv, e)
+          await this.handleCopy(parsedCsv, e);
           return;
       }
     });
@@ -63,7 +63,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     let updateTimeout: NodeJS.Timeout | undefined;
     const changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument(e => {
       if (e.document.uri.toString() === document.uri.toString()) {
-        if (this.isUpdatingDocument || this.isSaving) return;
+        if (this.isUpdatingDocument || this.isSaving) { return; }
 
         parsedCsv = this.getCsv(document); // fetch the latest content from source
 
@@ -146,7 +146,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     edit.createFile(document.uri, {
       contents: new TextEncoder().encode(newCsv),
       overwrite: true
-    })
+    });
 
     const success = await vscode.workspace.applyEdit(edit);
 
@@ -189,7 +189,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
 
     const config = vscode.workspace.getConfiguration('editor');
     const fontFamily = config.get<string>('fontFamily') || "monospace"; // just to be sure that its a valid font family
-    console.log(`CSV: Setting system font "${fontFamily}"`)
+    console.log(`CSV: Setting system font "${fontFamily}"`);
 
     return new HtmlView(parsedCsv, isDark, fontFamily).getHtml();
   }

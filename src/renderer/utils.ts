@@ -34,19 +34,19 @@ export function htmlElement(
     attributes: Record<string, string> = {},
 ): string {
 
-    let styleStr = ""
-    let attributesStr = ""
+    let styleStr = "";
+    let attributesStr = "";
 
     if (Object.keys(style).length > 0) {
         styleStr = 'style="' + Object.entries(style).map(([k, v]) => {
-            return `${k}: ${v};`
-        }).join(' ') + '"'
+            return `${k}: ${v};`;
+        }).join(' ') + '"';
     }
 
     if (Object.keys(attributes).length > 0) {
         attributesStr = Object.entries(attributes).map(([k, v]) => {
-            return `${k}="${v}"`
-        }).join(' ')
+            return `${k}="${v}"`;
+        }).join(' ');
     }
 
     return `<${tag} ${styleStr} ${attributesStr}>${content}</${tag}>`;

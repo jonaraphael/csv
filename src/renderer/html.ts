@@ -46,7 +46,7 @@ export class HtmlView {
                     <p>No data found in CSV.</p>
                 </body>
                 </html>
-            `
+            `;
         }
 
         return this.createHtml();
@@ -77,7 +77,7 @@ export class HtmlView {
                     "data-row": "0",
                     "data-col": `${i}`
                 },
-            )
+            );
         }
 
         tableHead = htmlElement("thead", htmlElement("tr", tableHead));
@@ -90,7 +90,7 @@ export class HtmlView {
         for (let rowIndex = 1; rowIndex < this.parsedCsv.length; rowIndex++) {
             const row = this.parsedCsv[rowIndex];
 
-            let tableRow = ""
+            let tableRow = "";
             for (let i = 0; i < row.length; i++) {
                 const width = Math.min(this.columnWidths[i], 100);
                 const color = this.columnColors[i];
@@ -112,7 +112,7 @@ export class HtmlView {
                         "data-col": `${i}`,
                         "tabindex": "0"
                     },
-                )
+                );
             }
 
             tableBody += htmlElement("tr", tableRow);

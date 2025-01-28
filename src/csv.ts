@@ -29,7 +29,7 @@ export function parse(strData: string, strDelimiter?: string | undefined): strin
     let arrData: string[][] = [[]];
 
     // Return empty arrays for empty string
-    if (!strData) return arrData;
+    if (!strData) { return arrData; }
 
     // Create an array to hold our individual pattern
     // matching groups.

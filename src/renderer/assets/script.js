@@ -48,7 +48,7 @@ table.addEventListener('mousedown', (e) => {
         return;
     }
 
-    if (e.target.tagName !== 'TD' && e.target.tagName !== 'TH') return;
+    if (e.target.tagName !== 'TD' && e.target.tagName !== 'TH') { return; }
 
     if (editingCell && editingCell !== e.target) {
         editingCell.blur();
@@ -70,7 +70,7 @@ table.addEventListener('mousedown', (e) => {
 });
 
 table.addEventListener('mousemove', (e) => {
-    if (!isSelecting) return;
+    if (!isSelecting) { return; }
     if (e.target.tagName === 'TD' || e.target.tagName === 'TH') {
         endCell = e.target;
         selectRange(getCellCoords(startCell), getCellCoords(endCell));
@@ -78,7 +78,7 @@ table.addEventListener('mousemove', (e) => {
 });
 
 table.addEventListener('mouseup', (e) => {
-    if (!isSelecting) return;
+    if (!isSelecting) { return; }
     isSelecting = false;
     if (startCell === endCell) {
         clearSelection();
@@ -110,7 +110,7 @@ function setCursorToEnd(cell) {
 
 // Start editing a cell
 function editCell(cell) {
-    if (editingCell === cell) return;
+    if (editingCell === cell) { return; }
     if (editingCell) {
         editingCell.blur();
     }
@@ -124,7 +124,7 @@ function editCell(cell) {
 
 // Handle blur event to stop editing
 table.addEventListener('blur', (e) => {
-    if (!editingCell) return;
+    if (!editingCell) { return; }
     if (e.target === editingCell) {
         const row = parseInt(editingCell.getAttribute('data-row'));
         const col = parseInt(editingCell.getAttribute('data-col'));
@@ -192,7 +192,7 @@ table.addEventListener('keydown', (e) => {
 
 // Implement copy selection to clipboard
 function copySelectionToClipboard() {
-    if (currentSelection.length === 0) return;
+    if (currentSelection.length === 0) { return; }
     const coords = currentSelection.map(cell => getCellCoords(cell));
     const minRow = Math.min(...coords.map(c => c.row));
     const maxRow = Math.max(...coords.map(c => c.row));

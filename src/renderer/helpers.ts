@@ -123,7 +123,7 @@ export function computeColumnWidths(data: string[][]): number[] {
 }
 
 export function getMaxColLen(data: string[][]): number {
-    return Math.max(...data.map(row => row.length))
+    return Math.max(...data.map(row => row.length));
 }
 
 export function transpose(data: string[][]): string[][] {
@@ -136,5 +136,5 @@ export function transpose(data: string[][]): string[][] {
             columnData[i].push(row[i] || "");
         }
     }
-    return columnData
+    return columnData;
 }
