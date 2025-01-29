@@ -38,7 +38,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "npm run compile:main && npm run compile:tests",
     "compile:main": "vite build --config ./vite.config.ts",
-    "compile:tests": "tsc -p ./tsconfig.tests.json",
+    "compile:tests": "vite build --config ./vite.config.tests.ts",
     "watch": "vite build --watch",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
