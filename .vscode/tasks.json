@@ -6,7 +6,23 @@
 		{
 			"type": "npm",
 			"script": "watch",
-			"problemMatcher": "$tsc-watch",
+			"problemMatcher": {
+				"owner": "vite",
+				"source": "Vite Build Watch",
+				"fileLocation": "autoDetect",
+				"pattern": {
+					"regexp": "^(.+?):(\\d+):(\\d+):\\s+.+?:\\s+(.+)$",
+					"file": 1,
+					"line": 2,
+					"column": 3,
+					"message": 4
+				},
+				"background": {
+					"activeOnStart": true,
+					"beginsPattern": "build started\\.\\.\\.",
+					"endsPattern": "built in \\d+|^$"
+				}
+			},
 			"isBackground": true,
 			"presentation": {
 				"reveal": "never"
