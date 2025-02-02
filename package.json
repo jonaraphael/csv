@@ -8,7 +8,7 @@
     "type": "git",
     "url": "https://github.com/jonaraphael/csv.git"
   },
-  "version": "1.0.5",
+  "version": "1.0.6",
   "engines": {
     "vscode": "^1.93.0"
   },
@@ -18,10 +18,46 @@
     "Other"
   ],
   "activationEvents": [
-    "onCustomEditor:csv.editor"
+    "onLanguage:csv",
+    "onCommand:csv.toggleExtension",
+    "onCommand:csv.toggleHeader",
+    "onCommand:csv.toggleSerialIndex",
+    "onCommand:csv.changeSeparator"
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "commands": [
+      { "command": "csv.toggleExtension", "title": "CSV: Toggle Extension On/Off" },
+      { "command": "csv.toggleHeader", "title": "CSV: Toggle Treating First Row as Header" },
+      { "command": "csv.toggleSerialIndex", "title": "CSV: Toggle Adding Serial Index Column" },
+      { "command": "csv.changeSeparator", "title": "CSV: Change CSV Separator" }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "CSV Extension Configuration",
+      "properties": {
+        "csv.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/Disable the CSV custom editor."
+        },
+        "csv.treatFirstRowAsHeader": {
+          "type": "boolean",
+          "default": true,
+          "description": "Treat the first row of CSV as a header."
+        },
+        "csv.addSerialIndex": {
+          "type": "boolean",
+          "default": false,
+          "description": "Add a serial index column at the left of the table."
+        },
+        "csv.separator": {
+          "type": "string",
+          "default": ",",
+          "description": "CSV separator to use."
+        }
+      }
+    },
     "customEditors": [
       {
         "viewType": "csv.editor",
@@ -35,22 +71,14 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src",
-    "test": "vscode-test"
+    "compile": "tsc -p ./"
+  },
+  "dependencies": {
+    "papaparse": "^5.4.1"
   },
   "devDependencies": {
-    "@types/mocha": "^10.0.9",
-    "@types/node": "20.x",
-    "@types/vscode": "^1.93.0",
-    "@typescript-eslint/eslint-plugin": "^8.10.0",
-    "@typescript-eslint/parser": "^8.7.0",
-    "@vscode/test-cli": "^0.0.10",
-    "@vscode/test-electron": "^2.4.1",
-    "eslint": "^9.13.0",
-    "typescript": "^5.6.3"
+    "@types/node": "^14.0.0",
+    "@types/vscode": "^1.60.0",
+    "typescript": "^4.4.3"
   }
 }
