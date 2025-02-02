@@ -509,7 +509,9 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           e.preventDefault(); copySelectionToClipboard(); return;
         }
         if (editingCell && ((e.ctrlKey || e.metaKey) && e.key === 's')) {
-          e.preventDefault(); editingCell.blur(); vscode.postMessage({ type: 'save' });
+          e.preventDefault();
+          editingCell.blur();
+          vscode.postMessage({ type: 'save' });
         }
         if (editingCell && e.key === 'Enter') {
           e.preventDefault();
@@ -549,6 +551,17 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         cell.classList.add('editing');
         cell.setAttribute('contenteditable', 'true');
         cell.focus();
+        // Attach a blur handler to commit cell changes.
+        const onBlurHandler = () => {
+          const value = cell.innerText;
+          const coords = getCellCoords(cell);
+          vscode.postMessage({ type: 'editCell', row: coords.row, col: coords.col, value: value });
+          cell.removeAttribute('contenteditable');
+          cell.classList.remove('editing');
+          editingCell = null;
+          cell.removeEventListener('blur', onBlurHandler);
+        };
+        cell.addEventListener('blur', onBlurHandler);
         event ? setCursorAtPoint(cell, event.clientX, event.clientY) : setCursorToEnd(cell);
       };
       table.addEventListener('dblclick', e => { const target = e.target; if(target.tagName !== 'TD' && target.tagName !== 'TH') return; clearSelection(); editCell(target, e); });
