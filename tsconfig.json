@@ -1,14 +1,13 @@
 {
 	"compilerOptions": {
-	  "module": "Node16",
-	  "target": "ES2022",
-	  "outDir": "out",
-	  "lib": [
-		"ES2022"
-	  ],
-	  "sourceMap": true,
-	  "rootDir": "src",
-	  "strict": true
-	}
+	  "target": "ES2019",
+	  "module": "commonjs",
+	  "lib": ["es2019", "dom"],
+	  "outDir": "./out",
+	  "strict": true,
+	  "esModuleInterop": true
+	},
+	"include": ["./**/*.ts"],
+	"exclude": ["node_modules"]
   }
   
