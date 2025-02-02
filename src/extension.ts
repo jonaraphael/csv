@@ -524,11 +524,24 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           e.preventDefault();
           const { row, col } = getCellCoords(editingCell);
           editingCell.blur();
-          const nextCell = table.querySelector('td[data-row="'+row+'"][data-col="'+(col+1)+'"]');
-          if (nextCell) editCell(nextCell);
+          let nextCell;
+          if (e.shiftKey) {
+            // Shift+Tab: move to the previous cell (decrement column index)
+            nextCell = table.querySelector('td[data-row="'+row+'"][data-col="'+(col-1)+'"]');
+          } else {
+            // Tab: move to the next cell (increment column index)
+            nextCell = table.querySelector('td[data-row="'+row+'"][data-col="'+(col+1)+'"]');
+          }
+          if (nextCell) {
+            editCell(nextCell);
+          }
         }
         if (editingCell && e.key === 'Escape') {
           e.preventDefault(); editingCell.innerText = originalCellValue; editingCell.blur();
+        }
+        // If not editing, pressing Escape clears the selection.
+        if (!editingCell && e.key === 'Escape') {
+          clearSelection();
         }
       });
       const selectAllCells = () => { clearSelection(); document.querySelectorAll('td, th').forEach(cell => { cell.classList.add('selected'); currentSelection.push(cell); }); };
@@ -590,6 +603,12 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           const cell = table.querySelector('td[data-row="'+row+'"][data-col="'+col+'"]');
           if(cell){ cell.innerText = value; }
           isUpdating = false;
+        }
+      });
+      // Global Escape handler to clear selection when not editing.
+      document.addEventListener('keydown', e => {
+        if(!editingCell && e.key === 'Escape'){
+          clearSelection();
         }
       });
     </script>

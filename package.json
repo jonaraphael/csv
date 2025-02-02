@@ -26,6 +26,14 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "languages": [
+      {
+        "id": "csv",
+        "extensions": [".csv"],
+        "aliases": ["CSV", "csv"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
     "commands": [
       { "command": "csv.toggleExtension", "title": "CSV: Toggle Extension On/Off" },
       { "command": "csv.toggleHeader", "title": "CSV: Toggle Treating First Row as Header" },
