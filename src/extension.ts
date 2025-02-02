@@ -221,7 +221,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       const header = data[0];
       tableHtml += `<thead><tr>`;
       if (addSerialIndex) {
-        tableHtml += `<th style="min-width: 4ch; max-width: 4ch; border: 1px solid #555; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: #888; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">#</th>`;
+        tableHtml += `<th style="min-width: 4ch; max-width: 4ch; border: 1px solid #555; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: #888; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="0" data-col="-1">#</th>`;
       }
       for (let i = 0; i < header.length; i++) {
         tableHtml += `<th style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid #555; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="0" data-col="${i}">${header[i]}</th>`;
@@ -257,6 +257,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     }
     tableHtml += `</table>`;
     const nonce = getNonce();
+    // The inline script now includes additional selection mode handling.
     webview.html = `<!DOCTYPE html>
 <html>
   <head>
@@ -278,45 +279,122 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     <div class="table-container">${tableHtml}</div>
     <script nonce="${nonce}">
       const vscode = acquireVsCodeApi();
-      let isUpdating = false, isSelecting = false, anchorCell = null, currentSelection = [], startCell = null, endCell = null, editingCell = null, originalCellValue = null;
-      const table = document.querySelector('table');
-      function getCellCoords(cell) { return { row: parseInt(cell.getAttribute('data-row')), col: parseInt(cell.getAttribute('data-col')) }; }
-      function clearSelection() { currentSelection.forEach(c => c.classList.remove('selected')); currentSelection = []; }
+      let isUpdating = false, isSelecting = false, anchorCell = null, currentSelection = [];
+      let startCell = null, endCell = null;
+      let selectionMode = "cell"; // "cell", "column", or "row"
+      let startRow = 0, endRow = 0, startCol = 0, endCol = 0;
+      function getCellCoords(cell) {
+        return { row: parseInt(cell.getAttribute('data-row')), col: parseInt(cell.getAttribute('data-col')) };
+      }
+      function clearSelection() {
+        currentSelection.forEach(c => c.classList.remove('selected'));
+        currentSelection = [];
+      }
       function selectRange(start, end) {
         clearSelection();
-        const startRow = Math.min(start.row, end.row), endRow = Math.max(start.row, end.row);
-        const startCol = Math.min(start.col, end.col), endCol = Math.max(start.col, end.col);
-        for (let r = startRow; r <= endRow; r++) {
-          for (let c = startCol; c <= endCol; c++) {
+        const minRow = Math.min(start.row, end.row), maxRow = Math.max(start.row, end.row);
+        const minCol = Math.min(start.col, end.col), maxCol = Math.max(start.col, end.col);
+        for (let r = minRow; r <= maxRow; r++) {
+          for (let c = minCol; c <= maxCol; c++) {
             const selector = (r === 0 ? 'th' : 'td') + '[data-row="'+r+'"][data-col="'+c+'"]';
             const selCell = table.querySelector(selector);
             if (selCell) { selCell.classList.add('selected'); currentSelection.push(selCell); }
           }
         }
       }
-      table.addEventListener('mousedown', e => {
+      function selectFullColumnRange(col1, col2) {
+        clearSelection();
+        const minCol = Math.min(col1, col2), maxCol = Math.max(col1, col2);
+        const rows = table.querySelectorAll('tr');
+        rows.forEach(row => {
+          Array.from(row.children).forEach(cell => {
+            const cellCol = cell.getAttribute('data-col');
+            if (cellCol !== null && cellCol !== "" && parseInt(cellCol) >= minCol && parseInt(cellCol) <= maxCol) {
+              cell.classList.add('selected');
+              currentSelection.push(cell);
+            }
+          });
+        });
+      }
+      function selectFullRowRange(row1, row2) {
+        clearSelection();
+        const minRow = Math.min(row1, row2), maxRow = Math.max(row1, row2);
+        const rows = table.querySelectorAll('tr');
+        rows.forEach(row => {
+          Array.from(row.children).forEach(cell => {
+            const r = cell.getAttribute('data-row');
+            if (r !== null && parseInt(r) >= minRow && parseInt(r) <= maxRow) {
+              cell.classList.add('selected');
+              currentSelection.push(cell);
+            }
+          });
+        });
+      }
+      const table = document.querySelector('table');
+      table.addEventListener('mousedown', (e) => {
         if (e.target.tagName !== 'TD' && e.target.tagName !== 'TH') return;
-        if (editingCell && editingCell !== e.target) editingCell.blur();
-        if (e.shiftKey) { startCell = startCell || e.target; endCell = e.target; isSelecting = true; }
-        else { startCell = e.target; endCell = e.target; isSelecting = true; }
+        const target = e.target;
+        if (target.tagName === 'TH') { selectionMode = "column"; }
+        else if (target.getAttribute('data-col') === '-1') { selectionMode = "row"; }
+        else { selectionMode = "cell"; }
+        startCell = target; endCell = target;
+        isSelecting = true;
         e.preventDefault();
       });
-      table.addEventListener('mousemove', e => {
+      table.addEventListener('mousemove', (e) => {
         if (!isSelecting) return;
-        if (e.target.tagName === 'TD' || e.target.tagName === 'TH') {
-          endCell = e.target;
-          selectRange(getCellCoords(startCell), getCellCoords(endCell));
+        let target = e.target;
+        if (selectionMode === "cell") {
+          if (target.tagName === 'TD' || target.tagName === 'TH') {
+            endCell = target;
+            selectRange(getCellCoords(startCell), getCellCoords(endCell));
+          }
+        } else if (selectionMode === "column") {
+          // If target is not a TH, try to find the corresponding TH
+          if (target.tagName !== 'TH') {
+            const col = target.getAttribute('data-col');
+            target = table.querySelector('thead th[data-col="'+col+'"]') || target;
+          }
+          endCell = target;
+          const startCol = parseInt(startCell.getAttribute('data-col'));
+          const endCol = parseInt(endCell.getAttribute('data-col'));
+          selectFullColumnRange(startCol, endCol);
+        } else if (selectionMode === "row") {
+          // If target is not an index cell (data-col "-1"), find the corresponding one
+          if (target.getAttribute('data-col') !== '-1') {
+            const row = target.getAttribute('data-row');
+            target = table.querySelector('td[data-col="-1"][data-row="'+row+'"]') || target;
+          }
+          endCell = target;
+          const startRow = parseInt(startCell.getAttribute('data-row'));
+          const endRow = parseInt(endCell.getAttribute('data-row'));
+          selectFullRowRange(startRow, endRow);
         }
       });
-      table.addEventListener('mouseup', e => {
+
+      table.addEventListener('mouseup', (e) => {
         if (!isSelecting) return;
         isSelecting = false;
-        if (startCell === endCell) { clearSelection(); editCell(startCell); }
-        else { anchorCell = startCell; }
+        if (selectionMode === "cell") {
+          if (startCell === endCell) { clearSelection(); editCell(startCell); }
+          else { anchorCell = startCell; }
+        } else if (selectionMode === "column") {
+          const startCol = parseInt(startCell.getAttribute('data-col'));
+          const endCol = parseInt(endCell.getAttribute('data-col'));
+          selectFullColumnRange(startCol, endCol);
+          anchorCell = startCell;
+        } else if (selectionMode === "row") {
+          const startRow = parseInt(startCell.getAttribute('data-row'));
+          const endRow = parseInt(endCell.getAttribute('data-row'));
+          selectFullRowRange(startRow, endRow);
+          anchorCell = startCell;
+        }
       });
-      table.addEventListener('click', e => {
+      table.addEventListener('click', (e) => {
         if (e.shiftKey && anchorCell && (e.target.tagName === 'TD' || e.target.tagName === 'TH')) {
-          selectRange(getCellCoords(anchorCell), getCellCoords(e.target));
+          if (selectionMode === "cell") { selectRange(getCellCoords(anchorCell), getCellCoords(e.target)); }
+          else if (selectionMode === "column") { selectFullColumnRange(parseInt(anchorCell.getAttribute('data-col')), parseInt(e.target.getAttribute('data-col'))); }
+          else if (selectionMode === "row") { selectFullRowRange(parseInt(anchorCell.getAttribute('data-row')), parseInt(e.target.getAttribute('data-row'))); }
         } else if (!e.shiftKey && (e.target.tagName === 'TD' || e.target.tagName === 'TH')) {
           anchorCell = e.target;
         }
@@ -332,10 +410,10 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         cell.focus();
         setCursorToEnd(cell);
       }
-      table.addEventListener('blur', e => {
+      table.addEventListener('blur', (e) => {
         if (!editingCell) return;
         if (e.target === editingCell) {
-          const row = parseInt(editingCell.getAttribute('data-row')), col = parseInt(editingCell.getAttribute('data-col'));
+          const { row, col } = getCellCoords(editingCell);
           const value = editingCell.innerText;
           editingCell.removeAttribute('contenteditable');
           editingCell.classList.remove('editing');
@@ -343,7 +421,9 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           vscode.postMessage({ type: 'editCell', row, col, value });
         }
       }, true);
-      table.addEventListener('keydown', e => {
+      table.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'a') return; // allow default cmd/ctrl+a
+        if ((e.ctrlKey || e.metaKey) && e.key === 'f') return; // allow default cmd/ctrl+f
         if (editingCell && ((e.ctrlKey || e.metaKey) && e.key === 's')) {
           e.preventDefault();
           editingCell.blur();
@@ -351,7 +431,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         }
         if (editingCell && e.key === 'Enter') {
           e.preventDefault();
-          const row = parseInt(editingCell.getAttribute('data-row')), col = parseInt(editingCell.getAttribute('data-col'));
+          const { row, col } = getCellCoords(editingCell);
           editingCell.blur();
           const nextRow = row + 1;
           const nextCell = table.querySelector('td[data-row="'+nextRow+'"][data-col="'+col+'"]');
@@ -359,10 +439,9 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         }
         if (editingCell && e.key === 'Tab') {
           e.preventDefault();
-          const row = parseInt(editingCell.getAttribute('data-row')), col = parseInt(editingCell.getAttribute('data-col'));
+          const { row, col } = getCellCoords(editingCell);
           editingCell.blur();
-          const nextCol = col + 1;
-          const nextCell = table.querySelector('td[data-row="'+row+'"][data-col="'+nextCol+'"]');
+          const nextCell = table.querySelector('td[data-row="'+row+'"][data-col="'+(col+1)+'"]');
           if (nextCell) editCell(nextCell);
         }
         if (editingCell && e.key === 'Escape') {
@@ -402,6 +481,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           isUpdating = false;
         }
       });
+      let editingCell = null, originalCellValue = "";
     </script>
   </body>
 </html>`;
