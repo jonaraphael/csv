@@ -421,9 +421,14 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           vscode.postMessage({ type: 'editCell', row, col, value });
         }
       }, true);
-      table.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'a') return; // allow default cmd/ctrl+a
-        if ((e.ctrlKey || e.metaKey) && e.key === 'f') return; // allow default cmd/ctrl+f
+      document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'a') return; // allow default
+        if ((e.ctrlKey || e.metaKey) && e.key === 'f') return; // allow default
+        if ((e.ctrlKey || e.metaKey) && e.key === 'c' && currentSelection.length > 0) {
+          e.preventDefault();
+          copySelectionToClipboard();
+          return;
+        }
         if (editingCell && ((e.ctrlKey || e.metaKey) && e.key === 's')) {
           e.preventDefault();
           editingCell.blur();
@@ -433,8 +438,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           e.preventDefault();
           const { row, col } = getCellCoords(editingCell);
           editingCell.blur();
-          const nextRow = row + 1;
-          const nextCell = table.querySelector('td[data-row="'+nextRow+'"][data-col="'+col+'"]');
+          const nextCell = table.querySelector('td[data-row="'+(row+1)+'"][data-col="'+col+'"]');
           if (nextCell) editCell(nextCell);
         }
         if (editingCell && e.key === 'Tab') {
@@ -448,10 +452,6 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           e.preventDefault();
           editingCell.innerText = originalCellValue;
           editingCell.blur();
-        }
-        if ((e.ctrlKey || e.metaKey) && e.key === 'c' && currentSelection.length > 0) {
-          e.preventDefault();
-          copySelectionToClipboard();
         }
       });
       function copySelectionToClipboard() {
