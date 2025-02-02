@@ -418,6 +418,15 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         updateFindStatus();
       }
 
+      function selectAllCells() {
+        clearSelection();
+        const cells = document.querySelectorAll('td, th');
+        cells.forEach(cell => {
+          cell.classList.add('selected');
+          currentSelection.push(cell);
+        });
+      }
+
       findInput.addEventListener('input', updateFindMatches);
 
       findInput.addEventListener('keydown', (e) => {
@@ -466,7 +475,12 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           return;
         }
 
-        if ((e.ctrlKey || e.metaKey) && e.key === 'a') return;
+        // If cmd/ctrl+a is pressed and no cell is currently being edited, select all cells.
+        if ((e.ctrlKey || e.metaKey) && e.key === 'a' && !editingCell) {
+          e.preventDefault();
+          selectAllCells();
+          return;
+        }
         if ((e.ctrlKey || e.metaKey) && e.key === 'c' && currentSelection.length > 0) {
           e.preventDefault();
           copySelectionToClipboard();
