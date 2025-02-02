@@ -218,23 +218,24 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       console.error('CSV: Error parsing CSV content', error);
       result = { data: [] };
     }
+    const fontFamily = config.get<string>('fontFamily', 'Menlo');
     const data = result.data as string[][];
-    const htmlContent = this.generateHtmlContent(data, treatHeader, addSerialIndex);
+    const htmlContent = this.generateHtmlContent(data, treatHeader, addSerialIndex, fontFamily);
     const nonce = getNonce();
-    this.currentWebviewPanel!.webview.html = this.wrapHtml(htmlContent, nonce);
+    this.currentWebviewPanel!.webview.html = this.wrapHtml(htmlContent, nonce, fontFamily);
   }
 
   /**
    * Generates an HTML table from CSV data.
    */
-  private generateHtmlContent(data: string[][], treatHeader: boolean, addSerialIndex: boolean): string {
+  private generateHtmlContent(data: string[][], treatHeader: boolean, addSerialIndex: boolean, fontFamily: string): string {
     if (data.length === 0) {
       return `<!DOCTYPE html>
 <html>
   <head>
     <meta charset="UTF-8">
     <title>CSV</title>
-    <style>body { font-family: monospace; padding: 10px; }</style>
+    <style>body { font-family: ${fontFamily}; padding: 10px; }</style>
   </head>
   <body><p>No data found in CSV.</p></body>
 </html>`;
@@ -292,7 +293,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   /**
    * Wraps the provided HTML content in a complete HTML document with a strict Content Security Policy.
    */
-  private wrapHtml(content: string, nonce: string): string {
+  private wrapHtml(content: string, nonce: string, fontFamily: string): string {
     const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
     return `<!DOCTYPE html>
 <html>
@@ -302,7 +303,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CSV</title>
     <style nonce="${nonce}">
-      body { font-family: monospace; margin: 0; padding: 0; user-select: none; }
+      body { font-family: "${fontFamily}"; margin: 0; padding: 0; user-select: none; }
       .table-container { overflow-x: auto; max-height: 100vh; }
       table { border-collapse: collapse; width: max-content; }
       th, td { padding: 4px 8px; border: 1px solid #555; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -322,7 +323,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         box-shadow: 0 2px 8px rgba(0,0,0,0.15);
         z-index: 1000;
         display: none;
-        font-family: sans-serif;
+        font-family: ${fontFamily};
       }
       #findWidget input {
         border: 1px solid #ccc;
@@ -683,7 +684,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     const saturationOffset = ((columnIndex * 7) % 31) - 15;
     const saturation = saturationOffset + (isDark ? 60 : 80);
     const lightnessOffset = ((columnIndex * 13) % 31) - 15;
-    const lightness = lightnessOffset + (isDark ? 50 : 60);
+    const lightness = lightnessOffset + (isDark ? 70 : 30);
     const hueOffset = ((columnIndex * 17) % 31) - 15;
     const finalHue = (hueRange + hueOffset + 360) % 360;
     return this.hslToHex(finalHue, saturation, lightness);
