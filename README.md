@@ -87,8 +87,8 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 
 ## Support
 
-Have questions, suggestions, or encountered an issue?  
-- Open an issue on [GitHub](https://github.com/jonaraphael/csv.git/issues) and let us know how we can help!
+Have questions, suggestions, or encountered an issue?
+- Open an issue on [GitHub](https://github.com/jonaraphael/csv/issues) and let us know how we can help!
 
 ---
 
