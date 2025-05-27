@@ -276,11 +276,11 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       data.forEach((row, r) => {
         tableHtml += `<tr>${
           addSerialIndex
-            ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid #555; color: #888;" data-row="${r + 1}" data-col="-1">${r + 1}</td>`
+            ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid #555; color: #888;" data-row="${r}" data-col="-1">${r + 1}</td>`
             : ''
         }`;
         row.forEach((cell, i) => {
-          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid #555; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${r + 1}" data-col="${i}">${cell}</td>`;
+          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid #555; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${r}" data-col="${i}">${cell}</td>`;
         });
         tableHtml += `</tr>`;
       });
@@ -364,6 +364,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       let startCell = null, endCell = null, selectionMode = "cell";
       let editingCell = null, originalCellValue = "";
       const table = document.querySelector('table');
+      const hasHeader = document.querySelector('thead') !== null;
       const getCellCoords = cell => ({ row: parseInt(cell.getAttribute('data-row')), col: parseInt(cell.getAttribute('data-col')) });
       const clearSelection = () => { currentSelection.forEach(c => c.classList.remove('selected')); currentSelection = []; };
       table.addEventListener('mousedown', e => {
@@ -424,7 +425,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         const minCol = Math.min(start.col, end.col), maxCol = Math.max(start.col, end.col);
         for(let r = minRow; r <= maxRow; r++){
           for(let c = minCol; c <= maxCol; c++){
-            const selector = (r === 0 ? 'th' : 'td') + '[data-row="'+r+'"][data-col="'+c+'"]';
+            const selector = (hasHeader && r === 0 ? 'th' : 'td') + '[data-row="'+r+'"][data-col="'+c+'"]';
             const selCell = table.querySelector(selector);
             if(selCell){ selCell.classList.add('selected'); currentSelection.push(selCell); }
           }
@@ -588,7 +589,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         for(let r = minRow; r <= maxRow; r++){
           let rowVals = [];
           for(let c = minCol; c <= maxCol; c++){
-            const selector = (r === 0 ? 'th' : 'td') + '[data-row="'+r+'"][data-col="'+c+'"]';
+            const selector = (hasHeader && r === 0 ? 'th' : 'td') + '[data-row="'+r+'"][data-col="'+c+'"]';
             const cell = table.querySelector(selector);
             rowVals.push(cell ? cell.innerText : '');
           }
