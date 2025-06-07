@@ -311,7 +311,8 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           : ''
       }`;
       headerRow.forEach((cell, i) => {
-        tableHtml += `<th style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid #555; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="0" data-col="${i}">${cell}</th>`;
+        const safe = this.escapeHtml(cell);
+        tableHtml += `<th style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid #555; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="0" data-col="${i}">${safe}</th>`;
       });
       tableHtml += `</tr></thead><tbody>`;
       bodyData.forEach((row, r) => {
@@ -321,7 +322,8 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
             : ''
         }`;
         row.forEach((cell, i) => {
-          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid #555; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${r + 1}" data-col="${i}">${cell}</td>`;
+          const safe = this.escapeHtml(cell);
+          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid #555; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${r + 1}" data-col="${i}">${safe}</td>`;
         });
         tableHtml += `</tr>`;
       });
@@ -335,7 +337,8 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
             : ''
         }`;
         row.forEach((cell, i) => {
-          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid #555; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${r}" data-col="${i}">${cell}</td>`;
+          const safe = this.escapeHtml(cell);
+          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid #555; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${r}" data-col="${i}">${safe}</td>`;
         });
         tableHtml += `</tr>`;
       });
@@ -713,6 +716,19 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     }
     console.log(`CSV: Column widths: ${widths}`);
     return widths;
+  }
+
+  /**
+   * Escapes HTML special characters in a string to prevent injection.
+   */
+  private escapeHtml(text: string): string {
+    return text.replace(/[&<>"']/g, m => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    })[m] as string);
   }
 
   /**

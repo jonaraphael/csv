@@ -86,6 +86,24 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 
 ---
 
+## Development
+
+Clone the repository and run the following commands:
+
+```bash
+npm install
+npm run lint
+npm test
+```
+
+To create a VS Code extension package, run:
+
+```bash
+npm run package
+```
+
+---
+
 ## Support
 
 Have questions, suggestions, or encountered an issue?
@@ -95,4 +113,4 @@ Have questions, suggestions, or encountered an issue?
 
 ## License
 
-This extension is licensed under the [MIT License](https://opensource.org/licenses/MIT).
+This extension is licensed under the [MIT License](LICENSE).
