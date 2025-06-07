@@ -103,6 +103,12 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           await vscode.env.clipboard.writeText(e.text);
           console.log('CSV: Copied to clipboard');
           break;
+        case 'insertColumn':
+          await this.insertColumn(e.index);
+          break;
+        case 'deleteColumn':
+          await this.deleteColumn(e.index);
+          break;
       }
     });
 
@@ -197,6 +203,55 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     } finally {
       this.isSaving = false;
     }
+  }
+
+  /**
+   * Inserts a new empty column at the specified index for all rows.
+   */
+  private async insertColumn(index: number) {
+    this.isUpdatingDocument = true;
+    const config = vscode.workspace.getConfiguration('csv');
+    const separator = config.get<string>('separator', ',');
+    const text = this.document.getText();
+    const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
+    const data = result.data as string[][];
+    for (const row of data) {
+      if (index > row.length) {
+        while (row.length < index) row.push('');
+      }
+      row.splice(index, 0, '');
+    }
+    const newText = Papa.unparse(data, { delimiter: separator });
+    const fullRange = new vscode.Range(0, 0, this.document.lineCount, this.document.lineAt(this.document.lineCount - 1).text.length);
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(this.document.uri, fullRange, newText);
+    await vscode.workspace.applyEdit(edit);
+    this.isUpdatingDocument = false;
+    this.updateWebviewContent();
+  }
+
+  /**
+   * Deletes the column at the specified index from all rows.
+   */
+  private async deleteColumn(index: number) {
+    this.isUpdatingDocument = true;
+    const config = vscode.workspace.getConfiguration('csv');
+    const separator = config.get<string>('separator', ',');
+    const text = this.document.getText();
+    const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
+    const data = result.data as string[][];
+    for (const row of data) {
+      if (index < row.length) {
+        row.splice(index, 1);
+      }
+    }
+    const newText = Papa.unparse(data, { delimiter: separator });
+    const fullRange = new vscode.Range(0, 0, this.document.lineCount, this.document.lineAt(this.document.lineCount - 1).text.length);
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(this.document.uri, fullRange, newText);
+    await vscode.workspace.applyEdit(edit);
+    this.isUpdatingDocument = false;
+    this.updateWebviewContent();
   }
 
   // ───────────── Webview Rendering Methods ─────────────
@@ -348,6 +403,9 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         cursor: pointer;
       }
       #findWidget button:hover { background: #005f9e; }
+      #contextMenu { position: absolute; display: none; background: ${isDark ? '#2d2d2d' : '#ffffff'}; border: 1px solid ${isDark ? '#555' : '#ccc'}; z-index: 10000; font-family: ${fontFamily}; }
+      #contextMenu div { padding: 4px 12px; cursor: pointer; }
+      #contextMenu div:hover { background: ${isDark ? '#3d3d3d' : '#eeeeee'}; }
     </style>
   </head>
   <body>
@@ -357,6 +415,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       <span id="findStatus"></span>
       <button id="findClose">✕</button>
     </div>
+    <div id="contextMenu"></div>
     <script nonce="${nonce}">
       document.body.setAttribute('tabindex', '0'); document.body.focus();
       const vscode = acquireVsCodeApi();
@@ -367,6 +426,27 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       const hasHeader = document.querySelector('thead') !== null;
       const getCellCoords = cell => ({ row: parseInt(cell.getAttribute('data-row')), col: parseInt(cell.getAttribute('data-col')) });
       const clearSelection = () => { currentSelection.forEach(c => c.classList.remove('selected')); currentSelection = []; };
+      const contextMenu = document.getElementById('contextMenu');
+      const showContextMenu = (x, y, col) => {
+        contextMenu.innerHTML = '';
+        const item = (label, cb) => { const d = document.createElement('div'); d.innerText = label; d.addEventListener('click', () => { cb(); contextMenu.style.display = 'none'; }); contextMenu.appendChild(d); };
+        item('Insert Column Left', () => vscode.postMessage({ type: 'insertColumn', index: col }));
+        item('Insert Column Right', () => vscode.postMessage({ type: 'insertColumn', index: col + 1 }));
+        item('Delete Column', () => vscode.postMessage({ type: 'deleteColumn', index: col }));
+        contextMenu.style.left = x + 'px';
+        contextMenu.style.top = y + 'px';
+        contextMenu.style.display = 'block';
+      };
+      document.addEventListener('click', () => { contextMenu.style.display = 'none'; });
+      table.addEventListener('contextmenu', e => {
+        const target = e.target;
+        if(target.tagName !== 'TH' && target.tagName !== 'TD') return;
+        const colAttr = target.getAttribute('data-col');
+        const col = parseInt(colAttr);
+        if(isNaN(col) || col === -1) return;
+        e.preventDefault();
+        showContextMenu(e.pageX, e.pageY, col);
+      });
       table.addEventListener('mousedown', e => {
         if(e.target.tagName !== 'TD' && e.target.tagName !== 'TH') return;
         if(editingCell){ if(e.target !== editingCell) editingCell.blur(); else return; } else clearSelection();

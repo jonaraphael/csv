@@ -25,6 +25,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Sticky Headers:** Keep column titles in view as you scroll through large datasets.
 - **Enhanced Keyboard Navigation:** Navigate cells with Tab/Shift+Tab and use keyboard shortcuts for quick editing, saving, and selection.
 - **Advanced Multi-Cell Selection:** Easily select and copy blocks of data, then paste them elsewhere as properly formatted CSV.
+- **Insert/Delete Columns:** Right-click any column header to insert a column or remove the selected column.
 - **Find & Highlight:** Built-in find widget helps you search for text within your CSV with real-time highlighting and navigation through matches.
 - **Preserved CSV Integrity:** All modifications respect CSV formatting—no unwanted extra characters or formatting issues.
 - **Optimized for Performance:** Designed for medium-sized datasets, ensuring a smooth editing experience without compromising on functionality.
@@ -62,7 +63,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 
 ## Planned Improvements
 
-- **Row and Column Insertion/Deletion:** Quickly add or remove rows or columns without leaving the editor.
+- **Row Insertion/Deletion:** Quickly add or remove rows without leaving the editor.
 
 ---
 
