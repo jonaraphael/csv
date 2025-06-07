@@ -25,24 +25,22 @@ export function activate(context: vscode.ExtensionContext) {
     // If the extension was just enabled, reopen visible CSV text editors using
     // the custom editor so users don't need to close and reopen files.
     if (key === 'enabled' && newVal) {
-      await Promise.all(
-        vscode.window.visibleTextEditors.map(async editor => {
-          const { document, viewColumn } = editor;
-          if (
-            document.languageId === 'csv' &&
-            !CsvEditorProvider.editors.some(
-              e => e.documentUri.toString() === document.uri.toString()
-            )
-          ) {
-            await vscode.commands.executeCommand(
-              'vscode.openWith',
-              document.uri,
-              CsvEditorProvider.viewType,
-              { viewColumn }
-            );
-          }
-        })
-      );
+      for (const editor of vscode.window.visibleTextEditors) {
+        const { document, viewColumn } = editor;
+        if (
+          document.languageId === 'csv' &&
+          !CsvEditorProvider.editors.some(
+            e => e.documentUri.toString() === document.uri.toString()
+          )
+        ) {
+          await vscode.commands.executeCommand(
+            'vscode.openWith',
+            document.uri,
+            CsvEditorProvider.viewType,
+            { viewColumn }
+          );
+        }
+      }
     }
   };
 
@@ -164,8 +162,14 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     const config = vscode.workspace.getConfiguration('csv');
     if (!config.get<boolean>('enabled', true)) {
       const column = this.currentWebviewPanel?.viewColumn;
+      const uri = this.document.uri;
       this.currentWebviewPanel?.dispose();
-      vscode.commands.executeCommand('vscode.openWith', this.document.uri, 'default', { viewColumn: column });
+      vscode.commands.executeCommand(
+        'vscode.openWith',
+        uri,
+        'default',
+        column !== undefined ? { viewColumn: column } : undefined
+      );
     } else {
       this.currentWebviewPanel && this.updateWebviewContent();
     }
