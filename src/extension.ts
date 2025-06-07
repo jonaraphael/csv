@@ -22,24 +22,34 @@ export function activate(context: vscode.ExtensionContext) {
     );
     CsvEditorProvider.editors.forEach(editor => editor.refresh());
 
-    // If the extension was just enabled, reopen visible CSV text editors using
-    // the custom editor so users don't need to close and reopen files.
+    // If the extension was just enabled, reopen CSV tabs using the custom
+    // editor so users don't need to manually close and reopen files.
     if (key === 'enabled' && newVal) {
-      for (const editor of vscode.window.visibleTextEditors) {
-        const { document, viewColumn } = editor;
-        if (
-          document.languageId === 'csv' &&
-          !CsvEditorProvider.editors.some(
-            e => e.documentUri.toString() === document.uri.toString()
-          )
-        ) {
-          await vscode.commands.executeCommand(
-            'vscode.openWith',
-            document.uri,
-            CsvEditorProvider.viewType,
-            { viewColumn }
-          );
+      const csvTabs: Array<{ uri: vscode.Uri; tab: vscode.Tab; column: vscode.ViewColumn }> = [];
+
+      for (const group of vscode.window.tabGroups.all) {
+        for (const tab of group.tabs) {
+          if (tab.input instanceof vscode.TabInputText) {
+            const input = tab.input;
+            const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === input.uri.toString());
+            if (
+              doc?.languageId === 'csv' &&
+              !CsvEditorProvider.editors.some(e => e.documentUri.toString() === doc.uri.toString())
+            ) {
+              csvTabs.push({ uri: doc.uri, tab, column: group.viewColumn });
+            }
+          }
         }
+      }
+
+      for (const { uri, tab, column } of csvTabs) {
+        await vscode.commands.executeCommand(
+          'vscode.openWith',
+          uri,
+          CsvEditorProvider.viewType,
+          { viewColumn: column }
+        );
+        await vscode.window.tabGroups.close(tab, true);
       }
     }
   };
