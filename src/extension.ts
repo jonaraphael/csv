@@ -25,21 +25,24 @@ export function activate(context: vscode.ExtensionContext) {
     // If the extension was just enabled, reopen visible CSV text editors using
     // the custom editor so users don't need to close and reopen files.
     if (key === 'enabled' && newVal) {
-      vscode.window.visibleTextEditors.forEach(editor => {
-        const { document } = editor;
-        if (
-          document.languageId === 'csv' &&
-          !CsvEditorProvider.editors.some(
-            e => e.documentUri.toString() === document.uri.toString()
-          )
-        ) {
-          vscode.commands.executeCommand(
-            'vscode.openWith',
-            document.uri,
-            CsvEditorProvider.viewType
-          );
-        }
-      });
+      await Promise.all(
+        vscode.window.visibleTextEditors.map(async editor => {
+          const { document, viewColumn } = editor;
+          if (
+            document.languageId === 'csv' &&
+            !CsvEditorProvider.editors.some(
+              e => e.documentUri.toString() === document.uri.toString()
+            )
+          ) {
+            await vscode.commands.executeCommand(
+              'vscode.openWith',
+              document.uri,
+              CsvEditorProvider.viewType,
+              { viewColumn }
+            );
+          }
+        })
+      );
     }
   };
 
@@ -160,8 +163,9 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   public refresh() {
     const config = vscode.workspace.getConfiguration('csv');
     if (!config.get<boolean>('enabled', true)) {
+      const column = this.currentWebviewPanel?.viewColumn;
       this.currentWebviewPanel?.dispose();
-      vscode.commands.executeCommand('vscode.openWith', this.document.uri, 'default');
+      vscode.commands.executeCommand('vscode.openWith', this.document.uri, 'default', { viewColumn: column });
     } else {
       this.currentWebviewPanel && this.updateWebviewContent();
     }
