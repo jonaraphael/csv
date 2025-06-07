@@ -403,7 +403,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         cursor: pointer;
       }
       #findWidget button:hover { background: #005f9e; }
-      #contextMenu { position: absolute; display: none; background: ${isDark ? '#2d2d2d' : '#ffffff'}; border: 1px solid ${isDark ? '#555' : '#ccc'}; z-index: 10000; font-family: ${fontFamily}; }
+      #contextMenu { position: fixed; display: none; background: ${isDark ? '#2d2d2d' : '#ffffff'}; border: 1px solid ${isDark ? '#555' : '#ccc'}; z-index: 10000; font-family: ${fontFamily}; }
       #contextMenu div { padding: 4px 12px; cursor: pointer; }
       #contextMenu div:hover { background: ${isDark ? '#3d3d3d' : '#eeeeee'}; }
     </style>
@@ -430,8 +430,8 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       const showContextMenu = (x, y, col) => {
         contextMenu.innerHTML = '';
         const item = (label, cb) => { const d = document.createElement('div'); d.innerText = label; d.addEventListener('click', () => { cb(); contextMenu.style.display = 'none'; }); contextMenu.appendChild(d); };
-        item('Insert Column Left', () => vscode.postMessage({ type: 'insertColumn', index: col }));
-        item('Insert Column Right', () => vscode.postMessage({ type: 'insertColumn', index: col + 1 }));
+        item('Add column: left', () => vscode.postMessage({ type: 'insertColumn', index: col }));
+        item('Add column: right', () => vscode.postMessage({ type: 'insertColumn', index: col + 1 }));
         item('Delete Column', () => vscode.postMessage({ type: 'deleteColumn', index: col }));
         contextMenu.style.left = x + 'px';
         contextMenu.style.top = y + 'px';
