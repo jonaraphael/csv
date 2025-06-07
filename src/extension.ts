@@ -219,10 +219,11 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       result = { data: [] };
     }
     const fontFamily = config.get<string>('fontFamily', 'Menlo');
+    const cellPadding = config.get<number>('cellPadding', 4);
     const data = result.data as string[][];
     const htmlContent = this.generateHtmlContent(data, treatHeader, addSerialIndex, fontFamily);
     const nonce = getNonce();
-    this.currentWebviewPanel!.webview.html = this.wrapHtml(htmlContent, nonce, fontFamily);
+    this.currentWebviewPanel!.webview.html = this.wrapHtml(htmlContent, nonce, fontFamily, cellPadding);
   }
 
   /**
@@ -296,7 +297,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   /**
    * Wraps the provided HTML content in a complete HTML document with a strict Content Security Policy.
    */
-  private wrapHtml(content: string, nonce: string, fontFamily: string): string {
+  private wrapHtml(content: string, nonce: string, fontFamily: string, cellPadding: number): string {
     const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
     return `<!DOCTYPE html>
 <html>
@@ -309,7 +310,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       body { font-family: "${fontFamily}"; margin: 0; padding: 0; user-select: none; }
       .table-container { overflow-x: auto; max-height: 100vh; }
       table { border-collapse: collapse; width: max-content; }
-      th, td { padding: 4px 8px; border: 1px solid #555; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+      th, td { padding: ${cellPadding}px 8px; border: 1px solid #555; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
       th { position: sticky; top: 0; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; }
       td.selected, th.selected { background-color: ${isDark ? '#333333' : '#cce0ff'} !important; }
       td.editing, th.editing { overflow: visible !important; white-space: normal !important; max-width: none !important; }

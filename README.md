@@ -74,6 +74,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Improved:** Navigation and editing, including better handling of special characters like quotes and commas.
 - **Added:** Advanced column type detection with dynamic color-coded highlighting.
 - **Refined:** Update mechanism for external document changes without interrupting your workflow.
+- **Configurable:** Added `csv.cellPadding` setting to adjust table cell padding.
 
 ### v1.0.2
 - **Improved:** Seamless activation of editing mode on double-click.
