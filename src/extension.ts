@@ -374,6 +374,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         const target = e.target;
         selectionMode = (target.tagName === 'TH') ? "column" : (target.getAttribute('data-col') === '-1' ? "row" : "cell");
         startCell = target; endCell = target; isSelecting = true; e.preventDefault();
+        target.focus();
       });
       table.addEventListener('mousemove', e => {
         if(!isSelecting) return;
