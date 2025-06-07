@@ -359,6 +359,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     </div>
     <script nonce="${nonce}">
       document.body.setAttribute('tabindex', '0'); document.body.focus();
+      window.addEventListener('mousedown', () => document.body.focus());
       const vscode = acquireVsCodeApi();
       let isUpdating = false, isSelecting = false, anchorCell = null, currentSelection = [];
       let startCell = null, endCell = null, selectionMode = "cell";
