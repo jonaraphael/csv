@@ -8,13 +8,39 @@ export function activate(context: vscode.ExtensionContext) {
   console.log('CSV: Extension activated');
 
   // Helper to toggle a boolean CSV configuration and refresh all open CSV editors.
-  const toggleBooleanConfig = async (key: string, defaultVal: boolean, messagePrefix: string) => {
+  const toggleBooleanConfig = async (
+    key: string,
+    defaultVal: boolean,
+    messagePrefix: string
+  ) => {
     const config = vscode.workspace.getConfiguration('csv');
     const currentVal = config.get<boolean>(key, defaultVal);
     const newVal = !currentVal;
     await config.update(key, newVal, vscode.ConfigurationTarget.Global);
-    vscode.window.showInformationMessage(`${messagePrefix} ${newVal ? 'enabled' : 'disabled'}.`);
+    vscode.window.showInformationMessage(
+      `${messagePrefix} ${newVal ? 'enabled' : 'disabled'}.`
+    );
     CsvEditorProvider.editors.forEach(editor => editor.refresh());
+
+    // If the extension was just enabled, reopen visible CSV text editors using
+    // the custom editor so users don't need to close and reopen files.
+    if (key === 'enabled' && newVal) {
+      vscode.window.visibleTextEditors.forEach(editor => {
+        const { document } = editor;
+        if (
+          document.languageId === 'csv' &&
+          !CsvEditorProvider.editors.some(
+            e => e.documentUri.toString() === document.uri.toString()
+          )
+        ) {
+          vscode.commands.executeCommand(
+            'vscode.openWith',
+            document.uri,
+            CsvEditorProvider.viewType
+          );
+        }
+      });
+    }
   };
 
   // Register CSV-related commands.
@@ -69,6 +95,13 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   private document!: vscode.TextDocument;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
+
+  /**
+   * Expose the document URI for external checks.
+   */
+  public get documentUri(): vscode.Uri {
+    return this.document.uri;
+  }
 
   /**
    * Sets up the CSV editor when a CSV document is opened.
