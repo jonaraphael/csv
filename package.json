@@ -10,7 +10,8 @@
   },
   "version": "1.0.6",
   "engines": {
-    "vscode": "^1.93.0"
+    "vscode": "^1.93.0",
+    "node": ">=14"
   },
   "categories": [
     "Data Science",
@@ -84,14 +85,25 @@
     ]
   },
   "scripts": {
-    "compile": "tsc -p ./"
+    "compile": "tsc -p ./",
+    "lint": "eslint '**/*.ts'",
+    "test": "npm run compile && mocha --ui tdd --timeout 20000 out/test/**/*.js",
+    "package": "vsce package"
   },
   "dependencies": {
     "papaparse": "^5.4.1"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.0",
     "@types/node": "^14.0.0",
     "@types/vscode": "^1.60.0",
+    "vscode": "^1.1.37",
+    "@vscode/test-cli": "^0.0.11",
+    "@typescript-eslint/eslint-plugin": "^7.9.0",
+    "@typescript-eslint/parser": "^7.9.0",
+    "eslint": "^8.57.0",
+    "mocha": "^10.2.0",
+    "@types/papaparse": "^5.3.6",
     "typescript": "^4.4.3"
   }
 }

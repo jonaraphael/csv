@@ -1,13 +1,14 @@
 {
-	"compilerOptions": {
-	  "target": "ES2019",
-	  "module": "commonjs",
-	  "lib": ["es2019", "dom"],
-	  "outDir": "./out",
-	  "strict": true,
-	  "esModuleInterop": true
-	},
-	"include": ["./**/*.ts"],
-	"exclude": ["node_modules"]
-  }
-  
+  "compilerOptions": {
+    "target": "ES2019",
+    "module": "commonjs",
+    "lib": ["es2019", "dom"],
+    "outDir": "./out",
+    "strict": true,
+    "esModuleInterop": true,
+    "types": ["node", "vscode", "mocha"],
+    "skipLibCheck": true
+  },
+  "include": ["./**/*.ts"],
+  "exclude": ["node_modules"]
+}
