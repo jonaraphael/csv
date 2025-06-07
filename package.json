@@ -64,10 +64,15 @@
           "default": ",",
           "description": "CSV separator to use."
         },
-         "csv.fontFamily": {
+        "csv.fontFamily": {
           "type": "string",
           "default": "Menlo",
           "description": "CSV Font Family to use."
+        },
+        "csv.cellPadding": {
+          "type": "number",
+          "default": 4,
+          "description": "Vertical padding in pixels for table cells."
         }
       }
     },
