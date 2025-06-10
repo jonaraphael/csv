@@ -4,6 +4,13 @@ Experience a whole new way to work with CSV files right inside VS Code. CSV tran
 
 ---
 
+## Screenshots
+
+![Dark Theme Screenshot](images/Screenshot_dark.png)
+![Light Theme Screenshot](images/Screenshot_light.png)
+
+---
+
 ## Why CSV?
 
 Working with CSV files shouldn’t be a chore. With CSV, you get:
@@ -29,13 +36,6 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Find & Highlight:** Built-in find widget helps you search for text within your CSV with real-time highlighting and navigation through matches.
 - **Preserved CSV Integrity:** All modifications respect CSV formatting—no unwanted extra characters or formatting issues.
 - **Optimized for Performance:** Designed for medium-sized datasets, ensuring a smooth editing experience without compromising on functionality.
-
----
-
-## Screenshots
-
-![Dark Theme Screenshot](images/Screenshot_dark.png)
-![Light Theme Screenshot](images/Screenshot_light.png)
 
 ---
 
