@@ -109,6 +109,13 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         case 'deleteColumn':
           await this.deleteColumn(e.index);
           break;
+        /* ──────── NEW ──────── */
+        case 'insertRow':
+          await this.insertRow(e.index);
+          break;
+        case 'deleteRow':
+          await this.deleteRow(e.index);
+          break;
       }
     });
 
@@ -222,7 +229,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       row.splice(index, 0, '');
     }
     const newText = Papa.unparse(data, { delimiter: separator });
-    const fullRange = new vscode.Range(0, 0, this.document.lineCount, this.document.lineAt(this.document.lineCount - 1).text.length);
+    const fullRange = new vscode.Range(0, 0, this.document.lineCount, this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0);
     const edit = new vscode.WorkspaceEdit();
     edit.replace(this.document.uri, fullRange, newText);
     await vscode.workspace.applyEdit(edit);
@@ -246,7 +253,56 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       }
     }
     const newText = Papa.unparse(data, { delimiter: separator });
-    const fullRange = new vscode.Range(0, 0, this.document.lineCount, this.document.lineAt(this.document.lineCount - 1).text.length);
+    const fullRange = new vscode.Range(0, 0, this.document.lineCount, this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0);
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(this.document.uri, fullRange, newText);
+    await vscode.workspace.applyEdit(edit);
+    this.isUpdatingDocument = false;
+    this.updateWebviewContent();
+  }
+
+  /* ───────────── NEW ROW METHODS ───────────── */
+
+  /**
+   * Inserts a new empty row at the specified index.
+   */
+  private async insertRow(index: number) {
+    this.isUpdatingDocument = true;
+    const config = vscode.workspace.getConfiguration('csv');
+    const separator = config.get<string>('separator', ',');
+    const text = this.document.getText();
+    const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
+    const data = result.data as string[][];
+    const numColumns = Math.max(...data.map(r => r.length), 0);
+    const newRow = Array(numColumns).fill('');
+    if (index > data.length) {
+      while (data.length < index) data.push(Array(numColumns).fill(''));
+    }
+    data.splice(index, 0, newRow);
+    const newText = Papa.unparse(data, { delimiter: separator });
+    const fullRange = new vscode.Range(0, 0, this.document.lineCount, this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0);
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(this.document.uri, fullRange, newText);
+    await vscode.workspace.applyEdit(edit);
+    this.isUpdatingDocument = false;
+    this.updateWebviewContent();
+  }
+
+  /**
+   * Deletes the row at the specified index.
+   */
+  private async deleteRow(index: number) {
+    this.isUpdatingDocument = true;
+    const config = vscode.workspace.getConfiguration('csv');
+    const separator = config.get<string>('separator', ',');
+    const text = this.document.getText();
+    const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
+    const data = result.data as string[][];
+    if (index < data.length) {
+      data.splice(index, 1);
+    }
+    const newText = Papa.unparse(data, { delimiter: separator });
+    const fullRange = new vscode.Range(0, 0, this.document.lineCount, this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0);
     const edit = new vscode.WorkspaceEdit();
     edit.replace(this.document.uri, fullRange, newText);
     await vscode.workspace.applyEdit(edit);
@@ -430,26 +486,58 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       const getCellCoords = cell => ({ row: parseInt(cell.getAttribute('data-row')), col: parseInt(cell.getAttribute('data-col')) });
       const clearSelection = () => { currentSelection.forEach(c => c.classList.remove('selected')); currentSelection = []; };
       const contextMenu = document.getElementById('contextMenu');
-      const showContextMenu = (x, y, col) => {
+
+      /* ──────── UPDATED showContextMenu ──────── */
+      const showContextMenu = (x, y, row, col) => {
         contextMenu.innerHTML = '';
-        const item = (label, cb) => { const d = document.createElement('div'); d.innerText = label; d.addEventListener('click', () => { cb(); contextMenu.style.display = 'none'; }); contextMenu.appendChild(d); };
-        item('Add column: left', () => vscode.postMessage({ type: 'insertColumn', index: col }));
-        item('Add column: right', () => vscode.postMessage({ type: 'insertColumn', index: col + 1 }));
-        item('Delete Column', () => vscode.postMessage({ type: 'deleteColumn', index: col }));
+        const item = (label, cb) => {
+          const d = document.createElement('div');
+          d.textContent = label;
+          d.addEventListener('click', () => { cb(); contextMenu.style.display = 'none'; });
+          contextMenu.appendChild(d);
+        };
+        const divider = () => {
+          const d = document.createElement('div');
+          d.style.borderTop = '1px solid #888';
+          d.style.margin = '1px 0';
+          contextMenu.appendChild(d);
+        };
+        let addedRowItems = false;
+        /* Row section */
+        if (!isNaN(row) && row >= 0) {
+          item('Add ROW: above', () => vscode.postMessage({ type: 'insertRow',   index: row     }));
+          item('Add ROW: below', () => vscode.postMessage({ type: 'insertRow',   index: row + 1 }));
+          item('Delete ROW',      () => vscode.postMessage({ type: 'deleteRow',  index: row     }));
+          addedRowItems = true;
+        }
+
+        /* Column section, preceded by divider if row items exist */
+        if (!isNaN(col) && col >= 0) {
+          if (addedRowItems) divider();
+          item('Add COLUMN: left',  () => vscode.postMessage({ type: 'insertColumn', index: col     }));
+          item('Add COLUMN: right', () => vscode.postMessage({ type: 'insertColumn', index: col + 1 }));
+          item('Delete COLUMN',     () => vscode.postMessage({ type: 'deleteColumn', index: col     }));
+        }
         contextMenu.style.left = x + 'px';
         contextMenu.style.top = y + 'px';
         contextMenu.style.display = 'block';
       };
+
       document.addEventListener('click', () => { contextMenu.style.display = 'none'; });
+
+      /* ──────── UPDATED contextmenu listener ──────── */
       table.addEventListener('contextmenu', e => {
         const target = e.target;
         if(target.tagName !== 'TH' && target.tagName !== 'TD') return;
         const colAttr = target.getAttribute('data-col');
+        const rowAttr = target.getAttribute('data-row');
         const col = parseInt(colAttr);
-        if(isNaN(col) || col === -1) return;
+        const row = parseInt(rowAttr);
+        if ((isNaN(col) || col === -1) && (isNaN(row) || row === -1)) return;
         e.preventDefault();
-        showContextMenu(e.pageX, e.pageY, col);
+        showContextMenu(e.pageX, e.pageY, row, col);
       });
+
       table.addEventListener('mousedown', e => {
         if(e.target.tagName !== 'TD' && e.target.tagName !== 'TH') return;
         if(editingCell){ if(e.target !== editingCell) editingCell.blur(); else return; } else clearSelection();
