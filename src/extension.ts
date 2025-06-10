@@ -109,12 +109,6 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         case 'deleteColumn':
           await this.deleteColumn(e.index);
           break;
-        case 'insertRow':
-          await this.insertRow(e.index);
-          break;
-        case 'deleteRow':
-          await this.deleteRow(e.index);
-          break;
       }
     });
 
@@ -250,53 +244,6 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       if (index < row.length) {
         row.splice(index, 1);
       }
-    }
-    const newText = Papa.unparse(data, { delimiter: separator });
-    const fullRange = new vscode.Range(0, 0, this.document.lineCount, this.document.lineAt(this.document.lineCount - 1).text.length);
-    const edit = new vscode.WorkspaceEdit();
-    edit.replace(this.document.uri, fullRange, newText);
-    await vscode.workspace.applyEdit(edit);
-    this.isUpdatingDocument = false;
-    this.updateWebviewContent();
-  }
-
-  /**
-   * Inserts a new empty row at the specified index.
-   */
-  private async insertRow(index: number) {
-    this.isUpdatingDocument = true;
-    const config = vscode.workspace.getConfiguration('csv');
-    const separator = config.get<string>('separator', ',');
-    const text = this.document.getText();
-    const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const data = result.data as string[][];
-    const numColumns = Math.max(...data.map(r => r.length));
-    const newRow = Array(numColumns).fill('');
-    if (index > data.length) {
-      while (data.length < index) data.push([]);
-    }
-    data.splice(index, 0, newRow);
-    const newText = Papa.unparse(data, { delimiter: separator });
-    const fullRange = new vscode.Range(0, 0, this.document.lineCount, this.document.lineAt(this.document.lineCount - 1).text.length);
-    const edit = new vscode.WorkspaceEdit();
-    edit.replace(this.document.uri, fullRange, newText);
-    await vscode.workspace.applyEdit(edit);
-    this.isUpdatingDocument = false;
-    this.updateWebviewContent();
-  }
-
-  /**
-   * Deletes the row at the specified index.
-   */
-  private async deleteRow(index: number) {
-    this.isUpdatingDocument = true;
-    const config = vscode.workspace.getConfiguration('csv');
-    const separator = config.get<string>('separator', ',');
-    const text = this.document.getText();
-    const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const data = result.data as string[][];
-    if (index < data.length) {
-      data.splice(index, 1);
     }
     const newText = Papa.unparse(data, { delimiter: separator });
     const fullRange = new vscode.Range(0, 0, this.document.lineCount, this.document.lineAt(this.document.lineCount - 1).text.length);
@@ -459,19 +406,13 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         cursor: pointer;
       }
       #findWidget button:hover { background: #005f9e; }
-      const showContextMenu = (x, y, row, col) => {
-        vscode.postMessage({ type: 'debug', message: 'showContextMenu at row ' + row + ' col ' + col });
-        item('Add row above', () => vscode.postMessage({ type: 'insertRow', index: row }));
-        item('Add row below', () => vscode.postMessage({ type: 'insertRow', index: row + 1 }));
-        item('Delete row', () => vscode.postMessage({ type: 'deleteRow', index: row }));
-        item('Add column: left', () => vscode.postMessage({ type: 'insertColumn', index: col }));
-        item('Add column: right', () => vscode.postMessage({ type: 'insertColumn', index: col + 1 }));
-        item('Delete column', () => vscode.postMessage({ type: 'deleteColumn', index: col }));
-        const rowAttr = target.getAttribute('data-row');
-        const row = parseInt(rowAttr);
-        vscode.postMessage({ type: 'debug', message: 'data-col=' + colAttr + ' data-row=' + rowAttr });
-        if(isNaN(col) || col === -1 || isNaN(row)) return;
-        showContextMenu(e.pageX, e.pageY, row, col);
+      #contextMenu { position: absolute; display: none; background: ${isDark ? '#2d2d2d' : '#ffffff'}; border: 1px solid ${isDark ? '#555' : '#ccc'}; z-index: 10000; font-family: ${fontFamily}; }
+      #contextMenu div { padding: 4px 12px; cursor: pointer; }
+      #contextMenu div:hover { background: ${isDark ? '#3d3d3d' : '#eeeeee'}; }
+    </style>
+  </head>
+  <body>
+    ${content}
     <div id="findWidget">
       <input id="findInput" type="text" placeholder="Find...">
       <span id="findStatus"></span>
