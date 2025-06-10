@@ -103,6 +103,9 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           await vscode.env.clipboard.writeText(e.text);
           console.log('CSV: Copied to clipboard');
           break;
+        case 'addColumn':
+          await this.insertColumn(e.col + (e.direction === 'right' ? 1 : 0));
+          break;
       }
     });
 
@@ -182,6 +185,40 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     this.isUpdatingDocument = false;
     console.log(`CSV: Updated row ${row + 1}, column ${col + 1} to "${value}"`);
     this.currentWebviewPanel?.webview.postMessage({ type: 'updateCell', row, col, value });
+  }
+
+  /**
+   * Inserts an empty column at the given index across all rows.
+   */
+  private async insertColumn(index: number) {
+    this.isUpdatingDocument = true;
+    const config = vscode.workspace.getConfiguration('csv');
+    const separator = config.get<string>('separator', ',');
+    const text = this.document.getText();
+    let result;
+    try {
+      result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
+    } catch {
+      result = { data: [] } as any;
+    }
+    const data = result.data as string[][];
+    for (const row of data) {
+      while (row.length < index) row.push('');
+      row.splice(index, 0, '');
+    }
+    const newCsvText = Papa.unparse(data, { delimiter: separator });
+    const fullRange = new vscode.Range(
+      0,
+      0,
+      this.document.lineCount,
+      this.document.lineAt(this.document.lineCount - 1).text.length
+    );
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(this.document.uri, fullRange, newCsvText);
+    await vscode.workspace.applyEdit(edit);
+    this.isUpdatingDocument = false;
+    this.updateWebviewContent();
+    console.log(`CSV: Inserted column at index ${index}`);
   }
 
   /**
@@ -351,6 +388,22 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         cursor: pointer;
       }
       #findWidget button:hover { background: #005f9e; }
+      #csvContextMenu {
+        position: absolute;
+        background: ${isDark ? '#1e1e1e' : '#ffffff'};
+        border: 1px solid #666;
+        border-radius: 3px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        z-index: 1001;
+        display: none;
+      }
+      #csvContextMenu div {
+        padding: 4px 8px;
+        cursor: pointer;
+      }
+      #csvContextMenu div:hover {
+        background: ${isDark ? '#333333' : '#ececec'};
+      }
     </style>
   </head>
   <body>
@@ -359,6 +412,10 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       <input id="findInput" type="text" placeholder="Find...">
       <span id="findStatus"></span>
       <button id="findClose">✕</button>
+    </div>
+    <div id="csvContextMenu">
+      <div id="addColumnLeft">Add column: left</div>
+      <div id="addColumnRight">Add column: right</div>
     </div>
     <script nonce="${nonce}">
       document.body.setAttribute('tabindex', '0'); document.body.focus();
@@ -370,6 +427,33 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       const hasHeader = document.querySelector('thead') !== null;
       const getCellCoords = cell => ({ row: parseInt(cell.getAttribute('data-row')), col: parseInt(cell.getAttribute('data-col')) });
       const clearSelection = () => { currentSelection.forEach(c => c.classList.remove('selected')); currentSelection = []; };
+      const contextMenu = document.getElementById('csvContextMenu');
+      const addLeft = document.getElementById('addColumnLeft');
+      const addRight = document.getElementById('addColumnRight');
+      let contextTarget = null;
+      table.addEventListener('contextmenu', e => {
+        if(e.target.tagName !== 'TD' && e.target.tagName !== 'TH') return;
+        const coords = getCellCoords(e.target);
+        if(coords.col === -1) return;
+        e.preventDefault();
+        contextTarget = e.target;
+        contextMenu.style.display = 'block';
+        contextMenu.style.left = e.pageX + 'px';
+        contextMenu.style.top = e.pageY + 'px';
+      });
+      document.addEventListener('click', () => { contextMenu.style.display = 'none'; });
+      addLeft.addEventListener('click', () => {
+        if(!contextTarget) return;
+        const { col } = getCellCoords(contextTarget);
+        vscode.postMessage({ type: 'addColumn', col, direction: 'left' });
+        contextMenu.style.display = 'none';
+      });
+      addRight.addEventListener('click', () => {
+        if(!contextTarget) return;
+        const { col } = getCellCoords(contextTarget);
+        vscode.postMessage({ type: 'addColumn', col, direction: 'right' });
+        contextMenu.style.display = 'none';
+      });
       table.addEventListener('mousedown', e => {
         if(e.target.tagName !== 'TD' && e.target.tagName !== 'TH') return;
         if(editingCell){ if(e.target !== editingCell) editingCell.blur(); else return; } else clearSelection();
