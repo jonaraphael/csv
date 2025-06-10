@@ -109,9 +109,6 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         case 'deleteColumn':
           await this.deleteColumn(e.index);
           break;
-        case 'debug':
-          console.log('CSV DEBUG:', e.message);
-          break;
       }
     });
 
@@ -407,20 +404,10 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         border-radius: 3px;
         font-size: 14px;
         cursor: pointer;
-        vscode.postMessage({ type: 'debug', message: 'showContextMenu at col ' + col });
-        const item = (label, cb) => {
-          const d = document.createElement('div');
-          d.innerText = label;
-          d.addEventListener('click', () => {
-            cb();
-            contextMenu.style.display = 'none';
-          });
-          contextMenu.appendChild(d);
-        };
-        item('Add column: left', () => vscode.postMessage({ type: 'debug', message: 'Add column left clicked at ' + col }));
-        item('Add column: right', () => vscode.postMessage({ type: 'debug', message: 'Add column right clicked at ' + col }));
-        vscode.postMessage({ type: 'debug', message: 'contextmenu event on ' + target.tagName });
-        vscode.postMessage({ type: 'debug', message: 'data-col=' + colAttr });
+      }
+      #findWidget button:hover { background: #005f9e; }
+      #contextMenu { position: absolute; display: none; background: ${isDark ? '#2d2d2d' : '#ffffff'}; border: 1px solid ${isDark ? '#555' : '#ccc'}; z-index: 10000; font-family: ${fontFamily}; }
+      #contextMenu div { padding: 4px 12px; cursor: pointer; }
       #contextMenu div:hover { background: ${isDark ? '#3d3d3d' : '#eeeeee'}; }
     </style>
   </head>
