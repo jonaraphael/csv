@@ -89,6 +89,12 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     CsvEditorProvider.editors.push(this);
     webviewPanel.webview.options = { enableScripts: true };
     this.updateWebviewContent();
+    webviewPanel.webview.postMessage({ type: 'focus' });
+    webviewPanel.onDidChangeViewState(e => {
+      if (e.webviewPanel.active) {
+        e.webviewPanel.webview.postMessage({ type: 'focus' });
+      }
+    });
 
     // Handle messages from the webview.
     webviewPanel.webview.onDidReceiveMessage(async e => {
@@ -601,7 +607,9 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       };
       window.addEventListener('message', event => {
         const message = event.data;
-        if(message.type === 'updateCell'){
+        if(message.type === 'focus'){
+          document.body.focus();
+        } else if(message.type === 'updateCell'){
           isUpdating = true;
           const { row, col, value } = message;
           const cell = table.querySelector('td[data-row="'+row+'"][data-col="'+col+'"]');
