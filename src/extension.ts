@@ -23,7 +23,7 @@ export function activate(context: vscode.ExtensionContext) {
       toggleBooleanConfig('enabled', true, 'CSV extension')
     ),
     vscode.commands.registerCommand('csv.toggleHeader', () =>
-      toggleBooleanConfig('treatFirstRowAsHeader', true, 'CSV treating first row as header is now')
+      toggleBooleanConfig('treatFirstRowAsHeader', true, 'CSV first row as header is now')
     ),
     vscode.commands.registerCommand('csv.toggleSerialIndex', () =>
       toggleBooleanConfig('addSerialIndex', false, 'CSV serial index is now')
@@ -361,6 +361,34 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     const columnTypes = columnData.map(col => this.estimateColumnDataType(col));
     const columnColors = columnTypes.map((type, i) => this.getColumnColor(type, isDark, i));
     const columnWidths = this.computeColumnWidths(data);
+    /* ──────────── VIRTUAL-SCROLL SUPPORT ──────────── */
+    const CHUNK_SIZE = 1000;                           // rows per chunk
+    const allRows      = treatHeader ? bodyData : data;
+    const chunks: string[] = [];
+
+    if (allRows.length > CHUNK_SIZE) {
+      for (let i = CHUNK_SIZE; i < allRows.length; i += CHUNK_SIZE) {
+        const htmlChunk = allRows.slice(i, i + CHUNK_SIZE).map((row, localR) => {
+          const absRow = treatHeader ? i + localR + 1 : i + localR;
+          const cells  = row.map((cell, cIdx) => {
+            const safe = this.escapeHtml(cell);
+            return `<td tabindex="0" style="min-width:${Math.min(columnWidths[cIdx]||0,100)}ch;max-width:100ch;border:1px solid ${isDark?'#555':'#ccc'};color:${columnColors[cIdx]};overflow:hidden;white-space:nowrap;text-overflow:ellipsis;" data-row="${absRow}" data-col="${cIdx}">${safe}</td>`;
+          }).join('');
+
+          return `<tr>${
+            addSerialIndex ? `<td tabindex="0" style="min-width:4ch;max-width:4ch;border:1px solid ${isDark?'#555':'#ccc'};color:#888;" data-row="${absRow}" data-col="-1">${absRow}</td>` : ''
+          }${cells}</tr>`;
+        }).join('');
+
+        chunks.push(htmlChunk);
+      }
+
+      // keep **only** the first chunk in the initial render
+      if (treatHeader) bodyData.length = CHUNK_SIZE;
+      else             data.length     = CHUNK_SIZE;
+    }
+    /* ────────── END VIRTUAL-SCROLL SUPPORT ────────── */
+
     let tableHtml = `<table>`;
     if (treatHeader) {
       tableHtml += `<thead><tr>${
@@ -403,7 +431,11 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       tableHtml += `</tbody>`;
     }
     tableHtml += `</table>`;
-    return `<div class="table-container">${tableHtml}</div>`;
+    const chunksJson = JSON.stringify(chunks);
+    return `
+      <script id="__csvChunks" type="application/json">${chunksJson}</script>
+      <div class="table-container">${tableHtml}</div>
+    `;
   }
 
   /**
@@ -485,6 +517,34 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       let startCell = null, endCell = null, selectionMode = "cell";
       let editingCell = null, originalCellValue = "";
       const table = document.querySelector('table');
+      /* ──────────── VIRTUAL-SCROLL LOADER ──────────── */
+      const CHUNK_SIZE = 1000;
+      const chunkScript = document.getElementById('__csvChunks');
+      let csvChunks = chunkScript ? JSON.parse(chunkScript.textContent) : [];
+
+      if (csvChunks.length) {
+        const scrollContainer = document.querySelector('.table-container');
+        const tbody           = table.tBodies[0];
+
+        const loadNextChunk = () => {
+          if (!csvChunks.length) return;
+          tbody.insertAdjacentHTML('beforeend', csvChunks.shift());
+        };
+
+        // Use IntersectionObserver on the last row for efficiency
+        const io = new IntersectionObserver((entries)=>{
+          if (entries[0].isIntersecting) {
+            loadNextChunk();
+            // observe the new last <tr>
+            io.observe(tbody.querySelector('tr:last-child'));
+          }
+        }, { root: scrollContainer, rootMargin: '0px 0px 200px 0px' });
+
+        // initial observation
+        io.observe(tbody.querySelector('tr:last-child'));
+      }
+      /* ───────── END VIRTUAL-SCROLL LOADER ───────── */
+
       const hasHeader = document.querySelector('thead') !== null;
       const getCellCoords = cell => ({ row: parseInt(cell.getAttribute('data-row')), col: parseInt(cell.getAttribute('data-col')) });
       const clearSelection = () => { currentSelection.forEach(c => c.classList.remove('selected')); currentSelection = []; };

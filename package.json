@@ -37,8 +37,8 @@
     ],
     "commands": [
       { "command": "csv.toggleExtension", "title": "CSV: Toggle Extension On/Off" },
-      { "command": "csv.toggleHeader", "title": "CSV: Toggle Treating First Row as Header" },
-      { "command": "csv.toggleSerialIndex", "title": "CSV: Toggle Adding Serial Index Column" },
+      { "command": "csv.toggleHeader", "title": "CSV: Toggle First Row as Header" },
+      { "command": "csv.toggleSerialIndex", "title": "CSV: Toggle Serial Index Column" },
       { "command": "csv.changeSeparator", "title": "CSV: Change CSV Separator" }
     ],
     "configuration": {
