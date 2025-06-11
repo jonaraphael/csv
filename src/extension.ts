@@ -347,17 +347,12 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
    * Generates an HTML table from CSV data.
    */
   private generateHtmlContent(data: string[][], treatHeader: boolean, addSerialIndex: boolean, fontFamily: string): string {
+    /* ──────── NEW: ensure at least one editable cell ──────── */
     if (data.length === 0) {
-      return `<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="UTF-8">
-    <title>CSV</title>
-    <style>body { font-family: ${fontFamily}; padding: 10px; }</style>
-  </head>
-  <body><p>No data found in CSV.</p></body>
-</html>`;
+      data.push(['']);          // single empty row + cell
+      treatHeader = false;      // no header in an empty sheet
     }
+
     const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
     const headerRow = treatHeader ? data[0] : [];
     const bodyData = treatHeader ? data.slice(1) : data;
