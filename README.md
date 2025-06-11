@@ -73,6 +73,9 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 
 ## Release Notes
 
+### v1.1.1
+- **Fixed:** fontFamily
+
 ### v1.1.0
 - **New:** Column sorting by clicking header labels.
 - **Added:** Font selection dropdown that honors VS Code font settings.

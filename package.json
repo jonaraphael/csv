@@ -8,9 +8,9 @@
     "type": "git",
     "url": "https://github.com/jonaraphael/csv.git"
   },
-  "version": "1.1.0",
+  "version": "1.1.1",
   "engines": {
-    "vscode": "^1.93.0",
+    "vscode": "^1.100.0",
     "node": ">=14"
   },
   "categories": [
@@ -23,45 +23,27 @@
     "onCommand:csv.toggleExtension",
     "onCommand:csv.toggleHeader",
     "onCommand:csv.toggleSerialIndex",
-    "onCommand:csv.changeSeparator"
+    "onCommand:csv.changeSeparator",
+    "onCommand:csv.changeFontFamily"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "languages": [
       {
         "id": "csv",
-        "extensions": [
-          ".csv"
-        ],
-        "aliases": [
-          "CSV",
-          "csv"
-        ],
+        "extensions": [ ".csv" ],
+        "aliases": [ "CSV", "csv" ],
         "configuration": "./language-configuration.json"
       }
     ],
     "commands": [
-      {
-        "command": "csv.toggleExtension",
-        "title": "CSV: Toggle Extension On/Off"
-      },
-      {
-        "command": "csv.toggleHeader",
-        "title": "CSV: Toggle First Row as Header"
-      },
-      {
-        "command": "csv.toggleSerialIndex",
-        "title": "CSV: Toggle Serial Index Column"
-      },
-      {
-        "command": "csv.changeSeparator",
-        "title": "CSV: Change CSV Separator"
-      },
-      {
-        "command": "csv.changeFontFamily",
-        "title": "CSV: Change Font Family"
-      }
+      { "command": "csv.toggleExtension",   "title": "CSV: Toggle Extension On/Off" },
+      { "command": "csv.toggleHeader",      "title": "CSV: Toggle First Row as Header" },
+      { "command": "csv.toggleSerialIndex", "title": "CSV: Toggle Serial Index Column" },
+      { "command": "csv.changeSeparator",   "title": "CSV: Change CSV Separator" },
+      { "command": "csv.changeFontFamily",  "title": "CSV: Change Font Family" }
     ],
+
     "configuration": {
       "type": "object",
       "title": "CSV Extension Configuration",
@@ -86,11 +68,14 @@
           "default": ",",
           "description": "CSV separator to use."
         },
+
         "csv.fontFamily": {
           "type": "string",
-          "default": "Menlo",
-          "description": "CSV Font Family to use."
+          "default": "",
+          "description": "Font family used by the CSV custom editor. Leave empty to inherit ‘editor.fontFamily’.",
+          "scope": "application"
         },
+
         "csv.cellPadding": {
           "type": "number",
           "default": 4,
@@ -98,24 +83,16 @@
         }
       }
     },
+
     "customEditors": [
       {
         "viewType": "csv.editor",
         "displayName": "CSV",
-        "selector": [
-          {
-            "filenamePattern": "*.csv"
-          }
-        ]
+        "selector": [ { "filenamePattern": "*.csv" } ]
       }
-    ],
-    "csv.fontFamily": {
-      "type": "string",
-      "default": "",
-      "description": "Font family used by the CSV custom editor. Leave empty to inherit ‘editor.fontFamily’.",
-      "scope": "application"
-    }
+    ]
   },
+
   "scripts": {
     "compile": "tsc -p ./",
     "lint": "eslint '**/*.ts'",
@@ -124,8 +101,7 @@
   },
   "dependencies": {
     "font-list": "^1.5.1",
-    "papaparse": "^5.5.3",
-    "vscode": "^1.1.37"
+    "papaparse": "^5.5.3"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

@@ -4,11 +4,11 @@ All notable changes to the "CSV" extension will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-- Row Insertion/Deletion.
+## [1.1.1] - 2025-06-11
+- Fixed: fontFamily
 
 ## [1.1.0] - 2025-06-11
+- New: Row Insertion/Deletion.
 - New: Column sorting by clicking header labels.
 - Added: Font selection dropdown honoring VS Code fonts.
 - Added: Editing of empty CSV files.
