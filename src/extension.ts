@@ -370,23 +370,23 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     if (treatHeader) {
       tableHtml += `<thead><tr>${
         addSerialIndex
-          ? `<th style="min-width: 4ch; max-width: 4ch; border: 1px solid #555; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: #888;">#</th>`
+          ? `<th style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: #888;">#</th>`
           : ''
       }`;
       headerRow.forEach((cell, i) => {
         const safe = this.escapeHtml(cell);
-        tableHtml += `<th style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid #555; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="0" data-col="${i}">${safe}</th>`;
+        tableHtml += `<th style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="0" data-col="${i}">${safe}</th>`;
       });
       tableHtml += `</tr></thead><tbody>`;
       bodyData.forEach((row, r) => {
         tableHtml += `<tr>${
           addSerialIndex
-            ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid #555; color: #888;" data-row="${r + 1}" data-col="-1">${r + 1}</td>`
+            ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${r + 1}" data-col="-1">${r + 1}</td>`
             : ''
         }`;
         row.forEach((cell, i) => {
           const safe = this.escapeHtml(cell);
-          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid #555; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${r + 1}" data-col="${i}">${safe}</td>`;
+          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${r + 1}" data-col="${i}">${safe}</td>`;
         });
         tableHtml += `</tr>`;
       });
@@ -396,12 +396,12 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       data.forEach((row, r) => {
         tableHtml += `<tr>${
           addSerialIndex
-            ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid #555; color: #888;" data-row="${r}" data-col="-1">${r + 1}</td>`
+            ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${r}" data-col="-1">${r + 1}</td>`
             : ''
         }`;
         row.forEach((cell, i) => {
           const safe = this.escapeHtml(cell);
-          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid #555; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${r}" data-col="${i}">${safe}</td>`;
+          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${r}" data-col="${i}">${safe}</td>`;
         });
         tableHtml += `</tr>`;
       });
@@ -427,7 +427,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       body { font-family: "${fontFamily}"; margin: 0; padding: 0; user-select: none; }
       .table-container { overflow-x: auto; max-height: 100vh; }
       table { border-collapse: collapse; width: max-content; }
-      th, td { padding: ${cellPadding}px 8px; border: 1px solid #555; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+      th, td { padding: ${cellPadding}px 8px; border: 1px solid ${isDark ? '#555' : '#ccc'}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
       th { position: sticky; top: 0; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; }
       td.selected, th.selected { background-color: ${isDark ? '#333333' : '#cce0ff'} !important; }
       td.editing, th.editing { overflow: visible !important; white-space: normal !important; max-width: none !important; }
