@@ -122,6 +122,9 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         case 'deleteRow':
           await this.deleteRow(e.index);
           break;
+        case 'sortColumn':
+          await this.sortColumn(e.index, e.ascending);
+          break;
       }
     });
 
@@ -266,6 +269,58 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     this.isUpdatingDocument = false;
     this.updateWebviewContent();
   }
+  /* ───────────── NEW SORT COLUMN METHOD ───────────── */
+  /**
+   * Sorts the CSV rows (skipping the header if it is being treated as one)
+   * by the given column index, ascending ⇧ or descending ⇩.
+   */
+  private async sortColumn(index: number, ascending: boolean) {
+    this.isUpdatingDocument = true;
+
+    const config       = vscode.workspace.getConfiguration('csv');
+    const separator    = config.get<string>('separator', ',');
+    const treatHeader  = config.get<boolean>('treatFirstRowAsHeader', true);
+
+    const text   = this.document.getText();
+    const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
+    const rows   = result.data as string[][];
+
+    let header: string[] = [];
+    let body:   string[][] = rows;
+
+    if (treatHeader && rows.length) {
+      header = rows[0];
+      body   = rows.slice(1);
+    }
+
+    const cmp = (a: string, b: string) => {
+      const na = parseFloat(a), nb = parseFloat(b);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;        // numeric compare
+      return a.localeCompare(b, undefined, { sensitivity: 'base' });
+    };
+
+    body.sort((r1, r2) => {
+      const diff = cmp(r1[index] ?? '', r2[index] ?? '');
+      return ascending ? diff : -diff;
+    });
+
+    const newCsv = Papa.unparse(treatHeader ? [header, ...body] : body, { delimiter: separator });
+
+    const fullRange = new vscode.Range(
+      0, 0,
+      this.document.lineCount,
+      this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0
+    );
+
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(this.document.uri, fullRange, newCsv);
+    await vscode.workspace.applyEdit(edit);
+
+    this.isUpdatingDocument = false;
+    this.updateWebviewContent();
+    console.log(`CSV: Sorted column ${index + 1} (${ascending ? 'A-Z' : 'Z-A'})`);
+  }
+
 
   /* ───────────── NEW ROW METHODS ───────────── */
 
@@ -513,6 +568,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       document.body.setAttribute('tabindex', '0'); document.body.focus();
       window.addEventListener('mousedown', () => document.body.focus());
       const vscode = acquireVsCodeApi();
+      let lastContextIsHeader = false;   // remembers whether we right-clicked a <th>
       let isUpdating = false, isSelecting = false, anchorCell = null, currentSelection = [];
       let startCell = null, endCell = null, selectionMode = "cell";
       let editingCell = null, originalCellValue = "";
@@ -566,8 +622,18 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           contextMenu.appendChild(d);
         };
         let addedRowItems = false;
+
+        /* Header-only: SORT functionality */
+        if (lastContextIsHeader) {
+          item('Sort: A-Z', () =>
+            vscode.postMessage({ type: 'sortColumn', index: col, ascending: true }));
+          item('Sort: Z-A', () =>
+            vscode.postMessage({ type: 'sortColumn', index: col, ascending: false }));
+        }        
+
         /* Row section */
         if (!isNaN(row) && row >= 0) {
+          if (contextMenu.children.length) divider();
           item('Add ROW: above', () => vscode.postMessage({ type: 'insertRow',   index: row     }));
           item('Add ROW: below', () => vscode.postMessage({ type: 'insertRow',   index: row + 1 }));
           item('Delete ROW',      () => vscode.postMessage({ type: 'deleteRow',  index: row     }));
@@ -581,6 +647,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           item('Add COLUMN: right', () => vscode.postMessage({ type: 'insertColumn', index: col + 1 }));
           item('Delete COLUMN',     () => vscode.postMessage({ type: 'deleteColumn', index: col     }));
         }
+
         contextMenu.style.left = x + 'px';
         contextMenu.style.top = y + 'px';
         contextMenu.style.display = 'block';
@@ -598,6 +665,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         const row = parseInt(rowAttr);
         if ((isNaN(col) || col === -1) && (isNaN(row) || row === -1)) return;
         e.preventDefault();
+        lastContextIsHeader = target.tagName === 'TH';
         showContextMenu(e.pageX, e.pageY, row, col);
       });
 
