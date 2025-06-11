@@ -673,6 +673,21 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         if(e.target.tagName !== 'TD' && e.target.tagName !== 'TH') return;
         if(editingCell){ if(e.target !== editingCell) editingCell.blur(); else return; } else clearSelection();
         const target = e.target;
+        /* ──────── NEW: select-all via top-left header cell ──────── */
+        if (
+          target.tagName === 'TH' &&                 // header cell
+          !target.hasAttribute('data-col') &&        // serial-index header has *no* data-col
+          !target.hasAttribute('data-row')           // and no data-row
+        ) {
+          e.preventDefault();                        // stop normal selection
+          clearSelection();
+          selectAllCells();                          // highlight every th & td
+          isSelecting = false;                       // cancel drag-select logic
+          anchorCell  = null;
+          return;                                    // done
+        }
+        /* ──────── END NEW BLOCK ──────── */
+        
         selectionMode = (target.tagName === 'TH') ? "column" : (target.getAttribute('data-col') === '-1' ? "row" : "cell");
         startCell = target; endCell = target; isSelecting = true; e.preventDefault();
         target.focus();
@@ -930,8 +945,12 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       };
       table.addEventListener('dblclick', e => { const target = e.target; if(target.tagName !== 'TD' && target.tagName !== 'TH') return; clearSelection(); editCell(target, e); });
       const copySelectionToClipboard = () => {
-        if(currentSelection.length === 0) return;
-        const coords = currentSelection.map(cell => getCellCoords(cell));
+        if (currentSelection.length === 0) return;
+
+        const coords = currentSelection
+          .map(cell => getCellCoords(cell))
+          .filter(c => !isNaN(c.row) && !isNaN(c.col));   // ← keep only valid cells
+        if (coords.length === 0) return;                  // nothing to copy
         const minRow = Math.min(...coords.map(c => c.row)), maxRow = Math.max(...coords.map(c => c.row));
         const minCol = Math.min(...coords.map(c => c.col)), maxCol = Math.max(...coords.map(c => c.col));
         let csv = '';
