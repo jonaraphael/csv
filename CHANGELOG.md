@@ -6,7 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-- Row and Column Insertion/Deletion.
+- Row Insertion/Deletion.
+
+## [1.1.0] - 2025-06-11
+- New: Column sorting by clicking header labels.
+- Added: Font selection dropdown honoring VS Code fonts.
+- Added: Editing of empty CSV files.
+- Improved: Large files load in 1000-row chunks.
+- Enhanced: `Ctrl/Cmd + A` selects the entire table.
+- Fixed: Row indexing when the header row is disabled.
+- Improved: Safer rendering for HTML-like content.
 
 ## [1.0.6] - 2024-05-20
 - New: Multi-cell selection with intuitive `Shift + Click` support.

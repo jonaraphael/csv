@@ -30,12 +30,16 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Smart Resizing:** Automatic calculation of column widths for improved readability.
 - **Dynamic Color Coding:** Visual cues based on data type help you quickly identify numbers, dates, booleans, and more.
 - **Sticky Headers:** Keep column titles in view as you scroll through large datasets.
-- **Enhanced Keyboard Navigation:** Navigate cells with Tab/Shift+Tab and use keyboard shortcuts for quick editing, saving, and selection.
+- **Enhanced Keyboard Navigation:** Navigate cells with Tab/Shift+Tab and use keyboard shortcuts for quick editing, saving, selection, and full-table `Ctrl/Cmd + A` select-all.
 - **Advanced Multi-Cell Selection:** Easily select and copy blocks of data, then paste them elsewhere as properly formatted CSV.
 - **Add/Delete Columns:** Right-click any cell to add a column left or right, or remove the selected column.
+- **Edit Empty CSVs:** Create or open an empty CSV file and start typing immediately.
+- **Column Sorting:** Click column headers to sort ascending or descending.
+- **Custom Font Selection:** Choose a font from a dropdown or inherit VS Code's default.
 - **Find & Highlight:** Built-in find widget helps you search for text within your CSV with real-time highlighting and navigation through matches.
 - **Preserved CSV Integrity:** All modifications respect CSV formatting—no unwanted extra characters or formatting issues.
 - **Optimized for Performance:** Designed for medium-sized datasets, ensuring a smooth editing experience without compromising on functionality.
+- **Large File Support:** Loads big CSVs in chunks so even large datasets open quickly.
 
 ---
 
@@ -63,11 +67,20 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 
 ## Planned Improvements
 
-- **Row Insertion/Deletion:** Quickly add or remove rows without leaving the editor.
+- **Row Insertion/Deletion:** Quickly add or remove rows without leaving the editor (coming soon).
 
 ---
 
 ## Release Notes
+
+### v1.1.0
+- **New:** Column sorting by clicking header labels.
+- **Added:** Font selection dropdown that honors VS Code font settings.
+- **Added:** Ability to create and edit empty CSV files.
+- **Improved:** Large CSV files load in 1000-row chunks for better performance.
+- **Enhanced:** `Ctrl/Cmd + A` now selects all cells in the grid.
+- **Fixed:** Correct row indexing when the header row is disabled.
+- **Improved:** Safer rendering for cells containing HTML-like text.
 
 ### v1.0.6
 - **New:** Multi-cell selection with intuitive `Shift + Click` support.
