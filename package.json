@@ -99,8 +99,9 @@
     "papaparse": "^5.4.1"
   },
   "devDependencies": {
-    "@types/mocha": "^10.0.0",
+    "@types/mocha": "^10.0.10",
     "@types/node": "^14.0.0",
+    "@types/papaparse": "^5.3.16",
     "@types/vscode": "^1.60.0",
     "vscode": "^1.1.37",
     "@vscode/test-cli": "^0.0.11",
