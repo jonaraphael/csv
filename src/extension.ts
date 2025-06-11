@@ -390,7 +390,11 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       console.error('CSV: Error parsing CSV content', error);
       result = { data: [] };
     }
-    const fontFamily = config.get<string>('fontFamily', 'Menlo');
+    /* Prefer csv.fontFamily if set, otherwise fall back to the workspace-wide editor.fontFamily
+      and finally to a hard-coded Menlo default. */
+    const fontFamily =
+      config.get<string>('fontFamily') ||
+      vscode.workspace.getConfiguration('editor').get<string>('fontFamily', 'Menlo');
     const cellPadding = config.get<number>('cellPadding', 4);
     const data = result.data as string[][];
     const htmlContent = this.generateHtmlContent(data, treatHeader, addSerialIndex, fontFamily);
