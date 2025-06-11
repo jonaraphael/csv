@@ -926,13 +926,13 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         if(editingCell === cell) return;
         if(editingCell) editingCell.blur();
         cell.classList.remove('selected');
-        originalCellValue = cell.innerText;
+        originalCellValue = cell.textContent;
         editingCell = cell;
         cell.classList.add('editing');
         cell.setAttribute('contenteditable', 'true');
         cell.focus();
         const onBlurHandler = () => {
-          const value = cell.innerText;
+          const value = cell.textContent;
           const coords = getCellCoords(cell);
           vscode.postMessage({ type: 'editCell', row: coords.row, col: coords.col, value: value });
           cell.removeAttribute('contenteditable');
@@ -973,7 +973,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           isUpdating = true;
           const { row, col, value } = message;
           const cell = table.querySelector('td[data-row="'+row+'"][data-col="'+col+'"]');
-          if(cell){ cell.innerText = value; }
+          if (cell) { cell.textContent = value; }
           isUpdating = false;
         }
       });
