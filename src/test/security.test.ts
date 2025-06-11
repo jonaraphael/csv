@@ -1,4 +1,5 @@
-import * as assert from 'assert';
+import assert from 'assert';
+import { describe, it } from 'node:test';
 function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, m => ({
     '&': '&amp;',
@@ -9,8 +10,8 @@ function escapeHtml(text: string): string {
   })[m] as string);
 }
 
-suite('HTML Escaping', () => {
-  test('escapes special characters', () => {
+describe('HTML Escaping', () => {
+  it('escapes special characters', () => {
     const result = escapeHtml('<script>alert("x")</script>');
     assert.strictEqual(result, '&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;');
   });

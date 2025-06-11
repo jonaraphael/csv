@@ -119,16 +119,19 @@
   "scripts": {
     "compile": "tsc -p ./",
     "lint": "eslint '**/*.ts'",
-    "package": "vsce package"
+    "package": "vsce package",
+    "test": "npm run compile && node --test out/test/**/*.test.js"
   },
   "dependencies": {
     "font-list": "^1.5.1",
-    "papaparse": "^5.4.1"
+    "papaparse": "^5.5.3",
+    "vscode": "^1.1.37"
   },
   "devDependencies": {
-    "@types/node": "^14.0.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^20.11.19",
     "@types/papaparse": "^5.3.16",
-    "@types/vscode": "^1.60.0",
+    "@types/vscode": "^1.100.0",
     "@typescript-eslint/eslint-plugin": "^7.9.0",
     "@typescript-eslint/parser": "^7.9.0",
     "eslint": "^8.57.0",
