@@ -193,7 +193,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       while (data[row].length <= col) data[row].push('');
       data[row][col] = value;
       const newCsvText = Papa.unparse(data, { delimiter: separator });
-      const fullRange = new vscode.Range(0, 0, this.document.lineCount, this.document.lineAt(this.document.lineCount - 1).text.length);
+      const fullRange = new vscode.Range(0, 0, this.document.lineCount, this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0);
       const edit = new vscode.WorkspaceEdit();
       edit.replace(this.document.uri, fullRange, newCsvText);
       await vscode.workspace.applyEdit(edit);
@@ -690,6 +690,56 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         if ((e.ctrlKey || e.metaKey) && e.key === 'c' && currentSelection.length > 0) {
           e.preventDefault(); copySelectionToClipboard(); return;
         }
+
+        /* ──────── NEW: ENTER + DIRECT TYPING HANDLERS ──────── */
+        if (!editingCell && anchorCell && currentSelection.length === 1) {
+          /* Enter opens edit mode */
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            editCell(anchorCell);
+            return;
+          }
+          /* Typing clears cell and opens edit mode */
+          if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            e.preventDefault();
+            const cell = anchorCell;
+            editCell(cell);
+            cell.innerText = '';
+            if (document.execCommand) {
+              document.execCommand('insertText', false, e.key);
+            } else {
+              cell.innerText = e.key;
+            }
+            setCursorToEnd(cell);
+            return;
+          }
+        }
+
+        /* ──────── ARROW KEY NAVIGATION ──────── */
+        if (!editingCell && anchorCell && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
+          const { row, col } = getCellCoords(anchorCell);
+          let targetRow = row, targetCol = col;
+          switch(e.key){
+            case 'ArrowUp':   targetRow = row - 1; break;
+            case 'ArrowDown': targetRow = row + 1; break;
+            case 'ArrowLeft': targetCol = col - 1; break;
+            case 'ArrowRight':targetCol = col + 1; break;
+          }
+          if(targetRow < 0 || targetCol < 0) return;
+          const tag = (hasHeader && targetRow === 0 ? 'th' : 'td');
+          const nextCell = table.querySelector(\`\${tag}[data-row="\${targetRow}"][data-col="\${targetCol}"]\`);
+          if(nextCell){
+            e.preventDefault();
+            clearSelection();
+            nextCell.classList.add('selected');
+            currentSelection.push(nextCell);
+            anchorCell = nextCell;
+            nextCell.focus({preventScroll:true});
+            nextCell.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
+          }
+          return;
+        }
+
         if (editingCell && ((e.ctrlKey || e.metaKey) && e.key === 's')) {
           e.preventDefault();
           editingCell.blur();
@@ -708,10 +758,8 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           editingCell.blur();
           let nextCell;
           if (e.shiftKey) {
-            // Shift+Tab: move to the previous cell (decrement column index)
             nextCell = table.querySelector('td[data-row="'+row+'"][data-col="'+(col-1)+'"]');
           } else {
-            // Tab: move to the next cell (increment column index)
             nextCell = table.querySelector('td[data-row="'+row+'"][data-col="'+(col+1)+'"]');
           }
           if (nextCell) {
@@ -721,7 +769,6 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         if (editingCell && e.key === 'Escape') {
           e.preventDefault(); editingCell.innerText = originalCellValue; editingCell.blur();
         }
-        // If not editing, pressing Escape clears the selection.
         if (!editingCell && e.key === 'Escape') {
           clearSelection();
         }
@@ -746,7 +793,6 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         cell.classList.add('editing');
         cell.setAttribute('contenteditable', 'true');
         cell.focus();
-        // Attach a blur handler to commit cell changes.
         const onBlurHandler = () => {
           const value = cell.innerText;
           const coords = getCellCoords(cell);
@@ -789,7 +835,6 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           isUpdating = false;
         }
       });
-      // Global Escape handler to clear selection when not editing.
       document.addEventListener('keydown', e => {
         if(!editingCell && e.key === 'Escape'){
           clearSelection();
