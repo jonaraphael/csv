@@ -4,6 +4,13 @@ Experience a whole new way to work with CSV files right inside VS Code. CSV tran
 
 ---
 
+## Screenshots
+
+![Dark Theme Screenshot](images/Screenshot_dark.png)
+![Light Theme Screenshot](images/Screenshot_light.png)
+
+---
+
 ## Why CSV?
 
 Working with CSV files shouldn’t be a chore. With CSV, you get:
@@ -25,16 +32,10 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Sticky Headers:** Keep column titles in view as you scroll through large datasets.
 - **Enhanced Keyboard Navigation:** Navigate cells with Tab/Shift+Tab and use keyboard shortcuts for quick editing, saving, and selection.
 - **Advanced Multi-Cell Selection:** Easily select and copy blocks of data, then paste them elsewhere as properly formatted CSV.
+- **Add/Delete Columns:** Right-click any cell to add a column left or right, or remove the selected column.
 - **Find & Highlight:** Built-in find widget helps you search for text within your CSV with real-time highlighting and navigation through matches.
 - **Preserved CSV Integrity:** All modifications respect CSV formatting—no unwanted extra characters or formatting issues.
 - **Optimized for Performance:** Designed for medium-sized datasets, ensuring a smooth editing experience without compromising on functionality.
-
----
-
-## Screenshots
-
-![Dark Theme Screenshot](images/Screenshot_dark.png)
-![Light Theme Screenshot](images/Screenshot_light.png)
 
 ---
 
@@ -62,7 +63,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 
 ## Planned Improvements
 
-- **Row and Column Insertion/Deletion:** Quickly add or remove rows or columns without leaving the editor.
+- **Row Insertion/Deletion:** Quickly add or remove rows without leaving the editor.
 
 ---
 
@@ -74,6 +75,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Improved:** Navigation and editing, including better handling of special characters like quotes and commas.
 - **Added:** Advanced column type detection with dynamic color-coded highlighting.
 - **Refined:** Update mechanism for external document changes without interrupting your workflow.
+- **Configurable:** Added `csv.cellPadding` setting to adjust table cell padding.
 
 ### v1.0.2
 - **Improved:** Seamless activation of editing mode on double-click.
@@ -82,6 +84,24 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 
 ### v1.0.0
 - **Initial Release:** Introduced a full-featured CSV with interactive cell editing, smart column sizing, and adaptive theme support.
+
+---
+
+## Development
+
+Clone the repository and run the following commands:
+
+```bash
+npm install
+npm run lint
+npm test
+```
+
+To create a VS Code extension package, run:
+
+```bash
+npm run package
+```
 
 ---
 
@@ -94,4 +114,4 @@ Have questions, suggestions, or encountered an issue?
 
 ## License
 
-This extension is licensed under the [MIT License](https://opensource.org/licenses/MIT).
+This extension is licensed under the [MIT License](LICENSE).
