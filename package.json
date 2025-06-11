@@ -8,7 +8,7 @@
     "type": "git",
     "url": "https://github.com/jonaraphael/csv.git"
   },
-  "version": "1.0.6",
+  "version": "1.1.0",
   "engines": {
     "vscode": "^1.93.0",
     "node": ">=14"
@@ -30,17 +30,37 @@
     "languages": [
       {
         "id": "csv",
-        "extensions": [".csv"],
-        "aliases": ["CSV", "csv"],
+        "extensions": [
+          ".csv"
+        ],
+        "aliases": [
+          "CSV",
+          "csv"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
     "commands": [
-      { "command": "csv.toggleExtension", "title": "CSV: Toggle Extension On/Off" },
-      { "command": "csv.toggleHeader", "title": "CSV: Toggle First Row as Header" },
-      { "command": "csv.toggleSerialIndex", "title": "CSV: Toggle Serial Index Column" },
-      { "command": "csv.changeSeparator", "title": "CSV: Change CSV Separator" },
-      { "command": "csv.changeFontFamily", "title": "CSV: Change Font Family"}
+      {
+        "command": "csv.toggleExtension",
+        "title": "CSV: Toggle Extension On/Off"
+      },
+      {
+        "command": "csv.toggleHeader",
+        "title": "CSV: Toggle First Row as Header"
+      },
+      {
+        "command": "csv.toggleSerialIndex",
+        "title": "CSV: Toggle Serial Index Column"
+      },
+      {
+        "command": "csv.changeSeparator",
+        "title": "CSV: Change CSV Separator"
+      },
+      {
+        "command": "csv.changeFontFamily",
+        "title": "CSV: Change Font Family"
+      }
     ],
     "configuration": {
       "type": "object",
@@ -95,30 +115,23 @@
       "description": "Font family used by the CSV custom editor. Leave empty to inherit ‘editor.fontFamily’.",
       "scope": "application"
     }
-
   },
   "scripts": {
     "compile": "tsc -p ./",
     "lint": "eslint '**/*.ts'",
-    "test": "npm run compile && mocha --ui tdd --timeout 20000 out/test/**/*.js",
     "package": "vsce package"
   },
   "dependencies": {
-    "papaparse": "^5.4.1",
-    "font-list": "^1.5.1"
+    "font-list": "^1.5.1",
+    "papaparse": "^5.4.1"
   },
   "devDependencies": {
-    "@types/mocha": "^10.0.10",
     "@types/node": "^14.0.0",
     "@types/papaparse": "^5.3.16",
     "@types/vscode": "^1.60.0",
-    "vscode": "^1.1.37",
-    "@vscode/test-cli": "^0.0.11",
     "@typescript-eslint/eslint-plugin": "^7.9.0",
     "@typescript-eslint/parser": "^7.9.0",
     "eslint": "^8.57.0",
-    "mocha": "^10.2.0",
-    "@types/papaparse": "^5.3.6",
     "typescript": "^4.4.3"
   }
 }
