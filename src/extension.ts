@@ -1,3 +1,4 @@
+import { getFonts } from 'font-list';
 import Papa from 'papaparse';
 import * as vscode from 'vscode';
 
@@ -37,7 +38,41 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`CSV separator changed to "${input}"`);
         CsvEditorProvider.editors.forEach(editor => editor.refresh());
       }
+    }),
+    vscode.commands.registerCommand('csv.changeFontFamily', async () => {
+      const csvCfg     = vscode.workspace.getConfiguration('csv');
+      const editorCfg  = vscode.workspace.getConfiguration('editor');
+
+      const currentCsvFont   = csvCfg.get<string>('fontFamily', '');
+      const inheritedFont    = editorCfg.get<string>('fontFamily', 'Menlo');
+      const currentEffective = currentCsvFont || inheritedFont;
+
+      // Build QuickPick list
+      let fonts: string[] = [];
+      try {
+        fonts = (await getFonts()).map((f: string) => f.replace(/^"(.*)"$/, '$1')).sort();
+      } catch (e) {
+        console.error('CSV: unable to enumerate system fonts', e);
+      }
+      const picks = ['(inherit editor setting)', ...fonts];
+
+      const choice = await vscode.window.showQuickPick(picks, {
+        placeHolder: `Current: ${currentEffective}`
+      });
+      if (choice === undefined) { return; }                      // user aborted
+
+      const newVal = choice === '(inherit editor setting)' ? '' : choice;
+      await csvCfg.update('fontFamily', newVal, vscode.ConfigurationTarget.Global);
+
+      vscode.window.showInformationMessage(
+        newVal
+          ? `CSV font set to “${newVal}”.`
+          : 'CSV font now inherits editor.fontFamily.'
+      );
+      // Refresh all open CSV editors
+      CsvEditorProvider.editors.forEach(ed => ed.refresh());
     })
+
   );
 
   // Register the custom editor provider for CSV files.

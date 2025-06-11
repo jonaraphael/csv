@@ -39,7 +39,8 @@
       { "command": "csv.toggleExtension", "title": "CSV: Toggle Extension On/Off" },
       { "command": "csv.toggleHeader", "title": "CSV: Toggle First Row as Header" },
       { "command": "csv.toggleSerialIndex", "title": "CSV: Toggle Serial Index Column" },
-      { "command": "csv.changeSeparator", "title": "CSV: Change CSV Separator" }
+      { "command": "csv.changeSeparator", "title": "CSV: Change CSV Separator" },
+      { "command": "csv.changeFontFamily", "title": "CSV: Change Font Family"}
     ],
     "configuration": {
       "type": "object",
@@ -87,7 +88,14 @@
           }
         ]
       }
-    ]
+    ],
+    "csv.fontFamily": {
+      "type": "string",
+      "default": "",
+      "description": "Font family used by the CSV custom editor. Leave empty to inherit ‘editor.fontFamily’.",
+      "scope": "application"
+    }
+
   },
   "scripts": {
     "compile": "tsc -p ./",
@@ -96,7 +104,8 @@
     "package": "vsce package"
   },
   "dependencies": {
-    "papaparse": "^5.4.1"
+    "papaparse": "^5.4.1",
+    "font-list": "^1.5.1"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
