@@ -40,6 +40,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Preserved CSV Integrity:** All modifications respect CSV formatting—no unwanted extra characters or formatting issues.
 - **Optimized for Performance:** Designed for medium-sized datasets, ensuring a smooth editing experience without compromising on functionality.
 - **Large File Support:** Loads big CSVs in chunks so even large datasets open quickly.
+- **TSV Support:** `.tsv` files are recognized automatically and use tabs as the default separator.
 
 ---
 
@@ -56,10 +57,10 @@ Cursor (built on VS Code 1.99) and the latest VS Code releases (1.102).
 - Go to the Extensions view (`Ctrl+Shift+X` or `Cmd+Shift+X` on macOS).
 - Search for **CSV** and click **Install**.
 
-### 2. Open a CSV File
+### 2. Open a CSV or TSV File
 
-- Open any `.csv` file in VS Code.
-- The CSV will automatically load, presenting your file in an interactive grid view.
+- Open any `.csv` or `.tsv` file in VS Code.
+- The file will automatically load, presenting your data in an interactive grid view.
 
 ### 3. Edit and Navigate
 

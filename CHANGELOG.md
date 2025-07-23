@@ -7,6 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ## [1.1.2] - 2025-06-11
 - Fixed: fontFamily
 
+## [1.1.3] - 2025-06-11
+- Added: TSV file support with automatic tab delimiter.
+
 ## [1.1.0] - 2025-06-11
 - New: Row Insertion/Deletion.
 - New: Column sorting by clicking header labels.

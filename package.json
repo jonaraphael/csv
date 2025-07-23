@@ -16,6 +16,7 @@
   "categories": ["Data Science", "Programming Languages", "Other"],
   "activationEvents": [
     "onLanguage:csv",
+    "onLanguage:tsv",
     "onCommand:csv.toggleExtension",
     "onCommand:csv.toggleHeader",
     "onCommand:csv.toggleSerialIndex",
@@ -29,6 +30,12 @@
         "id": "csv",
         "extensions": [".csv"],
         "aliases": ["CSV", "csv"],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "tsv",
+        "extensions": [".tsv"],
+        "aliases": ["TSV", "tsv"],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -80,7 +87,10 @@
       {
         "viewType": "csv.editor",
         "displayName": "CSV",
-        "selector": [{ "filenamePattern": "*.csv" }]
+        "selector": [
+          { "filenamePattern": "*.csv" },
+          { "filenamePattern": "*.tsv" }
+        ]
       }
     ]
   },
