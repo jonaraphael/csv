@@ -599,7 +599,9 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     </div>
     <div id="contextMenu"></div>
     <script nonce="${nonce}">
-      document.body.setAttribute('tabindex', '0'); document.body.focus();
+      document.body.setAttribute('tabindex', '0');
+      let editingCell = null, originalCellValue = "";
+      document.body.focus();
       window.addEventListener('mousedown', e => {
         if(!editingCell || !editingCell.contains(e.target as Node)){
           document.body.focus();
@@ -609,7 +611,6 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       let lastContextIsHeader = false;   // remembers whether we right-clicked a <th>
       let isUpdating = false, isSelecting = false, anchorCell = null, currentSelection = [];
       let startCell = null, endCell = null, selectionMode = "cell";
-      let editingCell = null, originalCellValue = "";
       const table = document.querySelector('table');
       /* ──────────── VIRTUAL-SCROLL LOADER ──────────── */
       const CHUNK_SIZE = 1000;
