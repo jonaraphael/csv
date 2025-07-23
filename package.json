@@ -8,9 +8,9 @@
     "type": "git",
     "url": "https://github.com/jonaraphael/csv.git"
   },
-  "version": "1.1.2",
+  "version": "1.1.3",
   "engines": {
-    "vscode": "^1.96.0",
+    "vscode": "^1.70.0",
     "node": ">=14"
   },
   "categories": ["Data Science", "Programming Languages", "Other"],
@@ -98,7 +98,7 @@
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.11.19",
     "@types/papaparse": "^5.3.16",
-    "@types/vscode": "^1.96.0",
+    "@types/vscode": "^1.70.0",
     "@typescript-eslint/eslint-plugin": "^7.9.0",
     "@typescript-eslint/parser": "^7.9.0",
     "eslint": "^8.57.0",

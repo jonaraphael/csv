@@ -43,6 +43,11 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 
 ---
 
+## Compatibility
+
+This extension is built for VS Code **1.70.0** and later. It has been tested with
+Cursor (built on VS Code 1.99) and the latest VS Code releases (1.102).
+
 ## Getting Started
 
 ### 1. Install the Extension
