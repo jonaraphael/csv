@@ -199,8 +199,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
    */
   private async updateDocument(row: number, col: number, value: string) {
     this.isUpdatingDocument = true;
-    const config = vscode.workspace.getConfiguration('csv');
-    const separator = config.get<string>('separator', ',');
+    const separator = this.getSeparator();
     const oldText = this.document.getText();
     const lines = oldText.split(/\r?\n/);
     let editSucceeded = false;
@@ -261,8 +260,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
    */
   private async insertColumn(index: number) {
     this.isUpdatingDocument = true;
-    const config = vscode.workspace.getConfiguration('csv');
-    const separator = config.get<string>('separator', ',');
+    const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
     const data = result.data as string[][];
@@ -286,8 +284,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
    */
   private async deleteColumn(index: number) {
     this.isUpdatingDocument = true;
-    const config = vscode.workspace.getConfiguration('csv');
-    const separator = config.get<string>('separator', ',');
+    const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
     const data = result.data as string[][];
@@ -313,7 +310,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     this.isUpdatingDocument = true;
 
     const config       = vscode.workspace.getConfiguration('csv');
-    const separator    = config.get<string>('separator', ',');
+    const separator    = this.getSeparator();
     const treatHeader  = config.get<boolean>('treatFirstRowAsHeader', true);
 
     const text   = this.document.getText();
@@ -364,8 +361,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
    */
   private async insertRow(index: number) {
     this.isUpdatingDocument = true;
-    const config = vscode.workspace.getConfiguration('csv');
-    const separator = config.get<string>('separator', ',');
+    const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
     const data = result.data as string[][];
@@ -389,8 +385,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
    */
   private async deleteRow(index: number) {
     this.isUpdatingDocument = true;
-    const config = vscode.workspace.getConfiguration('csv');
-    const separator = config.get<string>('separator', ',');
+    const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
     const data = result.data as string[][];
@@ -415,7 +410,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     const config = vscode.workspace.getConfiguration('csv');
     const treatHeader = config.get<boolean>('treatFirstRowAsHeader', true);
     const addSerialIndex = config.get<boolean>('addSerialIndex', false);
-    const separator = config.get<string>('separator', ',');
+    const separator = this.getSeparator();
     const text = this.document.getText();
     let result;
     try {
@@ -1041,6 +1036,19 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     }
     console.log(`CSV: Column widths: ${widths}`);
     return widths;
+  }
+
+  /**
+   * Determines the delimiter to use based on configuration and file extension.
+   * `.tsv` files default to a tab separator when the setting is untouched.
+   */
+  private getSeparator(): string {
+    const config = vscode.workspace.getConfiguration('csv');
+    let sep = config.get<string>('separator', ',');
+    if (sep === ',' && this.document?.uri.fsPath.toLowerCase().endsWith('.tsv')) {
+      sep = '\t';
+    }
+    return sep;
   }
 
   /**
