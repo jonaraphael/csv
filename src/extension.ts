@@ -540,7 +540,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CSV</title>
     <style nonce="${nonce}">
-      body { font-family: "${fontFamily}"; margin: 0; padding: 0; user-select: none; }
+      body { font-family: ${fontFamily}; margin: 0; padding: 0; user-select: none; }
       .table-container { overflow-x: auto; max-height: 100vh; }
       table { border-collapse: collapse; width: max-content; }
       th, td { padding: ${cellPadding}px 8px; border: 1px solid ${isDark ? '#555' : '#ccc'}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
