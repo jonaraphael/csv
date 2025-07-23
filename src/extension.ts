@@ -704,8 +704,33 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
 
       table.addEventListener('mousedown', e => {
         if(e.target.tagName !== 'TD' && e.target.tagName !== 'TH') return;
-        if(editingCell){ if(e.target !== editingCell) editingCell.blur(); else return; } else clearSelection();
         const target = e.target;
+
+        // ──────── NEW: Shift+Click range selection ────────
+        if (
+          e.shiftKey &&
+          anchorCell &&
+          currentSelection.length === 1 &&
+          !editingCell &&
+          target.getAttribute('data-row') !== null &&
+          target.getAttribute('data-col') !== null &&
+          anchorCell.getAttribute('data-row') !== null &&
+          anchorCell.getAttribute('data-col') !== null &&
+          target.getAttribute('data-col') !== '-1' &&
+          anchorCell.getAttribute('data-col') !== '-1'
+        ) {
+          e.preventDefault();
+          selectionMode = 'cell';
+          startCell = anchorCell;
+          endCell = target;
+          isSelecting = true;
+          selectRange(getCellCoords(startCell), getCellCoords(endCell));
+          target.focus();
+          return;
+        }
+
+        if(editingCell){ if(e.target !== editingCell) editingCell.blur(); else return; } else clearSelection();
+
         /* ──────── NEW: select-all via top-left header cell ──────── */
         if (
           target.tagName === 'TH' &&                 // header cell
