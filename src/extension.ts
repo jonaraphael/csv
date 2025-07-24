@@ -602,7 +602,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       document.body.setAttribute('tabindex', '0'); document.body.focus();
       const vscode = acquireVsCodeApi();
       let lastContextIsHeader = false;   // remembers whether we right-clicked a <th>
-      let isUpdating = false, isSelecting = false, anchorCell = null, currentSelection = [];
+      let isUpdating = false, isSelecting = false, anchorCell = null, rangeEndCell = null, currentSelection = [];
       let startCell = null, endCell = null, selectionMode = "cell";
       let editingCell = null, originalCellValue = "";
       const table = document.querySelector('table');
@@ -723,6 +723,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
             getCellCoords(anchorCell),
             getCellCoords(target)
           );
+          rangeEndCell = target;
           anchorCell.focus();
           return;
         }
@@ -745,7 +746,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         /* ──────── END NEW BLOCK ──────── */
         
         selectionMode = (target.tagName === 'TH') ? "column" : (target.getAttribute('data-col') === '-1' ? "row" : "cell");
-        startCell = target; endCell = target; isSelecting = true; e.preventDefault();
+        startCell = target; endCell = target; rangeEndCell = target; isSelecting = true; e.preventDefault();
         target.focus();
       });
       table.addEventListener('mousemove', e => {
@@ -754,6 +755,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         if(selectionMode === "cell"){
           if(target.tagName === 'TD' || target.tagName === 'TH'){
             endCell = target;
+            rangeEndCell = target;
             selectRange(getCellCoords(startCell), getCellCoords(endCell));
           }
         } else if(selectionMode === "column"){
@@ -762,6 +764,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
             target = table.querySelector('thead th[data-col="'+col+'"]') || target;
           }
           endCell = target;
+          rangeEndCell = target;
           const startCol = parseInt(startCell.getAttribute('data-col'));
           const endCol = parseInt(endCell.getAttribute('data-col'));
           selectFullColumnRange(startCol, endCol);
@@ -771,6 +774,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
             target = table.querySelector('td[data-col="-1"][data-row="'+row+'"]') || target;
           }
           endCell = target;
+          rangeEndCell = target;
           const startRow = parseInt(startCell.getAttribute('data-row'));
           const endRow = parseInt(endCell.getAttribute('data-row'));
           selectFullRowRange(startRow, endRow);
@@ -781,16 +785,20 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         isSelecting = false;
         if(selectionMode === "cell"){
           if(startCell === endCell){
-            clearSelection(); startCell.classList.add('selected'); currentSelection.push(startCell); anchorCell = startCell;
-          } else { anchorCell = startCell; }
+            clearSelection();
+            startCell.classList.add('selected');
+            currentSelection.push(startCell);
+          }
+          anchorCell = startCell;
+          rangeEndCell = endCell;
         } else if(selectionMode === "column"){
           const startCol = parseInt(startCell.getAttribute('data-col'));
           const endCol = parseInt(endCell.getAttribute('data-col'));
-          selectFullColumnRange(startCol, endCol); anchorCell = startCell;
+          selectFullColumnRange(startCol, endCol); anchorCell = startCell; rangeEndCell = endCell;
         } else if(selectionMode === "row"){
           const startRow = parseInt(startCell.getAttribute('data-row'));
           const endRow = parseInt(endCell.getAttribute('data-row'));
-          selectFullRowRange(startRow, endRow); anchorCell = startCell;
+          selectFullRowRange(startRow, endRow); anchorCell = startCell; rangeEndCell = endCell;
         }
       });
       const selectRange = (start, end) => {
@@ -910,6 +918,28 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         }
 
         /* ──────── ARROW KEY NAVIGATION ──────── */
+        if (!editingCell && anchorCell && e.shiftKey && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
+          const { row, col } = getCellCoords(rangeEndCell || anchorCell);
+          let targetRow = row, targetCol = col;
+          switch(e.key){
+            case 'ArrowUp':   targetRow = row - 1; break;
+            case 'ArrowDown': targetRow = row + 1; break;
+            case 'ArrowLeft': targetCol = col - 1; break;
+            case 'ArrowRight':targetCol = col + 1; break;
+          }
+          if(targetRow < 0 || targetCol < 0) return;
+          const tag = (hasHeader && targetRow === 0 ? 'th' : 'td');
+          const nextCell = table.querySelector(\`\${tag}[data-row="\${targetRow}"][data-col="\${targetCol}"]\`);
+          if(nextCell){
+            e.preventDefault();
+            rangeEndCell = nextCell;
+            selectRange(getCellCoords(anchorCell), getCellCoords(rangeEndCell));
+            anchorCell.focus({preventScroll:true});
+            rangeEndCell.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
+          }
+          return;
+        }
+
         if (!editingCell && anchorCell && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
           const { row, col } = getCellCoords(anchorCell);
           let targetRow = row, targetCol = col;
@@ -928,6 +958,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
             nextCell.classList.add('selected');
             currentSelection.push(nextCell);
             anchorCell = nextCell;
+            rangeEndCell = nextCell;
             nextCell.focus({preventScroll:true});
             nextCell.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
           }
