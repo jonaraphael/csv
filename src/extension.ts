@@ -710,7 +710,6 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         if (
           e.shiftKey &&
           anchorCell &&
-          currentSelection.length === 1 &&
           !editingCell &&
           target.getAttribute('data-row') !== null &&
           target.getAttribute('data-col') !== null &&
@@ -720,12 +719,11 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           anchorCell.getAttribute('data-col') !== '-1'
         ) {
           e.preventDefault();
-          selectionMode = 'cell';
-          startCell = anchorCell;
-          endCell = target;
-          isSelecting = true;
-          selectRange(getCellCoords(startCell), getCellCoords(endCell));
-          target.focus();
+          selectRange(
+            getCellCoords(anchorCell),
+            getCellCoords(target)
+          );
+          anchorCell.focus();
           return;
         }
 
