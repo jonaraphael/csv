@@ -146,9 +146,48 @@ class CsvEditorController {
     const oldText = this.document.getText();
     const result = Papa.parse(oldText, { dynamicTyping: false, delimiter: separator });
     const data = result.data as string[][];
-    while (data.length <= row) data.push([]);
-    while (data[row].length <= col) data[row].push('');
-    data[row][col] = value;
+    const hadRows = data.length;
+    const hadColsAtRow = (data[row] ? data[row].length : 0);
+    const wasEditingLastRow = row >= (data.length - 1);
+
+    const rowExists = row < data.length;
+    const colExists = rowExists && col < data[row].length;
+
+    if (value === '') {
+      if (!rowExists) {
+        // Do not expand file with an empty virtual row
+        this.isUpdatingDocument = false;
+        return;
+      }
+      if (!colExists) {
+        // Do not expand row width with an empty virtual cell
+        this.isUpdatingDocument = false;
+        return;
+      }
+      // Existing cell: clear value
+      data[row][col] = '';
+    } else {
+      // Non-empty value: expand as needed and set
+      while (data.length <= row) data.push([]);
+      while (data[row].length <= col) data[row].push('');
+      data[row][col] = value;
+    }
+    // If we edited the (previous) last row, trim trailing empty rows recursively
+    let trimmed = false;
+    if (wasEditingLastRow) {
+      const isRowEmpty = (arr: string[] | undefined) => {
+        if (!arr || arr.length === 0) return true;
+        for (let i = 0; i < arr.length; i++) {
+          if ((arr[i] ?? '') !== '') return false;
+        }
+        return true;
+      };
+      while (data.length > 0 && isRowEmpty(data[data.length - 1])) {
+        data.pop();
+        trimmed = true;
+      }
+    }
+
     const newCsvText = Papa.unparse(data, { delimiter: separator });
 
     const fullRange = new vscode.Range(
@@ -163,6 +202,11 @@ class CsvEditorController {
     this.isUpdatingDocument = false;
     console.log(`CSV: Updated row ${row + 1}, column ${col + 1} to "${value}"`);
     this.currentWebviewPanel?.webview.postMessage({ type: 'updateCell', row, col, value });
+
+    // Trigger a full re-render if structure may have changed (new row/col created)
+    if (trimmed || row >= hadRows || col >= hadColsAtRow) {
+      try { this.updateWebviewContent(); } catch (e) { console.error('CSV: refresh failed after structural edit', e); }
+    }
   }
 
   private async handleSave() {
@@ -394,7 +438,8 @@ class CsvEditorController {
       bodyData = data.slice(offset);
     }
     const visibleForWidth = headerFlag ? [headerRow, ...bodyData] : bodyData;
-    const numColumns = Math.max(...visibleForWidth.map(row => row.length), 0);
+    let numColumns = Math.max(...visibleForWidth.map(row => row.length), 0);
+    if (numColumns === 0) numColumns = 1; // ensure at least 1 column for the virtual row
 
     const columnData = Array.from({ length: numColumns }, (_, i) => bodyData.map(row => row[i] || ''));
     const columnTypes = columnData.map(col => this.estimateColumnDataType(col));
@@ -404,16 +449,18 @@ class CsvEditorController {
     const CHUNK_SIZE = 1000;
     const allRows = headerFlag ? bodyData : data.slice(offset);
     const chunks: string[] = [];
+    const chunked = allRows.length > CHUNK_SIZE;
 
     if (allRows.length > CHUNK_SIZE) {
       for (let i = CHUNK_SIZE; i < allRows.length; i += CHUNK_SIZE) {
         const htmlChunk = allRows.slice(i, i + CHUNK_SIZE).map((row, localR) => {
           const startAbs = headerFlag ? offset + 1 : offset;
           const absRow = startAbs + i + localR;
-          const cells  = row.map((cell, cIdx) => {
-            const safe = this.escapeHtml(cell);
-            return `<td tabindex="0" style="min-width:${Math.min(columnWidths[cIdx]||0,100)}ch;max-width:100ch;border:1px solid ${isDark?'#555':'#ccc'};color:${columnColors[cIdx]};overflow:hidden;white-space:nowrap;text-overflow:ellipsis;" data-row="${absRow}" data-col="${cIdx}">${safe}</td>`;
-          }).join('');
+          let cells = '';
+          for (let cIdx = 0; cIdx < numColumns; cIdx++) {
+            const safe = this.escapeHtml(row[cIdx] || '');
+            cells += `<td tabindex="0" style="min-width:${Math.min(columnWidths[cIdx]||0,100)}ch;max-width:100ch;border:1px solid ${isDark?'#555':'#ccc'};color:${columnColors[cIdx]};overflow:hidden;white-space:nowrap;text-overflow:ellipsis;" data-row="${absRow}" data-col="${cIdx}">${safe}</td>`;
+          }
 
           return `<tr>${
             addSerialIndex ? `<td tabindex="0" style="min-width:4ch;max-width:4ch;border:1px solid ${isDark?'#555':'#ccc'};color:#888;" data-row="${absRow}" data-col="-1">${absRow}</td>` : ''
@@ -438,10 +485,10 @@ class CsvEditorController {
           ? `<th tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: #888;"></th>`
           : ''
       }`;
-      headerRow.forEach((cell, i) => {
-        const safe = this.escapeHtml(cell);
+      for (let i = 0; i < numColumns; i++) {
+        const safe = this.escapeHtml(headerRow[i] || '');
         tableHtml += `<th tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${offset}" data-col="${i}">${safe}</th>`;
-      });
+      }
       tableHtml += `</tr></thead><tbody>`;
       bodyData.forEach((row, r) => {
         tableHtml += `<tr>${
@@ -449,30 +496,54 @@ class CsvEditorController {
             ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${offset + 1 + r}" data-col="-1">${offset + 1 + r}</td>`
             : ''
         }`;
-        row.forEach((cell, i) => {
-          const safe = this.escapeHtml(cell);
+        for (let i = 0; i < numColumns; i++) {
+          const safe = this.escapeHtml(row[i] || '');
           tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${offset + 1 + r}" data-col="${i}">${safe}</td>`;
-        });
+        }
         tableHtml += `</tr>`;
       });
+      if (!chunked) {
+        const virtualAbs = offset + 1 + bodyData.length;
+        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${virtualAbs}</td>` : '';
+        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+        tableHtml += `<tr>${idxCell}${dataCells}</tr>`;
+      }
       tableHtml += `</tbody>`;
     } else {
       tableHtml += `<tbody>`;
-      data.slice(offset).forEach((row, r) => {
+      const nonHeaderRows = data.slice(offset);
+      nonHeaderRows.forEach((row, r) => {
         tableHtml += `<tr>${
           addSerialIndex
             ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${offset + r}" data-col="-1">${r + 1}</td>`
             : ''
         }`;
-        row.forEach((cell, i) => {
-          const safe = this.escapeHtml(cell);
+        for (let i = 0; i < numColumns; i++) {
+          const safe = this.escapeHtml(row[i] || '');
           tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${offset + r}" data-col="${i}">${safe}</td>`;
-        });
+        }
         tableHtml += `</tr>`;
       });
+      if (!chunked) {
+        const virtualAbs = offset + nonHeaderRows.length;
+        const displayIdx = nonHeaderRows.length + 1;
+        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
+        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+        tableHtml += `<tr>${idxCell}${dataCells}</tr>`;
+      }
       tableHtml += `</tbody>`;
     }
     tableHtml += `</table>`;
+    // If chunked, append a final chunk with the virtual row so it appears at the end
+    if (chunked) {
+      const startAbs = headerFlag ? offset + 1 : offset;
+      const virtualAbs = startAbs + allRows.length;
+      const displayIdx = headerFlag ? virtualAbs : (allRows.length + 1);
+      const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
+      const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+      const vrow = `<tr>${idxCell}${dataCells}</tr>`;
+      chunks.push(vrow);
+    }
 
     return { tableHtml, chunksJson: JSON.stringify(chunks), colorCss };
   }

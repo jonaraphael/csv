@@ -674,8 +674,16 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     const { row, col } = getCellCoords(editingCell);
     editingCell.blur();
-    const nextCell = table.querySelector('td[data-row="'+(row+1)+'"][data-col="'+col+'"]');
-    if (nextCell) editCell(nextCell);
+    const targetRow = row + 1;
+    const nextCell = table.querySelector('td[data-row="'+targetRow+'\"][data-col="'+col+'"]');
+    if (nextCell) {
+      editCell(nextCell);
+    } else {
+      try {
+        const st = vscode.getState() || {};
+        vscode.setState({ ...st, anchorRow: targetRow, anchorCol: col, pendingEdit: 'detail' });
+      } catch {}
+    }
   }
   if (editingCell && e.key === 'Tab') {
     e.preventDefault();
@@ -783,6 +791,29 @@ window.addEventListener('message', event => {
     isUpdating = false;
   }
 });
+
+// After initial restoreState, if there's a pending edit request, perform it
+const maybeResumePendingEdit = () => {
+  try {
+    const st = vscode.getState() || {};
+    if (st && typeof st.anchorRow === 'number' && typeof st.anchorCol === 'number' && st.pendingEdit === 'detail') {
+      const tag = (hasHeader && st.anchorRow === 0 ? 'th' : 'td');
+      const sel = table.querySelector(`${tag}[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"]`);
+      if (sel) {
+        editCell(sel, undefined, 'detail');
+        // clear pending flag
+        const next = { ...st };
+        delete next.pendingEdit;
+        vscode.setState(next);
+      }
+    }
+  } catch {}
+};
+
+// Try after load and after visibility/focus restores
+setTimeout(maybeResumePendingEdit, 0);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(maybeResumePendingEdit, 0); });
+window.addEventListener('focus', () => { setTimeout(maybeResumePendingEdit, 0); }, { passive: true });
 
 document.addEventListener('keydown', e => {
   if(!editingCell && e.key === 'Escape'){
