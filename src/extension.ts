@@ -464,12 +464,12 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     if (headerFlag) {
       tableHtml += `<thead><tr>${
         addSerialIndex
-          ? `<th style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: #888;">#</th>`
+          ? `<th tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: #888;">#</th>`
           : ''
       }`;
       headerRow.forEach((cell, i) => {
         const safe = this.escapeHtml(cell);
-        tableHtml += `<th style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="0" data-col="${i}">${safe}</th>`;
+        tableHtml += `<th tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="0" data-col="${i}">${safe}</th>`;
       });
       tableHtml += `</tr></thead><tbody>`;
       bodyData.forEach((row, r) => {
@@ -867,6 +867,80 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         document.querySelectorAll('.highlight, .active-match').forEach(el => { el.classList.remove('highlight'); el.classList.remove('active-match'); });
         findStatus.innerText = ""; findInput.blur();
       });
+      // Capture-phase handler to intercept Cmd/Ctrl + Arrow and move to extremes
+      document.addEventListener('keydown', e => {
+        const isArrowKey = (k) => ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Up','Down','Left','Right','Home','End','PageUp','PageDown'].includes(k);
+        if (!editingCell && (e.ctrlKey || e.metaKey) && isArrowKey(e.key)) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          e.stopPropagation();
+
+          const sc = document.querySelector('.table-container');
+          if (sc) {
+            if (['ArrowLeft','Left','Home'].includes(e.key))  sc.scrollTo({ left: 0, behavior: 'smooth' });
+            if (['ArrowRight','Right','End'].includes(e.key)) sc.scrollTo({ left: sc.scrollWidth, behavior: 'smooth' });
+          }
+          if (['ArrowUp','Up','PageUp'].includes(e.key)) {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }
+          if (['ArrowDown','Down','PageDown'].includes(e.key)) {
+            const h = Math.max(
+              document.body.scrollHeight,
+              document.documentElement.scrollHeight
+            );
+            window.scrollTo({ top: h, behavior: 'smooth' });
+          }
+
+          const ref = anchorCell || currentSelection[0] || document.querySelector('td.selected, th.selected') || document.querySelector('td, th');
+          let target = null;
+          if (ref) {
+            const { row, col } = getCellCoords(ref);
+            if (['ArrowLeft','Left','Home'].includes(e.key)) {
+              const tag = (hasHeader && row === 0 ? 'th' : 'td');
+              const rowCells = Array.from(table.querySelectorAll(tag + '[data-row="'+row+'"]'))
+                .filter(el => el.getAttribute('data-col') !== null && el.getAttribute('data-col') !== '-1');
+              const min = rowCells.reduce((acc, el) => Math.min(acc, parseInt(el.getAttribute('data-col'))), Infinity);
+              target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === min) || ref;
+            } else if (['ArrowRight','Right','End'].includes(e.key)) {
+              const tag = (hasHeader && row === 0 ? 'th' : 'td');
+              const rowCells = Array.from(table.querySelectorAll(tag + '[data-row="'+row+'"]'))
+                .filter(el => el.getAttribute('data-col') !== null && el.getAttribute('data-col') !== '-1');
+              const max = rowCells.reduce((acc, el) => Math.max(acc, parseInt(el.getAttribute('data-col'))), -1);
+              target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === max) || ref;
+            } else if (['ArrowUp','Up','PageUp'].includes(e.key)) {
+              target = hasHeader
+                ? (table.querySelector('th[data-row="0"][data-col="'+col+'"]') || ref)
+                : (table.querySelector('td[data-row="0"][data-col="'+col+'"]') || ref);
+            } else if (['ArrowDown','Down','PageDown'].includes(e.key)) {
+              const colCells = Array.from(table.querySelectorAll('td[data-col="'+col+'"]'));
+              target = (colCells.length ? colCells[colCells.length - 1] : null) || ref;
+            }
+          }
+
+          if (target) {
+            clearSelection();
+            target.classList.add('selected');
+            currentSelection.push(target);
+            anchorCell = target;
+            rangeEndCell = target;
+            target.focus({preventScroll:true});
+            // Ensure visibility: for Up with sticky header, also bring first data row into view
+            if (['ArrowUp','Up','PageUp'].includes(e.key)) {
+              const belowRowIndex = hasHeader ? 1 : 0;
+              const below = table.querySelector('td[data-row="'+belowRowIndex+'"][data-col="'+getCellCoords(target).col+'"]');
+              if (below) {
+                below.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+              } else {
+                // fallback to header itself
+                target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+              }
+            } else {
+              target.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
+            }
+          }
+        }
+      }, true);
+
       document.addEventListener('keydown', e => {
         if((e.ctrlKey || e.metaKey) && e.key === 'f'){
           e.preventDefault(); findWidget.style.display = 'block'; findInput.focus(); return;
@@ -876,6 +950,66 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         }
         if ((e.ctrlKey || e.metaKey) && e.key === 'c' && currentSelection.length > 0) {
           e.preventDefault(); copySelectionToClipboard(); return;
+        }
+
+        // Cmd/Ctrl + Arrow: scroll to extremes and move selection
+        const isArrowKey = (k) => ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Up','Down','Left','Right','Home','End','PageUp','PageDown'].includes(k);
+        if (!editingCell && (e.ctrlKey || e.metaKey) && isArrowKey(e.key)) {
+          e.preventDefault();
+          const sc = document.querySelector('.table-container');
+          if (sc) {
+            if (['ArrowLeft','Left','Home'].includes(e.key))  sc.scrollTo({ left: 0, behavior: 'smooth' });
+            if (['ArrowRight','Right','End'].includes(e.key)) sc.scrollTo({ left: sc.scrollWidth, behavior: 'smooth' });
+            if (['ArrowUp','Up','PageUp'].includes(e.key))    sc.scrollTo({ top: 0, behavior: 'smooth' });
+            if (['ArrowDown','Down','PageDown'].includes(e.key))  sc.scrollTo({ top: sc.scrollHeight, behavior: 'smooth' });
+          }
+
+          // Determine the current reference cell
+          let refCell = anchorCell;
+          if (!refCell) {
+            refCell = currentSelection[0] || document.querySelector('td.selected, th.selected');
+          }
+          let target = null;
+          if (refCell) {
+            const { row, col } = getCellCoords(refCell);
+            if (['ArrowLeft','Left','Home'].includes(e.key)) {
+              // leftmost existing data cell in this row
+              const tag = (hasHeader && row === 0 ? 'th' : 'td');
+              const rowCells = Array.from(table.querySelectorAll(tag + '[data-row="'+row+'"]'))
+                .filter(el => el.getAttribute('data-col') !== null && el.getAttribute('data-col') !== '-1');
+              const min = rowCells.reduce((acc, el) => Math.min(acc, parseInt(el.getAttribute('data-col'))), Infinity);
+              target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === min) || refCell;
+            } else if (['ArrowRight','Right','End'].includes(e.key)) {
+              // rightmost existing data cell in this row
+              const tag = (hasHeader && row === 0 ? 'th' : 'td');
+              const rowCells = Array.from(table.querySelectorAll(tag + '[data-row="'+row+'"]'))
+                .filter(el => el.getAttribute('data-col') !== null && el.getAttribute('data-col') !== '-1');
+              const max = rowCells.reduce((acc, el) => Math.max(acc, parseInt(el.getAttribute('data-col'))), -1);
+              target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === max) || refCell;
+            } else if (['ArrowUp','Up','PageUp'].includes(e.key)) {
+              // topmost row for this column (header if present)
+              if (hasHeader) {
+                target = table.querySelector('th[data-row="0"][data-col="'+col+'"]') || refCell;
+              } else {
+                target = table.querySelector('td[data-row="0"][data-col="'+col+'"]') || refCell;
+              }
+            } else if (['ArrowDown','Down','PageDown'].includes(e.key)) {
+              // bottom-most row for this column (body only)
+              const colCells = Array.from(table.querySelectorAll('td[data-col="'+col+'"]'));
+              target = (colCells.length ? colCells[colCells.length - 1] : null) || refCell;
+            }
+          }
+
+          if (target) {
+            clearSelection();
+            target.classList.add('selected');
+            currentSelection.push(target);
+            anchorCell = target;
+            rangeEndCell = target;
+            target.focus({preventScroll:true});
+            target.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
+          }
+          return;
         }
 
         /* ──────── NEW: ENTER + DIRECT TYPING HANDLERS ──────── */
