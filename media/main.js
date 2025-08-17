@@ -1,7 +1,7 @@
 // Webview script moved out of inline <script>. Kept logic changes minimal.
 
 document.body.setAttribute('tabindex', '0');
-document.body.focus();
+try { document.body.focus({ preventScroll: true }); } catch { try { document.body.focus(); } catch {} }
 
 const vscode = acquireVsCodeApi();
 
@@ -18,6 +18,58 @@ let editingCell = null, originalCellValue = "";
 let editMode = null; // 'quick' | 'detail' | null
 
 const table = document.querySelector('#csv-root table');
+const scrollContainer = document.querySelector('.table-container');
+
+// Persist/restore view state (scroll + selection) across webview reloads
+const persistState = () => {
+  try {
+    const st = vscode.getState() || {};
+    const anchor = anchorCell ? getCellCoords(anchorCell) : null;
+    const nextState = {
+      ...st,
+      scrollX: scrollContainer ? scrollContainer.scrollLeft : 0,
+      scrollY: scrollContainer ? scrollContainer.scrollTop : (window.scrollY || window.pageYOffset || 0),
+      anchorRow: anchor ? anchor.row : undefined,
+      anchorCol: anchor ? anchor.col : undefined
+    };
+    vscode.setState(nextState);
+  } catch {}
+};
+
+const restoreState = () => {
+  try {
+    const st = vscode.getState() || {};
+    if (typeof st.scrollX === 'number' && scrollContainer) {
+      scrollContainer.scrollLeft = st.scrollX;
+    }
+    if (typeof st.scrollY === 'number') {
+      if (scrollContainer) {
+        scrollContainer.scrollTop = st.scrollY;
+      } else {
+        window.scrollTo(0, st.scrollY);
+      }
+    }
+    if (typeof st.anchorRow === 'number' && typeof st.anchorCol === 'number') {
+      const tag = (hasHeader && st.anchorRow === 0 ? 'th' : 'td');
+      let sel = table.querySelector(`${tag}[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"]`);
+      // If not present yet (due to chunking), load chunks until available or exhausted
+      if (!sel && typeof window.__csvLoadNextChunk === 'function') {
+        let guard = 100; // prevent infinite loops
+        while (!sel && typeof window.__csvLoadNextChunk === 'function' && csvChunks && csvChunks.length && guard-- > 0) {
+          window.__csvLoadNextChunk();
+          sel = table.querySelector(`${tag}[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"]`);
+        }
+      }
+      if (sel) {
+        clearSelection();
+        sel.classList.add('selected');
+        currentSelection.push(sel);
+        anchorCell = sel; rangeEndCell = sel;
+        try { sel.focus({ preventScroll: true }); } catch { try { sel.focus(); } catch {} }
+      }
+    }
+  } catch {}
+};
 
 /* ──────────── VIRTUAL-SCROLL LOADER ──────────── */
 const CHUNK_SIZE = 1000;
@@ -26,13 +78,14 @@ const chunkTemplate = document.getElementById('__csvChunks');
 let csvChunks = chunkTemplate ? JSON.parse(chunkTemplate.textContent || '[]') : [];
 
 if (csvChunks.length) {
-  const scrollContainer = document.querySelector('.table-container');
   const tbody           = table.tBodies[0];
 
   const loadNextChunk = () => {
     if (!csvChunks.length || !tbody) return;
     tbody.insertAdjacentHTML('beforeend', csvChunks.shift());
   };
+  // Expose for restoration logic
+  window.__csvLoadNextChunk = loadNextChunk;
 
   const io = new IntersectionObserver((entries)=>{
     if (entries[0].isIntersecting) {
@@ -46,6 +99,33 @@ if (csvChunks.length) {
   if (initialLast) io.observe(initialLast);
 }
 /* ───────── END VIRTUAL-SCROLL LOADER ───────── */
+
+// Restore state after initial DOM is ready
+restoreState();
+setTimeout(() => { try { restoreState(); } catch {} }, 0);
+requestAnimationFrame(() => { try { restoreState(); } catch {} });
+
+// Track scroll to persist state (prefer container)
+if (scrollContainer) {
+  scrollContainer.addEventListener('scroll', () => {
+    persistState();
+  }, { passive: true });
+} else {
+  window.addEventListener('scroll', () => { persistState(); }, { passive: true });
+}
+
+// Persist on blur/visibility change and restore on focus/visibility
+window.addEventListener('blur', () => { persistState(); }, { passive: true });
+window.addEventListener('focus', () => {
+  setTimeout(() => { try { restoreState(); } catch {} }, 0);
+}, { passive: true });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    persistState();
+  } else if (document.visibilityState === 'visible') {
+    setTimeout(() => { try { restoreState(); } catch {} }, 0);
+  }
+});
 
 const hasHeader = document.querySelector('thead') !== null;
 const getCellCoords = cell => ({ row: parseInt(cell.getAttribute('data-row')), col: parseInt(cell.getAttribute('data-col')) });
@@ -206,14 +286,15 @@ table.addEventListener('mouseup', e => {
     }
     anchorCell = startCell;
     rangeEndCell = endCell;
+    persistState();
   } else if(selectionMode === "column"){
     const startCol = parseInt(startCell.getAttribute('data-col'));
     const endCol = parseInt(endCell.getAttribute('data-col'));
-    selectFullColumnRange(startCol, endCol); anchorCell = startCell; rangeEndCell = endCell;
+    selectFullColumnRange(startCol, endCol); anchorCell = startCell; rangeEndCell = endCell; persistState();
   } else if(selectionMode === "row"){
     const startRow = parseInt(startCell.getAttribute('data-row'));
     const endRow = parseInt(endCell.getAttribute('data-row'));
-    selectFullRowRange(startRow, endRow); anchorCell = startCell; rangeEndCell = endCell;
+    selectFullRowRange(startRow, endRow); anchorCell = startCell; rangeEndCell = endCell; persistState();
   }
 });
 
@@ -317,16 +398,19 @@ document.addEventListener('keydown', e => {
     if (sc) {
       if (['ArrowLeft','Left','Home'].includes(e.key))  sc.scrollTo({ left: 0, behavior: 'smooth' });
       if (['ArrowRight','Right','End'].includes(e.key)) sc.scrollTo({ left: sc.scrollWidth, behavior: 'smooth' });
-    }
-    if (['ArrowUp','Up','PageUp'].includes(e.key)) {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-    if (['ArrowDown','Down','PageDown'].includes(e.key)) {
-      const h = Math.max(
-        document.body.scrollHeight,
-        document.documentElement.scrollHeight
-      );
-      window.scrollTo({ top: h, behavior: 'smooth' });
+      if (['ArrowUp','Up','PageUp'].includes(e.key))    sc.scrollTo({ top: 0, behavior: 'smooth' });
+      if (['ArrowDown','Down','PageDown'].includes(e.key))  sc.scrollTo({ top: sc.scrollHeight, behavior: 'smooth' });
+    } else {
+      if (['ArrowUp','Up','PageUp'].includes(e.key)) {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      if (['ArrowDown','Down','PageDown'].includes(e.key)) {
+        const h = Math.max(
+          document.body.scrollHeight,
+          document.documentElement.scrollHeight
+        );
+        window.scrollTo({ top: h, behavior: 'smooth' });
+      }
     }
 
     const ref = anchorCell || currentSelection[0] || document.querySelector('td.selected, th.selected') || document.querySelector('td, th');
@@ -361,6 +445,7 @@ document.addEventListener('keydown', e => {
       currentSelection.push(target);
       anchorCell = target;
       rangeEndCell = target;
+      persistState();
       target.focus({preventScroll:true});
       if (['ArrowUp','Up','PageUp'].includes(e.key)) {
         const belowRowIndex = hasHeader ? 1 : 0;
@@ -436,6 +521,7 @@ document.addEventListener('keydown', e => {
       currentSelection.push(target);
       anchorCell = target;
       rangeEndCell = target;
+      persistState();
       target.focus({preventScroll:true});
       target.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
     }
@@ -483,6 +569,7 @@ document.addEventListener('keydown', e => {
       e.preventDefault();
       rangeEndCell = nextCell;
       selectRange(getCellCoords(anchorCell), getCellCoords(rangeEndCell));
+      persistState();
       anchorCell.focus({preventScroll:true});
       rangeEndCell.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
     }
@@ -508,6 +595,7 @@ document.addEventListener('keydown', e => {
       currentSelection.push(nextCell);
       anchorCell = nextCell;
       rangeEndCell = nextCell;
+      persistState();
       nextCell.focus({preventScroll:true});
       nextCell.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
     }
@@ -535,6 +623,7 @@ document.addEventListener('keydown', e => {
           currentSelection.push(nextCell);
           anchorCell = nextCell;
           rangeEndCell = nextCell;
+          persistState();
           nextCell.focus({preventScroll:true});
           nextCell.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
         };
@@ -664,7 +753,11 @@ const copySelectionToClipboard = () => {
 window.addEventListener('message', event => {
   const message = event.data;
   if(message.type === 'focus'){
-    document.body.focus();
+    if (anchorCell) {
+      try { anchorCell.focus({ preventScroll: true }); } catch { try { anchorCell.focus(); } catch {} }
+    } else {
+      try { document.body.focus({ preventScroll: true }); } catch { try { document.body.focus(); } catch {} }
+    }
   } else if(message.type === 'updateCell'){
     isUpdating = true;
     const { row, col, value } = message;

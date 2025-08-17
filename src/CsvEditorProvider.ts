@@ -53,7 +53,6 @@ class CsvEditorController {
     webviewPanel.onDidChangeViewState(e => {
       if (e.webviewPanel.active) {
         e.webviewPanel.webview.postMessage({ type: 'focus' });
-        this.forceReload();
         CsvEditorProvider.currentActive = this;
       }
     });
@@ -540,7 +539,7 @@ class CsvEditorController {
     <title>CSV</title>
     <style nonce="${nonce}">
       body { font-family: ${this.escapeCss(fontFamily)}; margin: 0; padding: 0; user-select: none; }
-      .table-container { overflow-x: auto; max-height: 100vh; }
+      .table-container { overflow: auto; height: 100vh; }
       table { border-collapse: collapse; width: max-content; }
       th, td { padding: ${cellPadding}px 8px; border: 1px solid ${isDark ? '#555' : '#ccc'}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
       th { position: sticky; top: 0; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; }
