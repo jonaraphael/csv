@@ -13,7 +13,7 @@ Module.prototype.require = function (id: string) {
   return originalRequire.apply(this, arguments as any);
 };
 
-import { CsvEditorProvider } from '../extension';
+import { CsvEditorProvider } from '../CsvEditorProvider';
 
 // Helper to access private methods via type casting
 function getPrivate<T>(obj: any, name: string): T {
