@@ -2,9 +2,9 @@ import Papa from 'papaparse';
 import * as vscode from 'vscode';
 import * as path from 'path';
 
-export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
-  public static readonly viewType = 'csv.editor';
-  public static editors: CsvEditorProvider[] = [];
+// Per-document controller. Manages one webview + document.
+class CsvEditorController {
+  // Note: Global registry lives on CsvEditorProvider (wrapper)
 
   private isUpdatingDocument = false;
   private isSaving = false;
@@ -13,6 +13,8 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
+  // (no static helpers here; see wrapper CsvEditorProvider)
+
   public async resolveCustomTextEditor(
     document: vscode.TextDocument,
     webviewPanel: vscode.WebviewPanel,
@@ -20,7 +22,7 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   ): Promise<void> {
     this.document = document;
 
-    const config = vscode.workspace.getConfiguration('csv');
+    const config = vscode.workspace.getConfiguration('csv', this.document.uri);
     if (!config.get<boolean>('enabled', true)) {
       vscode.window.showInformationMessage('CSV extension is disabled. Use the command palette to enable it.');
       await vscode.commands.executeCommand('vscode.openWith', document.uri, 'default');
@@ -38,10 +40,16 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
 
     this.updateWebviewContent();
 
+    if (webviewPanel.active) {
+      CsvEditorProvider.currentActive = this;
+    }
+
     webviewPanel.webview.postMessage({ type: 'focus' });
     webviewPanel.onDidChangeViewState(e => {
       if (e.webviewPanel.active) {
         e.webviewPanel.webview.postMessage({ type: 'focus' });
+        this.forceReload();
+        CsvEditorProvider.currentActive = this;
       }
     });
 
@@ -93,13 +101,37 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   }
 
   public refresh() {
-    const config = vscode.workspace.getConfiguration('csv');
+    const config = vscode.workspace.getConfiguration('csv', this.document.uri);
     if (!config.get<boolean>('enabled', true)) {
       this.currentWebviewPanel?.dispose();
       vscode.commands.executeCommand('vscode.openWith', this.document.uri, 'default');
     } else {
-      this.currentWebviewPanel && this.updateWebviewContent();
+      if (this.currentWebviewPanel) {
+        this.forceReload();
+      }
     }
+  }
+
+  private forceReload() {
+    if (!this.currentWebviewPanel) return;
+    const panel = this.currentWebviewPanel;
+    // First, blank the DOM to ensure a full script/style reinit on next set
+    panel.webview.html = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body></body></html>';
+    setTimeout(() => {
+      try {
+        this.updateWebviewContent();
+      } catch (err) {
+        console.error('CSV: forceReload failed', err);
+      }
+    }, 0);
+  }
+
+  public isActive(): boolean {
+    return !!this.currentWebviewPanel?.active;
+  }
+
+  public getDocumentUri(): vscode.Uri {
+    return this.document.uri;
   }
 
   // ───────────── Document Editing Methods ─────────────
@@ -193,20 +225,24 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   private async sortColumn(index: number, ascending: boolean) {
     this.isUpdatingDocument = true;
 
-    const config       = vscode.workspace.getConfiguration('csv');
+    const config       = vscode.workspace.getConfiguration('csv', this.document.uri);
     const separator    = this.getSeparator();
-    const treatHeader  = config.get<boolean>('treatFirstRowAsHeader', true);
+    const hidden       = this.getHiddenRows();
 
     const text   = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
     const rows   = result.data as string[][];
+    const treatHeader  = this.getEffectiveHeader(rows, this.getHiddenRows());
 
+    const offset = Math.min(Math.max(0, hidden), rows.length);
     let header: string[] = [];
-    let body:   string[][] = rows;
+    let body:   string[][] = [];
 
-    if (treatHeader && rows.length) {
-      header = rows[0];
-      body   = rows.slice(1);
+    if (treatHeader && offset < rows.length) {
+      header = rows[offset];
+      body   = rows.slice(offset + 1);
+    } else {
+      body   = rows.slice(offset);
     }
 
     const cmp = (a: string, b: string) => {
@@ -220,7 +256,9 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       return ascending ? diff : -diff;
     });
 
-    const newCsv = Papa.unparse(treatHeader ? [header, ...body] : body, { delimiter: separator });
+    const prefix = rows.slice(0, offset);
+    const combined = treatHeader ? [...prefix, header, ...body] : [...prefix, ...body];
+    const newCsv = Papa.unparse(combined, { delimiter: separator });
 
     const fullRange = new vscode.Range(
       0, 0,
@@ -290,10 +328,10 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     if (!this.currentWebviewPanel) return;
 
     const webview = this.currentWebviewPanel.webview;
-    const config = vscode.workspace.getConfiguration('csv');
-    const treatHeader = config.get<boolean>('treatFirstRowAsHeader', true);
-    const addSerialIndex = config.get<boolean>('addSerialIndex', false);
+    const config = vscode.workspace.getConfiguration('csv', this.document.uri);
+    const addSerialIndex = CsvEditorProvider.getSerialIndexForUri(this.context, this.document.uri);
     const separator = this.getSeparator();
+    const hiddenRows = this.getHiddenRows();
 
     let parsed;
     try {
@@ -310,9 +348,10 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
 
     const cellPadding = config.get<number>('cellPadding', 4);
     const data = (parsed.data || []) as string[][];
+    const treatHeader = this.getEffectiveHeader(data, hiddenRows);
 
     const { tableHtml, chunksJson, colorCss } =
-      this.generateTableAndChunks(data, treatHeader, addSerialIndex);
+      this.generateTableAndChunks(data, treatHeader, addSerialIndex, hiddenRows);
 
     const nonce = this.getNonce();
 
@@ -331,32 +370,42 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   private generateTableAndChunks(
     data: string[][],
     treatHeader: boolean,
-    addSerialIndex: boolean
+    addSerialIndex: boolean,
+    hiddenRows: number
   ): { tableHtml: string; chunksJson: string; colorCss: string } {
     let headerFlag = treatHeader;
-    if (data.length === 0) {
-      data.push(['']);
-      headerFlag = false;
-    }
+    const totalRows = data.length;
+    const offset = Math.min(Math.max(0, hiddenRows), totalRows);
 
     const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
-    const headerRow = headerFlag ? data[0] : [];
-    const bodyData = headerFlag ? data.slice(1) : data;
-    const numColumns = Math.max(...data.map(row => row.length), 0);
+    let headerRow: string[] = [];
+    let bodyData: string[][] = [];
+    if (totalRows === 0 || offset >= totalRows) {
+      headerFlag = false;
+      bodyData = [];
+    } else if (headerFlag) {
+      headerRow = data[offset];
+      bodyData = data.slice(offset + 1);
+    } else {
+      bodyData = data.slice(offset);
+    }
+    const visibleForWidth = headerFlag ? [headerRow, ...bodyData] : bodyData;
+    const numColumns = Math.max(...visibleForWidth.map(row => row.length), 0);
 
     const columnData = Array.from({ length: numColumns }, (_, i) => bodyData.map(row => row[i] || ''));
     const columnTypes = columnData.map(col => this.estimateColumnDataType(col));
     const columnColors = columnTypes.map((type, i) => this.getColumnColor(type, isDark, i));
-    const columnWidths = this.computeColumnWidths(data);
+    const columnWidths = this.computeColumnWidths(visibleForWidth);
 
     const CHUNK_SIZE = 1000;
-    const allRows = headerFlag ? bodyData : data;
+    const allRows = headerFlag ? bodyData : data.slice(offset);
     const chunks: string[] = [];
 
     if (allRows.length > CHUNK_SIZE) {
       for (let i = CHUNK_SIZE; i < allRows.length; i += CHUNK_SIZE) {
         const htmlChunk = allRows.slice(i, i + CHUNK_SIZE).map((row, localR) => {
-          const absRow = treatHeader ? i + localR + 1 : i + localR;
+          const startAbs = headerFlag ? offset + 1 : offset;
+          const absRow = startAbs + i + localR;
           const cells  = row.map((cell, cIdx) => {
             const safe = this.escapeHtml(cell);
             return `<td tabindex="0" style="min-width:${Math.min(columnWidths[cIdx]||0,100)}ch;max-width:100ch;border:1px solid ${isDark?'#555':'#ccc'};color:${columnColors[cIdx]};overflow:hidden;white-space:nowrap;text-overflow:ellipsis;" data-row="${absRow}" data-col="${cIdx}">${safe}</td>`;
@@ -371,7 +420,7 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       }
 
       if (headerFlag) bodyData.length = CHUNK_SIZE;
-      else            data.length     = CHUNK_SIZE;
+      else            {/* only the visible portion is chunked; no mutation needed */}
     }
 
     const colorCss = columnColors
@@ -387,33 +436,33 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       }`;
       headerRow.forEach((cell, i) => {
         const safe = this.escapeHtml(cell);
-        tableHtml += `<th tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="0" data-col="${i}">${safe}</th>`;
+        tableHtml += `<th tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${offset}" data-col="${i}">${safe}</th>`;
       });
       tableHtml += `</tr></thead><tbody>`;
       bodyData.forEach((row, r) => {
         tableHtml += `<tr>${
           addSerialIndex
-            ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${r + 1}" data-col="-1">${r + 1}</td>`
+            ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${offset + 1 + r}" data-col="-1">${offset + 1 + r}</td>`
             : ''
         }`;
         row.forEach((cell, i) => {
           const safe = this.escapeHtml(cell);
-          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${r + 1}" data-col="${i}">${safe}</td>`;
+          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${offset + 1 + r}" data-col="${i}">${safe}</td>`;
         });
         tableHtml += `</tr>`;
       });
       tableHtml += `</tbody>`;
     } else {
       tableHtml += `<tbody>`;
-      data.forEach((row, r) => {
+      data.slice(offset).forEach((row, r) => {
         tableHtml += `<tr>${
           addSerialIndex
-            ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${r}" data-col="-1">${r + 1}</td>`
+            ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${offset + r}" data-col="-1">${r + 1}</td>`
             : ''
         }`;
         row.forEach((cell, i) => {
           const safe = this.escapeHtml(cell);
-          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${r}" data-col="${i}">${safe}</td>`;
+          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${offset + r}" data-col="${i}">${safe}</td>`;
         });
         tableHtml += `</tr>`;
       });
@@ -422,6 +471,38 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     tableHtml += `</table>`;
 
     return { tableHtml, chunksJson: JSON.stringify(chunks), colorCss };
+  }
+
+  // Heuristic: If there is no explicit override for this file, compute default header as
+  // true when the first visible row's per-column types differ from the body columns' types.
+  // If they match identically across all columns, assume the first row is data (not header).
+  private getEffectiveHeader(data: string[][], hiddenRows: number): boolean {
+    // If user overrode per-file setting, honor it
+    if (CsvEditorProvider.hasHeaderOverride(this.context, this.document.uri)) {
+      return CsvEditorProvider.getHeaderForUri(this.context, this.document.uri);
+    }
+
+    const total = data.length;
+    const offset = Math.min(Math.max(0, hiddenRows), total);
+    if (total === 0 || offset >= total) return false; // nothing visible
+
+    const headerRow = data[offset] || [];
+    const body = data.slice(offset + 1);
+    if (body.length === 0) {
+      return true; // with only one row visible, lean toward header
+    }
+
+    const numColumns = Math.max(
+      headerRow.length,
+      ...body.map(r => r.length),
+      0
+    );
+    const bodyColData = Array.from({ length: numColumns }, (_, i) => body.map(r => r[i] || ''));
+    const bodyTypes = bodyColData.map(col => this.estimateColumnDataType(col));
+    const headerTypes = Array.from({ length: numColumns }, (_, i) => this.estimateColumnDataType([headerRow[i] || '']));
+
+    const matches = headerTypes.every((t, i) => t === bodyTypes[i]);
+    return !matches;
   }
 
   private wrapHtml(args: {
@@ -536,12 +617,14 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   }
 
   private getSeparator(): string {
-    const config = vscode.workspace.getConfiguration('csv');
-    let sep = config.get<string>('separator', ',');
-    if (sep === ',' && this.document?.uri.fsPath.toLowerCase().endsWith('.tsv')) {
-      sep = '\t';
-    }
-    return sep;
+    const stored = CsvEditorProvider.getSeparatorForUri(this.context, this.document.uri);
+    if (stored && stored.length) return stored;
+    // Default inherited from file
+    return this.document?.uri.fsPath.toLowerCase().endsWith('.tsv') ? '\t' : ',';
+  }
+
+  private getHiddenRows(): number {
+    return CsvEditorProvider.getHiddenRowsForUri(this.context, this.document.uri);
   }
 
   private escapeHtml(text: string): string {
@@ -624,5 +707,92 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       text += possible.charAt(Math.floor(Math.random() * possible.length));
     }
     return text;
+  }
+}
+
+// Wrapper provider: one instance registered with VS Code.
+export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
+  public static readonly viewType = 'csv.editor';
+  public static editors: CsvEditorController[] = [];
+  public static currentActive: CsvEditorController | undefined;
+  public static readonly hiddenRowsKey = 'csv.hiddenRows';
+  public static readonly headerKey     = 'csv.headerByUri';
+  public static readonly serialKey     = 'csv.serialIndexByUri';
+  public static readonly sepKey        = 'csv.separatorByUri';
+
+  constructor(private readonly context: vscode.ExtensionContext) {}
+
+  public async resolveCustomTextEditor(
+    document: vscode.TextDocument,
+    webviewPanel: vscode.WebviewPanel,
+    _token: vscode.CancellationToken
+  ): Promise<void> {
+    console.log(`CSV(reg): creating controller for ${document.uri.toString()}`);
+    const controller = new CsvEditorController(this.context);
+    // Track active controller
+    webviewPanel.onDidChangeViewState(e => {
+      if (e.webviewPanel.active) {
+        CsvEditorProvider.currentActive = controller;
+      }
+    });
+    await controller.resolveCustomTextEditor(document, webviewPanel, _token);
+  }
+
+  public static getActiveProvider(): CsvEditorController | undefined {
+    return CsvEditorProvider.currentActive || CsvEditorProvider.editors.find(ed => ed.isActive());
+  }
+
+  public static getHiddenRowsForUri(context: vscode.ExtensionContext, uri: vscode.Uri): number {
+    const map = context.workspaceState.get<Record<string, number>>(CsvEditorProvider.hiddenRowsKey, {});
+    const n = map[uri.toString()] ?? 0;
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  }
+
+  public static async setHiddenRowsForUri(context: vscode.ExtensionContext, uri: vscode.Uri, n: number): Promise<void> {
+    const map = { ...(context.workspaceState.get<Record<string, number>>(CsvEditorProvider.hiddenRowsKey, {})) };
+    if (!Number.isFinite(n) || n <= 0) {
+      delete map[uri.toString()];
+    } else {
+      map[uri.toString()] = Math.floor(n);
+    }
+    await context.workspaceState.update(CsvEditorProvider.hiddenRowsKey, map);
+  }
+
+  public static getHeaderForUri(context: vscode.ExtensionContext, uri: vscode.Uri): boolean {
+    const map = context.workspaceState.get<Record<string, boolean>>(CsvEditorProvider.headerKey, {});
+    return map[uri.toString()] ?? true; // fallback default true
+  }
+
+  public static hasHeaderOverride(context: vscode.ExtensionContext, uri: vscode.Uri): boolean {
+    const map = context.workspaceState.get<Record<string, boolean>>(CsvEditorProvider.headerKey, {});
+    return Object.prototype.hasOwnProperty.call(map, uri.toString());
+  }
+
+  public static async setHeaderForUri(context: vscode.ExtensionContext, uri: vscode.Uri, val: boolean): Promise<void> {
+    const map = { ...(context.workspaceState.get<Record<string, boolean>>(CsvEditorProvider.headerKey, {})) };
+    map[uri.toString()] = !!val; // always persist explicit override
+    await context.workspaceState.update(CsvEditorProvider.headerKey, map);
+  }
+
+  public static getSerialIndexForUri(context: vscode.ExtensionContext, uri: vscode.Uri): boolean {
+    const map = context.workspaceState.get<Record<string, boolean>>(CsvEditorProvider.serialKey, {});
+    return map[uri.toString()] ?? true; // default true
+  }
+
+  public static async setSerialIndexForUri(context: vscode.ExtensionContext, uri: vscode.Uri, val: boolean): Promise<void> {
+    const map = { ...(context.workspaceState.get<Record<string, boolean>>(CsvEditorProvider.serialKey, {})) };
+    map[uri.toString()] = !!val; // always persist explicit override
+    await context.workspaceState.update(CsvEditorProvider.serialKey, map);
+  }
+
+  public static getSeparatorForUri(context: vscode.ExtensionContext, uri: vscode.Uri): string | undefined {
+    const map = context.workspaceState.get<Record<string, string>>(CsvEditorProvider.sepKey, {});
+    return map[uri.toString()];
+  }
+
+  public static async setSeparatorForUri(context: vscode.ExtensionContext, uri: vscode.Uri, sep: string | undefined): Promise<void> {
+    const map = { ...(context.workspaceState.get<Record<string, string>>(CsvEditorProvider.sepKey, {})) };
+    if (!sep || sep.length === 0) { delete map[uri.toString()]; } else { map[uri.toString()] = sep; }
+    await context.workspaceState.update(CsvEditorProvider.sepKey, map);
   }
 }

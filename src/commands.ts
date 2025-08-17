@@ -16,20 +16,35 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('csv.toggleExtension', () =>
       toggleBooleanConfig('enabled', true, 'CSV extension')
     ),
-    vscode.commands.registerCommand('csv.toggleHeader', () =>
-      toggleBooleanConfig('treatFirstRowAsHeader', true, 'CSV first row as header is now')
-    ),
-    vscode.commands.registerCommand('csv.toggleSerialIndex', () =>
-      toggleBooleanConfig('addSerialIndex', false, 'CSV serial index is now')
-    ),
+    vscode.commands.registerCommand('csv.toggleHeader', async () => {
+      const active = CsvEditorProvider.getActiveProvider();
+      if (!active) { vscode.window.showInformationMessage('Open a CSV/TSV file in the CSV editor.'); return; }
+      const uri = active.getDocumentUri();
+      const cur = CsvEditorProvider.getHeaderForUri(context, uri);
+      await CsvEditorProvider.setHeaderForUri(context, uri, !cur);
+      CsvEditorProvider.editors.filter(ed => ed.getDocumentUri().toString() === uri.toString()).forEach(ed => ed.refresh());
+      vscode.window.showInformationMessage(`CSV: First row as header ${!cur ? 'enabled' : 'disabled'} for this file.`);
+    }),
+    vscode.commands.registerCommand('csv.toggleSerialIndex', async () => {
+      const active = CsvEditorProvider.getActiveProvider();
+      if (!active) { vscode.window.showInformationMessage('Open a CSV/TSV file in the CSV editor.'); return; }
+      const uri = active.getDocumentUri();
+      const cur = CsvEditorProvider.getSerialIndexForUri(context, uri);
+      await CsvEditorProvider.setSerialIndexForUri(context, uri, !cur);
+      CsvEditorProvider.editors.filter(ed => ed.getDocumentUri().toString() === uri.toString()).forEach(ed => ed.refresh());
+      vscode.window.showInformationMessage(`CSV: Serial index ${!cur ? 'enabled' : 'disabled'} for this file.`);
+    }),
     vscode.commands.registerCommand('csv.changeSeparator', async () => {
-      const config = vscode.workspace.getConfiguration('csv');
-      const currentSep = config.get<string>('separator', ',');
-      const input = await vscode.window.showInputBox({ prompt: 'Enter new CSV separator', value: currentSep });
+      const active = CsvEditorProvider.getActiveProvider();
+      if (!active) { vscode.window.showInformationMessage('Open a CSV/TSV file in the CSV editor.'); return; }
+      const uri = active.getDocumentUri();
+      const currentSep = CsvEditorProvider.getSeparatorForUri(context, uri) ?? (uri.fsPath.toLowerCase().endsWith('.tsv') ? '\\t' : ',');
+      const input = await vscode.window.showInputBox({ prompt: 'Enter new CSV separator (empty to inherit from file)', value: currentSep });
       if (input !== undefined) {
-        await config.update('separator', input, vscode.ConfigurationTarget.Global);
-        vscode.window.showInformationMessage(`CSV separator changed to "${input}"`);
-        CsvEditorProvider.editors.forEach(ed => ed.refresh());
+        const sep = input;
+        await CsvEditorProvider.setSeparatorForUri(context, uri, sep.length ? sep : undefined);
+        vscode.window.showInformationMessage(`CSV separator ${sep.length ? `set to "${sep}"` : 'now inherits from file type'}`);
+        CsvEditorProvider.editors.filter(ed => ed.getDocumentUri().toString() === uri.toString()).forEach(ed => ed.refresh());
       }
     }),
     vscode.commands.registerCommand('csv.changeFontFamily', async () => {
@@ -60,6 +75,28 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
         newVal ? `CSV font set to “${newVal}”.` : 'CSV font now inherits editor.fontFamily.'
       );
       CsvEditorProvider.editors.forEach(ed => ed.refresh());
+    }),
+    vscode.commands.registerCommand('csv.changeIgnoreRows', async () => {
+      const active = CsvEditorProvider.getActiveProvider();
+      if (!active) {
+        vscode.window.showInformationMessage('Open a CSV/TSV file with the CSV editor to change hidden rows.');
+        return;
+      }
+      const uri = active.getDocumentUri();
+      const current = CsvEditorProvider.getHiddenRowsForUri(context, uri);
+      const input = await vscode.window.showInputBox({
+        prompt: 'Hide first N rows (per file)',
+        value: String(current),
+        validateInput: (val: string) => (/^\d+$/.test(val) ? undefined : 'Enter a non-negative integer')
+      });
+      if (input === undefined) { return; }
+      const n = parseInt(input, 10);
+      await CsvEditorProvider.setHiddenRowsForUri(context, uri, n);
+      // Refresh only editors showing this URI
+      CsvEditorProvider.editors
+        .filter(ed => ed.getDocumentUri().toString() === uri.toString())
+        .forEach(ed => ed.refresh());
+      vscode.window.showInformationMessage(`CSV: Hiding first ${n} row(s) for this file.`);
     })
   );
 }

@@ -81,20 +81,23 @@ Open the Command Palette and search for:
 - `CSV: Toggle Serial Index Column` (`csv.toggleSerialIndex`)
 - `CSV: Change CSV Separator` (`csv.changeSeparator`)
 - `CSV: Change Font Family` (`csv.changeFontFamily`)
+- `CSV: Hide First N Rows` (`csv.changeIgnoreRows`)
   
 
 ## Settings
 
-Configure in the Settings UI or `settings.json`:
+Global (Settings UI or `settings.json`):
 
 - `csv.enabled` (boolean, default `true`): Enable/disable the custom editor.
-- `csv.treatFirstRowAsHeader` (boolean, default `true`): Treat the first row as a header.
-- `csv.addSerialIndex` (boolean, default `false`): Show a serial index column.
-- `csv.separator` (string, default `","`): Delimiter for parsing and saving.
 - `csv.fontFamily` (string, default empty): Override font family; falls back to `editor.fontFamily`.
 - `csv.cellPadding` (number, default `4`): Vertical cell padding in pixels.
 
-Note: “Ignore First Rows” is a command-driven, per-file option stored by the extension.
+Per-file (stored by the extension; set via commands):
+
+- First row as header (default `true`) — `CSV: Toggle First Row as Header`
+- Serial index column (default `true`) — `CSV: Toggle Serial Index Column`
+- CSV separator (default inherit: `.tsv` → tab, otherwise comma) — `CSV: Change CSV Separator`
+- Hide first N rows (default `0`) — `CSV: Hide First N Rows`
 
 ---
 

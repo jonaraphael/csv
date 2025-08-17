@@ -21,7 +21,8 @@
     "onCommand:csv.toggleHeader",
     "onCommand:csv.toggleSerialIndex",
     "onCommand:csv.changeSeparator",
-    "onCommand:csv.changeFontFamily"
+    "onCommand:csv.changeFontFamily",
+    "onCommand:csv.changeIgnoreRows"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -44,7 +45,8 @@
       { "command": "csv.toggleHeader",      "title": "CSV: Toggle First Row as Header" },
       { "command": "csv.toggleSerialIndex", "title": "CSV: Toggle Serial Index Column" },
       { "command": "csv.changeSeparator",   "title": "CSV: Change CSV Separator" },
-      { "command": "csv.changeFontFamily",  "title": "CSV: Change Font Family" }
+      { "command": "csv.changeFontFamily",  "title": "CSV: Change Font Family" },
+      { "command": "csv.changeIgnoreRows",  "title": "CSV: Hide First N Rows" }
     ],
     "configuration": {
       "type": "object",
@@ -54,21 +56,6 @@
           "type": "boolean",
           "default": true,
           "description": "Enable/Disable the CSV custom editor."
-        },
-        "csv.treatFirstRowAsHeader": {
-          "type": "boolean",
-          "default": true,
-          "description": "Treat the first row of CSV as a header."
-        },
-        "csv.addSerialIndex": {
-          "type": "boolean",
-          "default": false,
-          "description": "Add a serial index column at the left of the table."
-        },
-        "csv.separator": {
-          "type": "string",
-          "default": ",",
-          "description": "CSV separator to use."
         },
         "csv.fontFamily": {
           "type": "string",
