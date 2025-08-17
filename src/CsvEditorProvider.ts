@@ -72,14 +72,26 @@ class CsvEditorController {
         case 'insertColumn':
           await this.insertColumn(e.index);
           break;
+        case 'insertColumns':
+          await this.insertColumns(e.index, e.count);
+          break;
         case 'deleteColumn':
           await this.deleteColumn(e.index);
+          break;
+        case 'deleteColumns':
+          await this.deleteColumns(e.indices);
           break;
         case 'insertRow':
           await this.insertRow(e.index);
           break;
+        case 'insertRows':
+          await this.insertRows(e.index, e.count);
+          break;
         case 'deleteRow':
           await this.deleteRow(e.index);
+          break;
+        case 'deleteRows':
+          await this.deleteRows(e.indices);
           break;
         case 'sortColumn':
           await this.sortColumn(e.index, e.ascending);
@@ -246,6 +258,34 @@ class CsvEditorController {
     this.updateWebviewContent();
   }
 
+  private async insertColumns(index: number, count: number) {
+    if (count <= 0) return;
+    this.isUpdatingDocument = true;
+    const separator = this.getSeparator();
+    const text = this.document.getText();
+    const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
+    const data = result.data as string[][];
+    for (let k = 0; k < count; k++) {
+      for (const row of data) {
+        if (index > row.length) {
+          while (row.length < index) row.push('');
+        }
+        row.splice(index, 0, '');
+      }
+    }
+    const newText = Papa.unparse(data, { delimiter: separator });
+    const fullRange = new vscode.Range(
+      0, 0,
+      this.document.lineCount,
+      this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0
+    );
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(this.document.uri, fullRange, newText);
+    await vscode.workspace.applyEdit(edit);
+    this.isUpdatingDocument = false;
+    this.updateWebviewContent();
+  }
+
   private async deleteColumn(index: number) {
     this.isUpdatingDocument = true;
     const separator = this.getSeparator();
@@ -255,6 +295,34 @@ class CsvEditorController {
     for (const row of data) {
       if (index < row.length) {
         row.splice(index, 1);
+      }
+    }
+    const newText = Papa.unparse(data, { delimiter: separator });
+    const fullRange = new vscode.Range(
+      0, 0,
+      this.document.lineCount,
+      this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0
+    );
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(this.document.uri, fullRange, newText);
+    await vscode.workspace.applyEdit(edit);
+    this.isUpdatingDocument = false;
+    this.updateWebviewContent();
+  }
+
+  private async deleteColumns(indices: number[]) {
+    if (!indices || !indices.length) return;
+    this.isUpdatingDocument = true;
+    const separator = this.getSeparator();
+    const text = this.document.getText();
+    const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
+    const data = result.data as string[][];
+    const sorted = [...indices].sort((a,b)=>b-a);
+    for (const idx of sorted) {
+      for (const row of data) {
+        if (idx < row.length) {
+          row.splice(idx, 1);
+        }
       }
     }
     const newText = Papa.unparse(data, { delimiter: separator });
@@ -348,6 +416,34 @@ class CsvEditorController {
     this.updateWebviewContent();
   }
 
+  private async insertRows(index: number, count: number) {
+    if (count <= 0) return;
+    this.isUpdatingDocument = true;
+    const separator = this.getSeparator();
+    const text = this.document.getText();
+    const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
+    const data = result.data as string[][];
+    const numColumns = Math.max(...data.map(r => r.length), 0);
+    for (let k = 0; k < count; k++) {
+      const newRow = Array(numColumns).fill('');
+      if (index > data.length) {
+        while (data.length < index) data.push(Array(numColumns).fill(''));
+      }
+      data.splice(index, 0, newRow);
+    }
+    const newText = Papa.unparse(data, { delimiter: separator });
+    const fullRange = new vscode.Range(
+      0, 0,
+      this.document.lineCount,
+      this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0
+    );
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(this.document.uri, fullRange, newText);
+    await vscode.workspace.applyEdit(edit);
+    this.isUpdatingDocument = false;
+    this.updateWebviewContent();
+  }
+
   private async deleteRow(index: number) {
     this.isUpdatingDocument = true;
     const separator = this.getSeparator();
@@ -356,6 +452,32 @@ class CsvEditorController {
     const data = result.data as string[][];
     if (index < data.length) {
       data.splice(index, 1);
+    }
+    const newText = Papa.unparse(data, { delimiter: separator });
+    const fullRange = new vscode.Range(
+      0, 0,
+      this.document.lineCount,
+      this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0
+    );
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(this.document.uri, fullRange, newText);
+    await vscode.workspace.applyEdit(edit);
+    this.isUpdatingDocument = false;
+    this.updateWebviewContent();
+  }
+
+  private async deleteRows(indices: number[]) {
+    if (!indices || !indices.length) return;
+    this.isUpdatingDocument = true;
+    const separator = this.getSeparator();
+    const text = this.document.getText();
+    const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
+    const data = result.data as string[][];
+    const sorted = [...indices].sort((a,b)=>b-a);
+    for (const idx of sorted) {
+      if (idx < data.length) {
+        data.splice(idx, 1);
+      }
     }
     const newText = Papa.unparse(data, { delimiter: separator });
     const fullRange = new vscode.Range(

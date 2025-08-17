@@ -147,6 +147,15 @@ const showContextMenu = (x, y, row, col) => {
     d.style.margin = '1px 0';
     contextMenu.appendChild(d);
   };
+  // Derive multi-row/column selection counts
+  const selectedIndexCells = currentSelection.filter(el => el && el.getAttribute && el.getAttribute('data-col') === '-1');
+  const selectedRowIds = Array.from(new Set(selectedIndexCells.map(el => parseInt(el.getAttribute('data-row') || '-1', 10)).filter(n => !isNaN(n)))).sort((a,b)=>a-b);
+  const rowCountSel = selectedRowIds.length;
+
+  const selectedHeaderCells = currentSelection.filter(el => el && el.tagName === 'TH' && el.getAttribute('data-col') !== null);
+  const selectedColIds = Array.from(new Set(selectedHeaderCells.map(el => parseInt(el.getAttribute('data-col') || '-1', 10)).filter(n => !isNaN(n) && n >= 0))).sort((a,b)=>a-b);
+  const colCountSel = selectedColIds.length;
+
   let addedRowItems = false;
 
   /* Header-only: SORT functionality */
@@ -160,18 +169,52 @@ const showContextMenu = (x, y, row, col) => {
   /* Row section */
   if (!isNaN(row) && row >= 0) {
     if (contextMenu.children.length) divider();
-    item('Add ROW: above', () => vscode.postMessage({ type: 'insertRow',   index: row     }));
-    item('Add ROW: below', () => vscode.postMessage({ type: 'insertRow',   index: row + 1 }));
-    item('Delete ROW',      () => vscode.postMessage({ type: 'deleteRow',  index: row     }));
+    const rowsN = rowCountSel > 1 ? rowCountSel : 1;
+    const addAboveLabel = rowsN > 1 ? `Add ${rowsN} ROWS: above` : 'Add ROW: above';
+    const addBelowLabel = rowsN > 1 ? `Add ${rowsN} ROWS: below` : 'Add ROW: below';
+    const delLabel      = rowsN > 1 ? `Delete ${rowsN} ROWS`    : 'Delete ROW';
+    item(addAboveLabel, () => {
+      const base = rowCountSel > 1 ? Math.min(...selectedRowIds) : row;
+      const count = rowsN;
+      vscode.postMessage({ type: 'insertRows', index: base, count });
+    });
+    item(addBelowLabel, () => {
+      const base = rowCountSel > 1 ? Math.max(...selectedRowIds) + 1 : (row + 1);
+      const count = rowsN;
+      vscode.postMessage({ type: 'insertRows', index: base, count });
+    });
+    item(delLabel, () => {
+      if (rowCountSel > 1) {
+        vscode.postMessage({ type: 'deleteRows', indices: selectedRowIds });
+      } else {
+        vscode.postMessage({ type: 'deleteRow', index: row });
+      }
+    });
     addedRowItems = true;
   }
 
   /* Column section, preceded by divider if row items exist */
   if (!isNaN(col) && col >= 0) {
     if (addedRowItems) divider();
-    item('Add COLUMN: left',  () => vscode.postMessage({ type: 'insertColumn', index: col     }));
-    item('Add COLUMN: right', () => vscode.postMessage({ type: 'insertColumn', index: col + 1 }));
-    item('Delete COLUMN',     () => vscode.postMessage({ type: 'deleteColumn', index: col     }));
+    const colsN = colCountSel > 1 ? colCountSel : 1;
+    const addLeftLabel  = colsN > 1 ? `Add ${colsN} COLUMNS: left`  : 'Add COLUMN: left';
+    const addRightLabel = colsN > 1 ? `Add ${colsN} COLUMNS: right` : 'Add COLUMN: right';
+    const delColLabel   = colsN > 1 ? `Delete ${colsN} COLUMNS`     : 'Delete COLUMN';
+    item(addLeftLabel, () => {
+      const base = colCountSel > 1 ? Math.min(...selectedColIds) : col;
+      vscode.postMessage({ type: 'insertColumns', index: base, count: colsN });
+    });
+    item(addRightLabel, () => {
+      const base = colCountSel > 1 ? Math.max(...selectedColIds) + 1 : (col + 1);
+      vscode.postMessage({ type: 'insertColumns', index: base, count: colsN });
+    });
+    item(delColLabel, () => {
+      if (colCountSel > 1) {
+        vscode.postMessage({ type: 'deleteColumns', indices: selectedColIds });
+      } else {
+        vscode.postMessage({ type: 'deleteColumn', index: col });
+      }
+    });
   }
 
   contextMenu.style.left = x + 'px';
@@ -199,26 +242,63 @@ table.addEventListener('mousedown', e => {
   if(e.target.tagName !== 'TD' && e.target.tagName !== 'TH') return;
   const target = e.target;
 
+  // Preserve selection on right-click; select target if outside current selection
+  if (e.button === 2) { // right mouse button
+    if (!editingCell) {
+      e.preventDefault();
+      if (!target.classList.contains('selected')) {
+        clearSelection();
+        target.classList.add('selected');
+        currentSelection.push(target);
+        anchorCell = target;
+        rangeEndCell = target;
+        try { target.focus({ preventScroll: true }); } catch { try { target.focus(); } catch {} }
+      }
+    }
+    return; // do not start drag selection on right-click
+  }
+
   // ──────── NEW: Shift+Click range selection ────────
-  if (
-    e.shiftKey &&
-    anchorCell &&
-    !editingCell &&
-    target.getAttribute('data-row') !== null &&
-    target.getAttribute('data-col') !== null &&
-    anchorCell.getAttribute('data-row') !== null &&
-    anchorCell.getAttribute('data-col') !== null &&
-    target.getAttribute('data-col') !== '-1' &&
-    anchorCell.getAttribute('data-col') !== '-1'
-  ) {
-    e.preventDefault();
-    selectRange(
-      getCellCoords(anchorCell),
-      getCellCoords(target)
-    );
-    rangeEndCell = target;
-    anchorCell.focus();
-    return;
+  if (e.shiftKey && anchorCell && !editingCell) {
+    const aRowAttr = anchorCell.getAttribute('data-row');
+    const aColAttr = anchorCell.getAttribute('data-col');
+    const tRowAttr = target.getAttribute('data-row');
+    const tColAttr = target.getAttribute('data-col');
+    // Ensure both have coordinates of some form
+    if (aRowAttr !== null && tRowAttr !== null) {
+      // Case 1: Header-to-header shift click → full column range
+      if (anchorCell.tagName === 'TH' && target.tagName === 'TH' && aColAttr !== null && tColAttr !== null) {
+        e.preventDefault();
+        const startCol = parseInt(aColAttr, 10);
+        const endCol = parseInt(tColAttr, 10);
+        selectFullColumnRange(startCol, endCol);
+        rangeEndCell = target;
+        anchorCell.focus();
+        return;
+      }
+      // Case 2: Serial-index-to-serial-index shift click → full row range
+      if (aColAttr === '-1' && tColAttr === '-1') {
+        e.preventDefault();
+        const startRow = parseInt(aRowAttr, 10);
+        const endRow = parseInt(tRowAttr, 10);
+        selectFullRowRange(startRow, endRow);
+        rangeEndCell = target;
+        anchorCell.focus();
+        return;
+      }
+      // Case 3: Regular cell-to-cell rectangle (exclude header/serial)
+      if (
+        aColAttr !== null && tColAttr !== null &&
+        aColAttr !== '-1' && tColAttr !== '-1' &&
+        target.tagName !== 'TH' && anchorCell.tagName !== 'TH'
+      ) {
+        e.preventDefault();
+        selectRange(getCellCoords(anchorCell), getCellCoords(target));
+        rangeEndCell = target;
+        anchorCell.focus();
+        return;
+      }
+    }
   }
 
   if(editingCell){ if(e.target !== editingCell) editingCell.blur(); else return; } else clearSelection();
