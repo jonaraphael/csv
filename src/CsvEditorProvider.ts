@@ -24,8 +24,13 @@ class CsvEditorController {
 
     const config = vscode.workspace.getConfiguration('csv', this.document.uri);
     if (!config.get<boolean>('enabled', true)) {
-      vscode.window.showInformationMessage('CSV extension is disabled. Use the command palette to enable it.');
-      await vscode.commands.executeCommand('vscode.openWith', document.uri, 'default');
+      // When disabled, immediately hand off to the default editor and close this tab
+      try {
+        const opts: any = { viewColumn: webviewPanel.viewColumn, preserveFocus: !webviewPanel.active, preview: webviewPanel.active ? webviewPanel.active : false };
+        await vscode.commands.executeCommand('vscode.openWith', document.uri, 'default', opts);
+      } finally {
+        try { webviewPanel.dispose(); } catch {}
+      }
       return;
     }
 
