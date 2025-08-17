@@ -98,5 +98,60 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
         .forEach(ed => ed.refresh());
       vscode.window.showInformationMessage(`CSV: Hiding first ${n} row(s) for this file.`);
     })
+    ,
+    vscode.commands.registerCommand('csv.changeEncoding', async () => {
+      const active = CsvEditorProvider.getActiveProvider();
+      if (!active) { vscode.window.showInformationMessage('Open a CSV/TSV file in the CSV editor.'); return; }
+      const uri = active.getDocumentUri();
+
+      // Close any existing tabs for this URI so we can reuse the slot cleanly
+      try {
+        const toClose: vscode.Tab[] = [];
+        vscode.window.tabGroups.all.forEach(g => {
+          g.tabs.forEach(t => {
+            const inp: any = (t as any).input;
+            const u: vscode.Uri | undefined = inp?.uri instanceof vscode.Uri ? (inp.uri as vscode.Uri) : undefined;
+            if (u && u.toString() === uri.toString()) toClose.push(t);
+          });
+        });
+        if (toClose.length) {
+          console.log(`[CSV(encoding)]: closing ${toClose.length} tab(s) for ${uri.fsPath}`);
+          await vscode.window.tabGroups.close(toClose);
+        }
+      } catch (e) {
+        console.warn('[CSV(encoding)]: failed to close existing tabs', e);
+      }
+
+      // Open the default text editor in-place and invoke the built-in encoding picker
+      try {
+        console.log(`[CSV(encoding)]: opening default text editor for ${uri.fsPath}`);
+        await vscode.commands.executeCommand('vscode.openWith', uri, 'default', { preview: true, preserveFocus: false });
+
+        console.log('[CSV(encoding)]: invoking workbench.action.editor.changeEncoding');
+        await vscode.commands.executeCommand('workbench.action.editor.changeEncoding');
+
+        // Switch back to our custom editor
+        console.log(`[CSV(encoding)]: reopening with custom editor for ${uri.fsPath}`);
+        await vscode.commands.executeCommand('vscode.openWith', uri, CsvEditorProvider.viewType, { preview: false, preserveFocus: false });
+
+        // Best-effort: ensure no duplicate default tab remains
+        try {
+          const stale: vscode.Tab[] = [];
+          vscode.window.tabGroups.all.forEach(g => g.tabs.forEach(t => {
+            const inp: any = (t as any).input;
+            const vt = inp?.viewType;
+            const u: vscode.Uri | undefined = inp?.uri instanceof vscode.Uri ? (inp.uri as vscode.Uri) : undefined;
+            if (u && u.toString() === uri.toString() && vt !== CsvEditorProvider.viewType) stale.push(t);
+          }));
+          if (stale.length) {
+            console.log(`[CSV(encoding)]: closing ${stale.length} stale text tab(s)`);
+            await vscode.window.tabGroups.close(stale);
+          }
+        } catch {}
+      } catch (e) {
+        console.error('CSV: encoding change flow failed', e);
+        vscode.window.showWarningMessage('CSV: Could not invoke the built-in encoding picker. Please use File → Reopen with Encoding, then re-open the CSV view.');
+      }
+    })
   );
 }

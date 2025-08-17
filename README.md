@@ -84,6 +84,7 @@ Open the Command Palette and search for:
 - `CSV: Change CSV Separator` (`csv.changeSeparator`)
 - `CSV: Change Font Family` (`csv.changeFontFamily`)
 - `CSV: Hide First N Rows` (`csv.changeIgnoreRows`)
+- `CSV: Change File Encoding` (`csv.changeEncoding`)
   
 
 ## Settings
@@ -93,6 +94,7 @@ Global (Settings UI or `settings.json`):
 - `csv.enabled` (boolean, default `true`): Enable/disable the custom editor.
 - `csv.fontFamily` (string, default empty): Override font family; falls back to `editor.fontFamily`.
 - `csv.cellPadding` (number, default `4`): Vertical cell padding in pixels.
+- Per-file encoding: use `CSV: Change File Encoding` to set a file’s encoding (e.g., `utf8`, `utf16le`, `windows1250`, `gbk`). The extension will reopen the file using the chosen encoding.
 
 Per-file (stored by the extension; set via commands):
 

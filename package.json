@@ -22,7 +22,8 @@
     "onCommand:csv.toggleSerialIndex",
     "onCommand:csv.changeSeparator",
     "onCommand:csv.changeFontFamily",
-    "onCommand:csv.changeIgnoreRows"
+    "onCommand:csv.changeIgnoreRows",
+    "onCommand:csv.changeEncoding"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -46,7 +47,8 @@
       { "command": "csv.toggleSerialIndex", "title": "CSV: Toggle Serial Index Column" },
       { "command": "csv.changeSeparator",   "title": "CSV: Change CSV Separator" },
       { "command": "csv.changeFontFamily",  "title": "CSV: Change Font Family" },
-      { "command": "csv.changeIgnoreRows",  "title": "CSV: Hide First N Rows" }
+      { "command": "csv.changeIgnoreRows",  "title": "CSV: Hide First N Rows" },
+      { "command": "csv.changeEncoding",    "title": "CSV: Change File Encoding" }
     ],
     "configuration": {
       "type": "object",
