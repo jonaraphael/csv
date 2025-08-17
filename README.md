@@ -123,8 +123,16 @@ Per-file (stored by the extension; set via commands):
 
 ## Release Notes
 
-### v1.1.3
-- Added: TSV file support with automatic tab delimiter.
+### v1.2.0
+- Edit modes: Quick edit (type to start; arrows save and move) and Detail edit (Enter/double‑click; arrows move caret, Up/Down jump to start/end).
+- Virtual rows and cells: Always shows one extra empty row at the bottom; short rows display empty editable cells up to the widest column. Empty edits do not create real rows/columns.
+- State persistence: Keeps scroll position and selection across tab switches and configuration refreshes, including large files with chunked rendering.
+- Selection improvements: Shift+Click on headers selects column ranges; Shift+Click on the serial index selects row ranges; right‑click preserves current selection.
+- Batch actions: Context menu adapts to multi‑selection (Add/Delete X Rows/Columns) and performs exact counts in a single operation.
+- Delete to clear: Press Delete/Backspace to clear contents of selected cells (skips serial index column).
+- Copy fidelity: Copies with the active delimiter and skips the serial index column for full‑row copies.
+- Encoding: New command “CSV: Change File Encoding” integrates VS Code’s encoding picker and returns to the CSV view.
+- Enable/disable UX: Toggling the extension on instantly upgrades open CSV/TSV tabs to this view; toggling off reverts immediately to the default view.
 
 See full history in `CHANGELOG.md`.
 

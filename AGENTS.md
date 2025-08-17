@@ -1,4 +1,9 @@
 # Repository Guidelines
+ 
+Before making changes, agents should always review:
+- `REVIEW.md` (current priorities and critical follow‑ups)
+- `README.md` (user‑facing behavior and commands)
+- `package.json` (activation, commands, settings)
 
 ## Project Structure & Module Organization
 - `src/extension.ts`: Main VS Code extension (custom editor `csv.editor`, commands under `csv.*`).
@@ -43,4 +48,3 @@ npm test
 - Webview: escape all user data before injecting HTML; avoid `eval`/inline scripts. Be mindful of content security.
 - Settings: use `csv.*` keys declared in `package.json` and respect `csv.enabled`.
 - Compatibility: keep within engines in `package.json` (`vscode` and Node). Validate both `.csv` and `.tsv` flows.
-
