@@ -33,8 +33,9 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Enhanced Keyboard Navigation:** Navigate cells with Tab/Shift+Tab and use keyboard shortcuts for quick editing, saving, selection, and full-table `Ctrl/Cmd + A` select-all.
 - **Advanced Multi-Cell Selection:** Easily select and copy blocks of data, then paste them elsewhere as properly formatted CSV.
 - **Add/Delete Columns:** Right-click any cell to add a column left or right, or remove the selected column.
+- **Add/Delete Rows:** Insert above/below or remove the selected row via context menu.
 - **Edit Empty CSVs:** Create or open an empty CSV file and start typing immediately.
-- **Column Sorting:** Click column headers to sort ascending or descending.
+- **Column Sorting:** Right-click a header and choose A–Z or Z–A.
 - **Custom Font Selection:** Choose a font from a dropdown or inherit VS Code's default.
 - **Find & Highlight:** Built-in find widget helps you search for text within your CSV with real-time highlighting and navigation through matches.
 - **Preserved CSV Integrity:** All modifications respect CSV formatting—no unwanted extra characters or formatting issues.
@@ -71,41 +72,38 @@ Cursor (built on VS Code 1.99) and the latest VS Code releases (1.102).
 
 ---
 
-## Planned Improvements
+## Commands
 
-- **Row Insertion/Deletion:** Quickly add or remove rows without leaving the editor (coming soon).
+Open the Command Palette and search for:
+
+- `CSV: Toggle Extension On/Off` (`csv.toggleExtension`)
+- `CSV: Toggle First Row as Header` (`csv.toggleHeader`)
+- `CSV: Toggle Serial Index Column` (`csv.toggleSerialIndex`)
+- `CSV: Change CSV Separator` (`csv.changeSeparator`)
+- `CSV: Change Font Family` (`csv.changeFontFamily`)
+  
+
+## Settings
+
+Configure in the Settings UI or `settings.json`:
+
+- `csv.enabled` (boolean, default `true`): Enable/disable the custom editor.
+- `csv.treatFirstRowAsHeader` (boolean, default `true`): Treat the first row as a header.
+- `csv.addSerialIndex` (boolean, default `false`): Show a serial index column.
+- `csv.separator` (string, default `","`): Delimiter for parsing and saving.
+- `csv.fontFamily` (string, default empty): Override font family; falls back to `editor.fontFamily`.
+- `csv.cellPadding` (number, default `4`): Vertical cell padding in pixels.
+
+Note: “Ignore First Rows” is a command-driven, per-file option stored by the extension.
 
 ---
 
 ## Release Notes
 
-### v1.1.2
-- **Fixed:** fontFamily
+### v1.1.3
+- Added: TSV file support with automatic tab delimiter.
 
-### v1.1.0
-- **New:** Column sorting by clicking header labels.
-- **Added:** Font selection dropdown that honors VS Code font settings.
-- **Added:** Ability to create and edit empty CSV files.
-- **Improved:** Large CSV files load in 1000-row chunks for better performance.
-- **Enhanced:** `Ctrl/Cmd + A` now selects all cells in the grid.
-- **Fixed:** Correct row indexing when the header row is disabled.
-- **Improved:** Safer rendering for cells containing HTML-like text.
-
-### v1.0.6
-- **New:** Multi-cell selection with intuitive `Shift + Click` support.
-- **Enhanced:** Clipboard integration for copying selected cells as clean, CSV-formatted text.
-- **Improved:** Navigation and editing, including better handling of special characters like quotes and commas.
-- **Added:** Advanced column type detection with dynamic color-coded highlighting.
-- **Refined:** Update mechanism for external document changes without interrupting your workflow.
-- **Configurable:** Added `csv.cellPadding` setting to adjust table cell padding.
-
-### v1.0.2
-- **Improved:** Seamless activation of editing mode on double-click.
-- **Fixed:** `Tab` and `Shift + Tab` navigation issues, ensuring smooth cell-to-cell movement.
-- **Updated:** Sticky header styling now consistently matches the active theme.
-
-### v1.0.0
-- **Initial Release:** Introduced a full-featured CSV with interactive cell editing, smart column sizing, and adaptive theme support.
+See full history in `CHANGELOG.md`.
 
 ---
 
@@ -123,6 +121,12 @@ To create a VS Code extension package, run:
 
 ```bash
 npm run package
+```
+
+To compile without running tests:
+
+```bash
+npm run compile
 ```
 
 ---

@@ -195,46 +195,22 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
 
   /**
    * Updates a specific cell in the CSV document.
-   * Tries a targeted edit first and falls back to rebuilding the CSV if necessary.
+   * Always rebuilds via Papa to preserve quoting/escaping.
    */
   private async updateDocument(row: number, col: number, value: string) {
     this.isUpdatingDocument = true;
     const separator = this.getSeparator();
     const oldText = this.document.getText();
-    const lines = oldText.split(/\r?\n/);
-    let editSucceeded = false;
-
-    if (row < lines.length) {
-      const line = lines[row];
-      const cells = line.split(separator);
-      if (col < cells.length) {
-        let startColOffset = 0;
-        for (let i = 0; i < col; i++) {
-          startColOffset += cells[i].length + separator.length;
-        }
-        const oldCellText = cells[col];
-        const startPos = new vscode.Position(row, startColOffset);
-        const endPos = new vscode.Position(row, startColOffset + oldCellText.length);
-        const range = new vscode.Range(startPos, endPos);
-        const edit = new vscode.WorkspaceEdit();
-        edit.replace(this.document.uri, range, value);
-        editSucceeded = await vscode.workspace.applyEdit(edit);
-      }
-    }
-
-    // If a direct cell edit fails, rebuild the entire CSV.
-    if (!editSucceeded) {
-      const result = Papa.parse(oldText, { dynamicTyping: false, delimiter: separator });
-      const data = result.data as string[][];
-      while (data.length <= row) data.push([]);
-      while (data[row].length <= col) data[row].push('');
-      data[row][col] = value;
-      const newCsvText = Papa.unparse(data, { delimiter: separator });
-      const fullRange = new vscode.Range(0, 0, this.document.lineCount, this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0);
-      const edit = new vscode.WorkspaceEdit();
-      edit.replace(this.document.uri, fullRange, newCsvText);
-      await vscode.workspace.applyEdit(edit);
-    }
+    const result = Papa.parse(oldText, { dynamicTyping: false, delimiter: separator });
+    const data = result.data as string[][];
+    while (data.length <= row) data.push([]);
+    while (data[row].length <= col) data[row].push('');
+    data[row][col] = value;
+    const newCsvText = Papa.unparse(data, { delimiter: separator });
+    const fullRange = new vscode.Range(0, 0, this.document.lineCount, this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0);
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(this.document.uri, fullRange, newCsvText);
+    await vscode.workspace.applyEdit(edit);
     this.isUpdatingDocument = false;
     console.log(`CSV: Updated row ${row + 1}, column ${col + 1} to "${value}"`);
     this.currentWebviewPanel?.webview.postMessage({ type: 'updateCell', row, col, value });
@@ -429,7 +405,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     const data = result.data as string[][];
     const htmlContent = this.generateHtmlContent(data, treatHeader, addSerialIndex, fontFamily);
     const nonce = getNonce();
-    this.currentWebviewPanel!.webview.html = this.wrapHtml(htmlContent, nonce, fontFamily, cellPadding);
+    this.currentWebviewPanel!.webview.html = this.wrapHtml(htmlContent, nonce, fontFamily, cellPadding, separator);
   }
 
   /**
@@ -437,14 +413,15 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
    */
   private generateHtmlContent(data: string[][], treatHeader: boolean, addSerialIndex: boolean, fontFamily: string): string {
     /* ──────── NEW: ensure at least one editable cell ──────── */
+    let headerFlag = treatHeader;
     if (data.length === 0) {
       data.push(['']);          // single empty row + cell
-      treatHeader = false;      // no header in an empty sheet
+      headerFlag = false;       // no header in an empty sheet
     }
 
     const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
-    const headerRow = treatHeader ? data[0] : [];
-    const bodyData = treatHeader ? data.slice(1) : data;
+    const headerRow = headerFlag ? data[0] : [];
+    const bodyData = headerFlag ? data.slice(1) : data;
     const numColumns = Math.max(...data.map(row => row.length));
     const columnData = Array.from({ length: numColumns }, (_, i) => bodyData.map(row => row[i] || ''));
     const columnTypes = columnData.map(col => this.estimateColumnDataType(col));
@@ -452,7 +429,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     const columnWidths = this.computeColumnWidths(data);
     /* ──────────── VIRTUAL-SCROLL SUPPORT ──────────── */
     const CHUNK_SIZE = 1000;                           // rows per chunk
-    const allRows      = treatHeader ? bodyData : data;
+    const allRows      = headerFlag ? bodyData : data;
     const chunks: string[] = [];
 
     if (allRows.length > CHUNK_SIZE) {
@@ -473,13 +450,18 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       }
 
       // keep **only** the first chunk in the initial render
-      if (treatHeader) bodyData.length = CHUNK_SIZE;
-      else             data.length     = CHUNK_SIZE;
+      if (headerFlag) bodyData.length = CHUNK_SIZE;
+      else            data.length     = CHUNK_SIZE;
     }
     /* ────────── END VIRTUAL-SCROLL SUPPORT ────────── */
 
-    let tableHtml = `<table>`;
-    if (treatHeader) {
+    // Generate CSS rules for per-column colors as a fallback to inline styles
+    const colorCss = columnColors
+      .map((hex, i) => `td[data-col="${i}"], th[data-col="${i}"] { color: ${hex}; }`)
+      .join('');
+
+    let tableHtml = `<style>${colorCss}</style><table>`;
+    if (headerFlag) {
       tableHtml += `<thead><tr>${
         addSerialIndex
           ? `<th style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: #888;">#</th>`
@@ -530,7 +512,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   /**
    * Wraps the provided HTML content in a complete HTML document with a strict Content Security Policy.
    */
-  private wrapHtml(content: string, nonce: string, fontFamily: string, cellPadding: number): string {
+  private wrapHtml(content: string, nonce: string, fontFamily: string, cellPadding: number, separator: string): string {
     const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
     return `<!DOCTYPE html>
 <html>
@@ -601,6 +583,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     <script nonce="${nonce}">
       document.body.setAttribute('tabindex', '0'); document.body.focus();
       const vscode = acquireVsCodeApi();
+      const CSV_SEPARATOR = ${JSON.stringify(separator)};
       let lastContextIsHeader = false;   // remembers whether we right-clicked a <th>
       let isUpdating = false, isSelecting = false, anchorCell = null, rangeEndCell = null, currentSelection = [];
       let startCell = null, endCell = null, selectionMode = "cell";
@@ -616,7 +599,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         const tbody           = table.tBodies[0];
 
         const loadNextChunk = () => {
-          if (!csvChunks.length) return;
+          if (!csvChunks.length || !tbody) return;
           tbody.insertAdjacentHTML('beforeend', csvChunks.shift());
         };
 
@@ -625,12 +608,14 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
           if (entries[0].isIntersecting) {
             loadNextChunk();
             // observe the new last <tr>
-            io.observe(tbody.querySelector('tr:last-child'));
+            const last = tbody && tbody.querySelector('tr:last-child');
+            if (last) io.observe(last);
           }
         }, { root: scrollContainer, rootMargin: '0px 0px 200px 0px' });
 
         // initial observation
-        io.observe(tbody.querySelector('tr:last-child'));
+        const initialLast = tbody && tbody.querySelector('tr:last-child');
+        if (initialLast) io.observe(initialLast);
       }
       /* ───────── END VIRTUAL-SCROLL LOADER ───────── */
 
@@ -1048,7 +1033,7 @@ class CsvEditorProvider implements vscode.CustomTextEditorProvider {
             const cell = table.querySelector(selector);
             rowVals.push(cell ? cell.innerText : '');
           }
-          csv += rowVals.join(',') + '\\n';
+          csv += rowVals.join(CSV_SEPARATOR) + '\\n';
         }
         vscode.postMessage({ type: 'copyToClipboard', text: csv.trimEnd() });
       };
