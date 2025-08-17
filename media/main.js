@@ -473,6 +473,22 @@ document.addEventListener('keydown', e => {
     e.preventDefault(); copySelectionToClipboard(); return;
   }
 
+  // Clear contents of selected cells when not editing
+  if (!editingCell && currentSelection.length > 0 && (e.key === 'Delete' || e.key === 'Backspace')) {
+    e.preventDefault();
+    const cellsToClear = currentSelection
+      .filter(cell => cell && cell.getAttribute('data-col') !== null && cell.getAttribute('data-col') !== '-1');
+    if (cellsToClear.length === 0) return;
+    cellsToClear.forEach(cell => {
+      const { row, col } = getCellCoords(cell);
+      // Update UI immediately
+      cell.textContent = '';
+      // Persist change to extension
+      vscode.postMessage({ type: 'editCell', row, col, value: '' });
+    });
+    return;
+  }
+
   const isArrowKey = (k) => ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Up','Down','Left','Right','Home','End','PageUp','PageDown'].includes(k);
   if (!editingCell && (e.ctrlKey || e.metaKey) && isArrowKey(e.key)) {
     e.preventDefault();
