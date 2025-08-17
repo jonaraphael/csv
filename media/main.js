@@ -747,9 +747,10 @@ table.addEventListener('dblclick', e => { const target = e.target; if(target.tag
 const copySelectionToClipboard = () => {
   if (currentSelection.length === 0) return;
 
+  // Only copy real data/header columns; skip serial index column (col === -1)
   const coords = currentSelection
     .map(cell => getCellCoords(cell))
-    .filter(c => !isNaN(c.row) && !isNaN(c.col));
+    .filter(c => !isNaN(c.row) && !isNaN(c.col) && c.col >= 0);
   if (coords.length === 0) return;
   const minRow = Math.min(...coords.map(c => c.row)), maxRow = Math.max(...coords.map(c => c.row));
   const minCol = Math.min(...coords.map(c => c.col)), maxCol = Math.max(...coords.map(c => c.col));
