@@ -12,6 +12,10 @@ let lastContextIsHeader = false;   // remembers whether we right-clicked a <th>
 let isUpdating = false, isSelecting = false, anchorCell = null, rangeEndCell = null, currentSelection = [];
 let startCell = null, endCell = null, selectionMode = "cell";
 let editingCell = null, originalCellValue = "";
+// Edit mode:
+//  - 'quick': started by typing a character (not Enter)
+//  - 'detail': started by Enter or double-click
+let editMode = null; // 'quick' | 'detail' | null
 
 const table = document.querySelector('#csv-root table');
 
@@ -442,13 +446,15 @@ document.addEventListener('keydown', e => {
   if (!editingCell && anchorCell && currentSelection.length === 1) {
     if (e.key === 'Enter') {
       e.preventDefault();
-      editCell(anchorCell);
+      // Detail edit via Enter
+      editCell(anchorCell, undefined, 'detail');
       return;
     }
     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault();
       const cell = anchorCell;
-      editCell(cell);
+      // Quick edit via direct typing
+      editCell(cell, undefined, 'quick');
       cell.innerText = '';
       if (document.execCommand) {
         document.execCommand('insertText', false, e.key);
@@ -508,6 +514,52 @@ document.addEventListener('keydown', e => {
     return;
   }
 
+  // QUICK EDIT: Arrow keys commit and move selection (no re-entering edit)
+  if (editingCell && editMode === 'quick' && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
+    e.preventDefault();
+    const { row, col } = getCellCoords(editingCell);
+    let targetRow = row, targetCol = col;
+    switch(e.key){
+      case 'ArrowUp':   targetRow = row - 1; break;
+      case 'ArrowDown': targetRow = row + 1; break;
+      case 'ArrowLeft': targetCol = col - 1; break;
+      case 'ArrowRight':targetCol = col + 1; break;
+    }
+    if (targetRow >= 0 && targetCol >= 0) {
+      const tag = (hasHeader && targetRow === 0 ? 'th' : 'td');
+      const nextCell = table.querySelector(`${tag}[data-row="${targetRow}"][data-col="${targetCol}"]`);
+      if (nextCell) {
+        const commitAndMove = () => {
+          clearSelection();
+          nextCell.classList.add('selected');
+          currentSelection.push(nextCell);
+          anchorCell = nextCell;
+          rangeEndCell = nextCell;
+          nextCell.focus({preventScroll:true});
+          nextCell.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
+        };
+        const cellRef = editingCell;
+        cellRef && cellRef.blur();
+        setTimeout(commitAndMove, 0);
+      } else {
+        const cellRef = editingCell;
+        cellRef && cellRef.blur();
+      }
+    } else {
+      const cellRef = editingCell;
+      cellRef && cellRef.blur();
+    }
+    return;
+  }
+
+  // DETAIL EDIT: Arrow Up/Down go to start/end of contents; Left/Right default caret move
+  if (editingCell && editMode === 'detail' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+    e.preventDefault();
+    if (e.key === 'ArrowUp') setCursorToStart(editingCell);
+    if (e.key === 'ArrowDown') setCursorToEnd(editingCell);
+    return;
+  }
+
   if (editingCell && ((e.ctrlKey || e.metaKey) && e.key === 's')) {
     e.preventDefault();
     editingCell.blur();
@@ -549,6 +601,11 @@ const setCursorToEnd = cell => { setTimeout(() => {
   const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
 }, 10); };
 
+const setCursorToStart = cell => { setTimeout(() => {
+  const range = document.createRange(); range.selectNodeContents(cell); range.collapse(true);
+  const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+}, 10); };
+
 const setCursorAtPoint = (cell, x, y) => {
   let range;
   if(document.caretRangeFromPoint) { range = document.caretRangeFromPoint(x,y); }
@@ -556,12 +613,13 @@ const setCursorAtPoint = (cell, x, y) => {
   if(range){ let sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range); }
 };
 
-const editCell = (cell, event) => {
+const editCell = (cell, event, mode = 'detail') => {
   if(editingCell === cell) return;
   if(editingCell) editingCell.blur();
   cell.classList.remove('selected');
   originalCellValue = cell.textContent;
   editingCell = cell;
+  editMode = mode;
   cell.classList.add('editing');
   cell.setAttribute('contenteditable', 'true');
   cell.focus();
@@ -572,6 +630,7 @@ const editCell = (cell, event) => {
     cell.removeAttribute('contenteditable');
     cell.classList.remove('editing');
     editingCell = null;
+    editMode = null;
     cell.removeEventListener('blur', onBlurHandler);
   };
   cell.addEventListener('blur', onBlurHandler);

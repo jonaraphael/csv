@@ -34,3 +34,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [1.0.0] - 2023-12-01
 - Initial release with interactive cell editing, smart column sizing, and adaptive theme support.
+## [1.2.0] - 2025-08-17
+- Added: Dual editing modes — quick edit (type to start; arrow keys save and move) and detail edit (Enter/double‑click; arrow keys keep caret with Up/Down jumping to start/end).
+- Updated: Documentation to describe new editing behavior and shortcuts.

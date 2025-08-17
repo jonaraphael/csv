@@ -26,11 +26,11 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 
 ## Features
 
-- **Interactive Editing:** Double-click any cell to edit, with automatic save on blur.
+- **Interactive Editing:** Two modes — type to start a quick edit, or press Enter/double‑click for detail edit. Saves on blur.
 - **Smart Resizing:** Automatic calculation of column widths for improved readability.
 - **Dynamic Color Coding:** Visual cues based on data type help you quickly identify numbers, dates, booleans, and more.
 - **Sticky Headers:** Keep column titles in view as you scroll through large datasets.
-- **Enhanced Keyboard Navigation:** Navigate cells with Tab/Shift+Tab and use keyboard shortcuts for quick editing, saving, selection, and full-table `Ctrl/Cmd + A` select-all.
+- **Enhanced Keyboard Navigation:** Navigate cells with arrows and Tab/Shift+Tab; quick edits can commit with arrow keys; `Ctrl/Cmd + A` selects all; `Ctrl/Cmd + C` copies selection.
 - **Advanced Multi-Cell Selection:** Easily select and copy blocks of data, then paste them elsewhere as properly formatted CSV.
 - **Add/Delete Columns:** Right-click any cell to add a column left or right, or remove the selected column.
 - **Add/Delete Rows:** Insert above/below or remove the selected row via context menu.
@@ -65,8 +65,10 @@ Cursor (built on VS Code 1.99) and the latest VS Code releases (1.102).
 
 ### 3. Edit and Navigate
 
-- **Click to Edit:** Double-click any cell to edit its content. Simply press `Enter` or click outside the cell to save.
-- **Keyboard Navigation:** Use `Tab`/`Shift+Tab` to move horizontally between cells. Navigation also wraps to the next or previous row as needed.
+- **Edit Modes:**
+  - Quick edit: start typing any character to edit the selected cell immediately. Press any Arrow key to save and move the selection to the next cell in that direction.
+  - Detail edit: press `Enter` on a selected cell or double‑click to enter a focused edit. Arrow Left/Right move the text caret; Arrow Up goes to start; Arrow Down goes to end. Click outside the cell (or blur) to save.
+- **Keyboard Navigation:** Use Arrow keys to move between cells when not editing. Use `Tab`/`Shift+Tab` to move horizontally (wrapping across rows as needed).
 - **Multi-Cell Selection:** Click and drag or use `Shift + Click` to select multiple cells, then copy them as CSV using `Ctrl/Cmd + C`.
 - **Find & Highlight:** Press `Ctrl/Cmd + F` to activate the find widget and quickly locate data within your CSV.
 
@@ -98,6 +100,22 @@ Per-file (stored by the extension; set via commands):
 - Serial index column (default `true`) — `CSV: Toggle Serial Index Column`
 - CSV separator (default inherit: `.tsv` → tab, otherwise comma) — `CSV: Change CSV Separator`
 - Hide first N rows (default `0`) — `CSV: Hide First N Rows`
+
+---
+
+## Editing Modes and Shortcuts
+
+- Quick edit:
+  - Start: type any character (not Enter) on a selected cell.
+  - Save and move: press Arrow Up/Down/Left/Right to save and select the adjacent cell; does not re-enter edit.
+- Detail edit:
+  - Start: press `Enter` on a selected cell or double‑click a cell.
+  - Caret navigation: Arrow Left/Right move one character; Arrow Up moves caret to start; Arrow Down moves caret to end.
+  - Exit/save: click outside the cell or move focus to commit changes.
+- Global:
+  - Copy selection: `Ctrl/Cmd + C`
+  - Find: `Ctrl/Cmd + F`
+  - Select all: `Ctrl/Cmd + A`
 
 ---
 
