@@ -42,6 +42,10 @@ describe('CsvEditorProvider utility methods', () => {
   it('estimateColumnDataType detects common types', () => {
     const estimate = getPrivate<(c: string[]) => string>(provider, 'estimateColumnDataType').bind(provider);
     assert.strictEqual(estimate(['true', 'FALSE']), 'boolean');
+    assert.strictEqual(estimate(['1', '0', '0', '1']), 'boolean');
+    assert.strictEqual(estimate(['t', 'F', 'T', 'f']), 'boolean');
+    assert.strictEqual(estimate(['yes', 'No', 'Y', 'n']), 'boolean');
+    assert.strictEqual(estimate(['on', 'OFF']), 'boolean');
     assert.strictEqual(estimate(['2020-01-01', '1999-12-31']), 'date');
     assert.strictEqual(estimate(['0x1', '0x2']), 'integer');
     assert.strictEqual(estimate(['1.2e0', '3.4e0']), 'float');

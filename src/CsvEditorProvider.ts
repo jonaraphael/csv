@@ -578,6 +578,7 @@ class CsvEditorController {
         const htmlChunk = allRows.slice(i, i + CHUNK_SIZE).map((row, localR) => {
           const startAbs = headerFlag ? offset + 1 : offset;
           const absRow = startAbs + i + localR;
+          const displayIdx = i + localR + 1; // numbering relative to first visible data row
           let cells = '';
           for (let cIdx = 0; cIdx < numColumns; cIdx++) {
             const safe = this.escapeHtml(row[cIdx] || '');
@@ -585,7 +586,7 @@ class CsvEditorController {
           }
 
           return `<tr>${
-            addSerialIndex ? `<td tabindex="0" style="min-width:4ch;max-width:4ch;border:1px solid ${isDark?'#555':'#ccc'};color:#888;" data-row="${absRow}" data-col="-1">${absRow}</td>` : ''
+            addSerialIndex ? `<td tabindex="0" style="min-width:4ch;max-width:4ch;border:1px solid ${isDark?'#555':'#ccc'};color:#888;" data-row="${absRow}" data-col="-1">${displayIdx}</td>` : ''
           }${cells}</tr>`;
         }).join('');
 
@@ -615,7 +616,7 @@ class CsvEditorController {
       bodyData.forEach((row, r) => {
         tableHtml += `<tr>${
           addSerialIndex
-            ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${offset + 1 + r}" data-col="-1">${offset + 1 + r}</td>`
+            ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${offset + 1 + r}" data-col="-1">${r + 1}</td>`
             : ''
         }`;
         for (let i = 0; i < numColumns; i++) {
@@ -626,7 +627,7 @@ class CsvEditorController {
       });
       if (!chunked) {
         const virtualAbs = offset + 1 + bodyData.length;
-        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${virtualAbs}</td>` : '';
+        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${bodyData.length + 1}</td>` : '';
         const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
         tableHtml += `<tr>${idxCell}${dataCells}</tr>`;
       }
@@ -660,7 +661,7 @@ class CsvEditorController {
     if (chunked) {
       const startAbs = headerFlag ? offset + 1 : offset;
       const virtualAbs = startAbs + allRows.length;
-      const displayIdx = headerFlag ? virtualAbs : (allRows.length + 1);
+      const displayIdx = allRows.length + 1;
       const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
       const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
       const vrow = `<tr>${idxCell}${dataCells}</tr>`;
@@ -843,6 +844,18 @@ class CsvEditorController {
     return !isNaN(Date.parse(value));
   }
 
+  private isBooleanish(value: string): boolean {
+    const v = (value ?? '').trim().toLowerCase();
+    if (!v) return false;
+    if (v === 'true' || v === 'false') return true;
+    if (v === 't' || v === 'f') return true;
+    if (v === 'yes' || v === 'no') return true;
+    if (v === 'y' || v === 'n') return true;
+    if (v === 'on' || v === 'off') return true;
+    if (v === '1' || v === '0') return true;
+    return false;
+  }
+
   private estimateColumnDataType(column: string[]): string {
     let allBoolean = true, allDate = true, allInteger = true, allFloat = true, allEmpty = true;
     for (const cell of column) {
@@ -850,8 +863,7 @@ class CsvEditorController {
       for (const item of items){
         if (item === '') continue;
         allEmpty = false;
-        const lower = item.toLowerCase();
-        if (!(lower === 'true' || lower === 'false')) allBoolean = false;
+        if (!this.isBooleanish(item)) allBoolean = false;
         if (!this.isDate(item)) allDate = false;
         const num = Number(item);
         if (!Number.isInteger(num)) allInteger = false;

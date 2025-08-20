@@ -19,6 +19,15 @@ let editMode = null; // 'quick' | 'detail' | null
 
 const table = document.querySelector('#csv-root table');
 const scrollContainer = document.querySelector('.table-container');
+const getFirstDataRow = () => {
+  const cells = Array.from(table.querySelectorAll('tbody td[data-col]:not([data-col="-1"])'));
+  let min = Infinity;
+  for (const el of cells) {
+    const v = parseInt(el.getAttribute('data-row') || 'NaN', 10);
+    if (!Number.isNaN(v)) min = Math.min(min, v);
+  }
+  return Number.isFinite(min) ? min : 0;
+};
 
 // Persist/restore view state (scroll + selection) across webview reloads
 const persistState = () => {
@@ -510,9 +519,8 @@ document.addEventListener('keydown', e => {
         const max = rowCells.reduce((acc, el) => Math.max(acc, parseInt(el.getAttribute('data-col'))), -1);
         target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === max) || ref;
       } else if (['ArrowUp','Up','PageUp'].includes(e.key)) {
-        target = hasHeader
-          ? (table.querySelector('th[data-row="0"][data-col="'+col+'"]') || ref)
-          : (table.querySelector('td[data-row="0"][data-col="'+col+'"]') || ref);
+        const topRow = getFirstDataRow();
+        target = table.querySelector('td[data-row="'+topRow+'"][data-col="'+col+'"]') || ref;
       } else if (['ArrowDown','Down','PageDown'].includes(e.key)) {
         const colCells = Array.from(table.querySelectorAll('td[data-col="'+col+'"]'));
         target = (colCells.length ? colCells[colCells.length - 1] : null) || ref;
@@ -528,8 +536,8 @@ document.addEventListener('keydown', e => {
       persistState();
       target.focus({preventScroll:true});
       if (['ArrowUp','Up','PageUp'].includes(e.key)) {
-        const belowRowIndex = hasHeader ? 1 : 0;
-        const below = table.querySelector('td[data-row="'+belowRowIndex+'"][data-col="'+getCellCoords(target).col+'"]');
+        const topRow = getFirstDataRow();
+        const below = table.querySelector('td[data-row="'+topRow+'"][data-col="'+getCellCoords(target).col+'"]');
         if (below) {
           below.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
         } else {
@@ -635,14 +643,10 @@ document.addEventListener('keydown', e => {
     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault();
       const cell = anchorCell;
-      // Quick edit via direct typing
+      // Quick edit via direct typing: start edit and inject the first char.
       editCell(cell, undefined, 'quick');
-      cell.innerText = '';
-      if (document.execCommand) {
-        document.execCommand('insertText', false, e.key);
-      } else {
-        cell.innerText = e.key;
-      }
+      // Overwrite existing content with the typed character.
+      cell.textContent = e.key;
       setCursorToEnd(cell);
       return;
     }
