@@ -51,8 +51,19 @@ const restoreState = () => {
     if (typeof st.scrollX === 'number' && scrollContainer) {
       scrollContainer.scrollLeft = st.scrollX;
     }
+    // If the saved scroll position is beyond current height (because only the first
+    // chunk is mounted), progressively load more chunks until we can restore it.
     if (typeof st.scrollY === 'number') {
       if (scrollContainer) {
+        let guard = 100;
+        while (
+          typeof window.__csvLoadNextChunk === 'function' &&
+          csvChunks && csvChunks.length &&
+          (scrollContainer.scrollHeight - scrollContainer.clientHeight < st.scrollY) &&
+          guard-- > 0
+        ) {
+          window.__csvLoadNextChunk();
+        }
         scrollContainer.scrollTop = st.scrollY;
       } else {
         window.scrollTo(0, st.scrollY);
@@ -77,6 +88,10 @@ const restoreState = () => {
         try { sel.focus({ preventScroll: true }); } catch { try { sel.focus(); } catch {} }
       }
     }
+    // Re-apply scroll after any late chunk loads from selection restoration
+    if (typeof st.scrollY === 'number' && scrollContainer) {
+      scrollContainer.scrollTop = st.scrollY;
+    }
   } catch {}
 };
 
@@ -84,28 +99,65 @@ const restoreState = () => {
 const CHUNK_SIZE = 1000;
 // We use a <template> to carry JSON so CSP doesn't block it like a <script> might
 const chunkTemplate = document.getElementById('__csvChunks');
-let csvChunks = chunkTemplate ? JSON.parse(chunkTemplate.textContent || '[]') : [];
+let csvChunks = [];
+try {
+  csvChunks = chunkTemplate ? JSON.parse(chunkTemplate.textContent || '[]') : [];
+} catch (e) {
+  // Swallow parse errors; chunking will simply be disabled
+  csvChunks = [];
+}
 
 if (csvChunks.length) {
-  const tbody           = table.tBodies[0];
+  const tbody = table.tBodies[0];
+  let loading = false;
 
   const loadNextChunk = () => {
-    if (!csvChunks.length || !tbody) return;
-    tbody.insertAdjacentHTML('beforeend', csvChunks.shift());
+    if (loading || !csvChunks.length || !tbody) return;
+    loading = true;
+    try {
+      const html = csvChunks.shift();
+      tbody.insertAdjacentHTML('beforeend', html);
+    } finally {
+      loading = false;
+    }
   };
   // Expose for restoration logic
   window.__csvLoadNextChunk = loadNextChunk;
 
+  const nearBottom = () => {
+    if (!scrollContainer) return false;
+    const remain = scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight;
+    return remain < 300; // px threshold
+  };
+
   const io = new IntersectionObserver((entries)=>{
-    if (entries[0].isIntersecting) {
+    if (entries[0] && entries[0].isIntersecting) {
       loadNextChunk();
       const last = tbody && tbody.querySelector('tr:last-child');
       if (last) io.observe(last);
     }
-  }, { root: scrollContainer, rootMargin: '0px 0px 200px 0px' });
+  }, { root: scrollContainer || null, rootMargin: '0px 0px 300px 0px' });
 
-  const initialLast = tbody && tbody.querySelector('tr:last-child');
-  if (initialLast) io.observe(initialLast);
+  const prime = () => {
+    const last = tbody && tbody.querySelector('tr:last-child');
+    if (last) { io.observe(last); }
+  };
+  prime();
+
+  // Fallback: scroll-driven loader to ensure progress even if IO misses
+  const scrollHandler = () => {
+    if (!csvChunks.length) return;
+    if (nearBottom()) {
+      // Load until we create headroom or exhaust chunks
+      let guard = 10;
+      while (csvChunks.length && nearBottom() && guard-- > 0) {
+        loadNextChunk();
+      }
+      prime();
+    }
+  };
+  if (scrollContainer) scrollContainer.addEventListener('scroll', scrollHandler, { passive: true });
+  else window.addEventListener('scroll', scrollHandler, { passive: true });
 }
 /* ───────── END VIRTUAL-SCROLL LOADER ───────── */
 

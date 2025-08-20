@@ -517,7 +517,7 @@ class CsvEditorController {
       vscode.workspace.getConfiguration('editor').get<string>('fontFamily', 'Menlo');
 
     const cellPadding = config.get<number>('cellPadding', 4);
-    const data = (parsed.data || []) as string[][];
+    const data = this.trimTrailingEmptyRows((parsed.data || []) as string[][]);
     const treatHeader = this.getEffectiveHeader(data, hiddenRows);
 
     const { tableHtml, chunksJson, colorCss } =
@@ -570,11 +570,12 @@ class CsvEditorController {
 
     const CHUNK_SIZE = 1000;
     const allRows = headerFlag ? bodyData : data.slice(offset);
+    const allRowsCount = allRows.length; // preserve total before any truncation
     const chunks: string[] = [];
-    const chunked = allRows.length > CHUNK_SIZE;
+    const chunked = allRowsCount > CHUNK_SIZE;
 
-    if (allRows.length > CHUNK_SIZE) {
-      for (let i = CHUNK_SIZE; i < allRows.length; i += CHUNK_SIZE) {
+    if (allRowsCount > CHUNK_SIZE) {
+      for (let i = CHUNK_SIZE; i < allRowsCount; i += CHUNK_SIZE) {
         const htmlChunk = allRows.slice(i, i + CHUNK_SIZE).map((row, localR) => {
           const startAbs = headerFlag ? offset + 1 : offset;
           const absRow = startAbs + i + localR;
@@ -593,8 +594,16 @@ class CsvEditorController {
         chunks.push(htmlChunk);
       }
 
-      if (headerFlag) bodyData.length = CHUNK_SIZE;
-      else            {/* only the visible portion is chunked; no mutation needed */}
+      // Only render the first chunk worth of rows in the initial table; the rest
+      // are appended lazily from `chunks` via the webview script's loader.
+      if (headerFlag) {
+        bodyData.length = CHUNK_SIZE;
+      } else {
+        // For non-header mode, limit visible rows for the initial render as well.
+        // The remainder will stream from `chunks`.
+        // Note: we don't mutate the original data array; simply rely on the
+        // limited `nonHeaderRows` below when rendering the table body.
+      }
     }
 
     const colorCss = columnColors
@@ -634,7 +643,8 @@ class CsvEditorController {
       tableHtml += `</tbody>`;
     } else {
       tableHtml += `<tbody>`;
-      const nonHeaderRows = data.slice(offset);
+      const nonHeaderAll = data.slice(offset);
+      const nonHeaderRows = chunked ? nonHeaderAll.slice(0, CHUNK_SIZE) : nonHeaderAll;
       nonHeaderRows.forEach((row, r) => {
         tableHtml += `<tr>${
           addSerialIndex
@@ -660,8 +670,8 @@ class CsvEditorController {
     // If chunked, append a final chunk with the virtual row so it appears at the end
     if (chunked) {
       const startAbs = headerFlag ? offset + 1 : offset;
-      const virtualAbs = startAbs + allRows.length;
-      const displayIdx = allRows.length + 1;
+      const virtualAbs = startAbs + allRowsCount;
+      const displayIdx = allRowsCount + 1;
       const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
       const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
       const vrow = `<tr>${idxCell}${dataCells}</tr>`;
@@ -786,7 +796,7 @@ class CsvEditorController {
       ${tableHtml}
     </div>
 
-    <template id="__csvChunks">${this.escapeHtml(chunksJson)}</template>
+    <script id="__csvChunks" type="application/json" nonce="${nonce}">${chunksJson}</script>
 
     <div id="findWidget">
       <input id="findInput" type="text" placeholder="Find...">
@@ -922,6 +932,21 @@ class CsvEditorController {
       text += possible.charAt(Math.floor(Math.random() * possible.length));
     }
     return text;
+  }
+
+  private trimTrailingEmptyRows(rows: string[][]): string[][] {
+    const isEmpty = (r: string[] | undefined) => {
+      if (!r || r.length === 0) return true;
+      for (let i = 0; i < r.length; i++) {
+        if ((r[i] ?? '') !== '') return false;
+      }
+      return true;
+    };
+    let end = rows.length;
+    while (end > 0 && isEmpty(rows[end - 1])) {
+      end--;
+    }
+    return rows.slice(0, end);
   }
 }
 

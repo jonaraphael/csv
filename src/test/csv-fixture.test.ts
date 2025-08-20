@@ -85,6 +85,13 @@ describe('CSV fixture: animal-shenanigans.csv', () => {
     assert.strictEqual(meta5.chunkCount, 2);
   });
 
+  it('engages chunking with or without header', () => {
+    const withHeader = CsvEditorProvider.__test.generateTableChunksMeta(rows, true, true, 3);
+    const noHeader   = CsvEditorProvider.__test.generateTableChunksMeta(rows, false, true, 3);
+    assert.strictEqual(withHeader.chunkCount, 2);
+    assert.strictEqual(noHeader.chunkCount, 2);
+  });
+
   it('computeColumnWidths matches independent calculation', () => {
     const headerIdx = rows.findIndex(r => (r[0] || '').trim() === 'AnimalName');
     const visible = rows.slice(headerIdx); // include header + body
