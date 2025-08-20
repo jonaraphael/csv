@@ -841,7 +841,13 @@ class CsvEditorController {
   }
 
   private isDate(value: string): boolean {
-    return !isNaN(Date.parse(value));
+    if (!value) return false;
+    const v = value.trim();
+    // Strictly match ISO-like date formats to avoid misclassifying plain numbers as dates.
+    const isoDate = /^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+    const isoSlash = /^\d{4}\/\d{2}\/\d{2}$/;
+    if (!(isoDate.test(v) || isoSlash.test(v))) return false;
+    return !isNaN(Date.parse(v));
   }
 
   private isBooleanish(value: string): boolean {
@@ -1004,4 +1010,28 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     if (!sep || sep.length === 0) { delete map[uri.toString()]; } else { map[uri.toString()] = sep; }
     await context.workspaceState.update(CsvEditorProvider.sepKey, map);
   }
+
+  // Test helpers to access internal utilities without VS Code runtime
+  public static __test = {
+    computeColumnWidths(data: string[][]): number[] {
+      const c: any = new (CsvEditorController as any)({} as any);
+      return c.computeColumnWidths(data);
+    },
+    isDate(v: string): boolean {
+      const c: any = new (CsvEditorController as any)({} as any);
+      return c.isDate(v);
+    },
+    estimateColumnDataType(col: string[]): string {
+      const c: any = new (CsvEditorController as any)({} as any);
+      return c.estimateColumnDataType(col);
+    },
+    getColumnColor(t: string, dark: boolean, i: number): string {
+      const c: any = new (CsvEditorController as any)({} as any);
+      return c.getColumnColor(t, dark, i);
+    },
+    hslToHex(h: number, s: number, l: number): string {
+      const c: any = new (CsvEditorController as any)({} as any);
+      return c.hslToHex(h, s, l);
+    }
+  };
 }
