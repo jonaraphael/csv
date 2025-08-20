@@ -1032,6 +1032,53 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     hslToHex(h: number, s: number, l: number): string {
       const c: any = new (CsvEditorController as any)({} as any);
       return c.hslToHex(h, s, l);
+    },
+    // Expose header heuristic for tests. Allows specifying hiddenRows and
+    // optionally an override value through a mock workspaceState.
+    getEffectiveHeader(data: string[][], hiddenRows: number, override: undefined | boolean = undefined): boolean {
+      const c: any = new (CsvEditorController as any)({} as any);
+      // Minimal fake URI and context to satisfy header-override checks
+      const fakeUri = { toString: () => 'vscode-test://csv/fixture', fsPath: '/csv/fixture.csv' } as any;
+      const state: Record<string, any> = {};
+      if (override !== undefined) {
+        state[CsvEditorProvider.headerKey] = { [fakeUri.toString()]: override };
+      }
+      c.context = {
+        workspaceState: {
+          get: (key: string, def: any) => (key in state ? state[key] : def),
+          update: async (key: string, val: any) => { state[key] = val; }
+        }
+      } as any;
+      c.document = { uri: fakeUri } as any;
+      return c.getEffectiveHeader(data, hiddenRows);
+    },
+    // Compute the effective separator used for a given file path with optional override.
+    getEffectiveSeparator(filePath: string, override: string | undefined): string {
+      const c: any = new (CsvEditorController as any)({} as any);
+      const fakeUri = { toString: () => `vscode-test://csv/${filePath}`, fsPath: filePath } as any;
+      const state: Record<string, any> = {};
+      if (override !== undefined) {
+        state[CsvEditorProvider.sepKey] = { [fakeUri.toString()]: override };
+      }
+      c.context = {
+        workspaceState: {
+          get: (key: string, def: any) => (key in state ? state[key] : def),
+          update: async (key: string, val: any) => { state[key] = val; }
+        }
+      } as any;
+      c.document = { uri: fakeUri } as any;
+      return c.getSeparator();
+    },
+    // Expose chunking/table generation for large-data tests. Returns parsed chunk count.
+    generateTableChunksMeta(data: string[][], treatHeader: boolean, addSerialIndex: boolean, hiddenRows: number): { chunkCount: number; hasTable: boolean } {
+      const c: any = new (CsvEditorController as any)({} as any);
+      const result = c.generateTableAndChunks(data, treatHeader, addSerialIndex, hiddenRows);
+      try {
+        const chunks = JSON.parse(result.chunksJson);
+        return { chunkCount: Array.isArray(chunks) ? chunks.length : 0, hasTable: typeof result.tableHtml === 'string' && result.tableHtml.includes('<table') };
+      } catch {
+        return { chunkCount: 0, hasTable: false };
+      }
     }
   };
 }
