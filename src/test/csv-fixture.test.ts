@@ -19,15 +19,15 @@ Module.prototype.require = function (id: string) {
 
 import { CsvEditorProvider } from '../CsvEditorProvider';
 
-describe('CSV fixture: animal-shenanigans.csv', () => {
-  const csvPath = path.join(process.cwd(), 'src', 'test', 'animal-shenanigans.csv');
+describe('CSV fixture: super_example.csv', () => {
+  const csvPath = path.join(process.cwd(), 'src', 'test', 'super_example.csv');
   const text = fs.readFileSync(csvPath, 'utf8');
   const parsed = Papa.parse<string[]>(text, { dynamicTyping: false, delimiter: ',' });
   const rows = parsed.data as string[][];
 
   it('parses the expected header and body sizes', () => {
     assert.ok(rows.length > 1000, 'expected > 1000 rows');
-    const headerIdx = rows.findIndex(r => (r[0] || '').trim() === 'AnimalName');
+    const headerIdx = rows.findIndex(r => (r[0] || '').trim() === 'Hero');
     assert.ok(headerIdx > 0, 'expected header after meta rows');
     assert.strictEqual((rows[headerIdx] || []).length, 12, 'expected 12 columns');
     const bodyRows = rows.slice(headerIdx + 1);
@@ -35,25 +35,25 @@ describe('CSV fixture: animal-shenanigans.csv', () => {
   });
 
   it('infers column types correctly from body', () => {
-    const headerIdx = rows.findIndex(r => (r[0] || '').trim() === 'AnimalName');
+    const headerIdx = rows.findIndex(r => (r[0] || '').trim() === 'Hero');
     const body = rows.slice(headerIdx + 1);
     const numCols = Math.max(...body.map(r => r.length), 0);
     const cols: string[][] = Array.from({ length: numCols }, (_, i) => body.map(r => r[i] || ''));
     const estimate = CsvEditorProvider.__test.estimateColumnDataType;
     const types = cols.map(c => estimate(c));
     assert.deepStrictEqual(types.slice(0, 12), [
-      'string',   // AnimalName
-      'string',   // SidekickName (some empty)
-      'boolean',  // IsMischievous
-      'boolean',  // IsNocturnal
-      'date',     // BirthdateISO
-      'date',     // LastVetVisit
-      'integer',  // FavoriteNumber
-      'integer',  // StepsToday
-      'float',    // SnackBudget
-      'float',    // AgilityScore
-      'empty',    // OptionalNote
-      'empty'     // SpareColumn
+      'string',   // Hero
+      'string',   // Sidekick (some empty)
+      'boolean',  // CanFly
+      'boolean',  // HasCape
+      'date',     // FirstSeen
+      'date',     // LastSeen
+      'integer',  // Rescues
+      'integer',  // Disasters
+      'float',    // Power
+      'float',    // Speed
+      'empty',    // Note
+      'empty'     // Spare
     ]);
   });
 
@@ -93,7 +93,7 @@ describe('CSV fixture: animal-shenanigans.csv', () => {
   });
 
   it('computeColumnWidths matches independent calculation', () => {
-    const headerIdx = rows.findIndex(r => (r[0] || '').trim() === 'AnimalName');
+    const headerIdx = rows.findIndex(r => (r[0] || '').trim() === 'Hero');
     const visible = rows.slice(headerIdx); // include header + body
     const expected = (() => {
       const n = Math.max(...visible.map(r => r.length), 0);

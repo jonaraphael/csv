@@ -123,6 +123,12 @@ Per-file (stored by the extension; set via commands):
 
 ## Release Notes
 
+### v1.2.1
+- Fix scrolling freeze at ~1000 rows when header is enabled by unifying chunking behavior and safely transporting chunks to the webview.
+- Trim trailing empty lines to avoid phantom last rows; correct final virtual row numbering.
+- Preserve scroll position after edits/saves in later chunks by loading enough chunks before restoring scroll.
+- Add tests for separators (CSV/TSV overrides), strict date parsing, header heuristics, and chunking stability.
+
 ### v1.2.0
 - Edit modes: Quick edit (type to start; arrows save and move) and Detail edit (Enter/double‑click; arrows move caret, Up/Down jump to start/end).
 - Virtual rows and cells: Always shows one extra empty row at the bottom; short rows display empty editable cells up to the widest column. Empty edits do not create real rows/columns.

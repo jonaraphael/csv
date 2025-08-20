@@ -9,16 +9,19 @@ const fs = require('fs');
 const path = require('path');
 
 const ROWS = Number(process.env.ROW_COUNT || 1105);
-const OUT = path.join(process.cwd(), 'tests', 'animal-shenanigans.csv');
+// Write directly into the repo's test folder with the new name
+const OUT = path.join(process.cwd(), 'src', 'test', 'super_example.csv');
 
+// Wild/exotic animals for superhero theming
 const animals = [
-  'Otter','Fox','Bear','Lynx','Raccoon','Panda','Ferret','Capybara','Wombat','Badger',
-  'Koala','Red Panda','Kiwi','Yak','Bison','Marten','Moose','Skunk','Hedgehog','Possum',
-  'Quokka','Seal','Walrus','Gibbon','Llama','Alpaca','Caracal','Hyena','Jackal','Civet'
+  'Tiger','Jaguar','Falcon','Eagle','Viper','Cobra','Panther','Cheetah','Lynx','Orca',
+  'Manta','Komodo','Okapi','Ibex','Ocelot','Condor','Puma','Kudu','Narwhal','Gazelle',
+  'Kestrel','Caracal','Serval','Hyena','Jackal','Civet','Tapir','Marmot','Otter','Heron'
 ];
-const humanish = [
-  'Alex','Riley','Sam','Morgan','Jordan','Taylor','Casey','Jamie','Avery','Reese',
-  'Quinn','Skyler','Cameron','Harper','Rowan','Sage','Parker','Drew','Remy','Elliot'
+// Short superhero codenames for variety
+const codenames = [
+  'Nova','Blaze','Zephyr','Titan','Aster','Vortex','Quasar','Rift','Halo','Echo',
+  'Prism','Surge','Ember','Fang','Talon','Bolt','Drift','Flux','Nimbus','Raptor'
 ];
 
 const pad2 = n => String(n).padStart(2, '0');
@@ -36,30 +39,31 @@ function date2(i){
   return `${y}-${pad2(m)}-${pad2(d)}`;
 }
 
-function snackBudget(i){
-  const dollars = (i % 50);
-  const cents = (i % 100);
-  return `${dollars}.${pad2(cents)}`; // string with 2 decimals
+// Floats themed as power/speed values
+function powerValue(i){
+  const whole = (i % 100);
+  const frac = (i % 100);
+  return `${whole}.${pad2(frac)}`; // string with 2 decimals
 }
-function agilityScore(i){
-  const whole = 50 + ((i * 13) % 50);
-  const frac = (i * 17) % 100;
+function speedValue(i){
+  const whole = 60 + ((i * 13) % 40);
+  const frac = (i * 11) % 100;
   return `${whole}.${pad2(frac)}`; // string with 2 decimals
 }
 
 const header = [
-  'AnimalName',           // string 1
-  'SidekickName',         // string 2
-  'IsMischievous',        // boolean 1
-  'IsNocturnal',          // boolean 2
-  'BirthdateISO',         // date 1
-  'LastVetVisit',         // date 2
-  'FavoriteNumber',       // integer 1
-  'StepsToday',           // integer 2
-  'SnackBudget',          // float 1
-  'AgilityScore',         // float 2
-  'OptionalNote',         // empty 1 (all empty to force "empty" type)
-  'SpareColumn'           // empty 2 (all empty to force "empty" type)
+  'Hero',       // string 1
+  'Sidekick',   // string 2
+  'CanFly',     // boolean 1
+  'HasCape',    // boolean 2
+  'FirstSeen',  // date 1
+  'LastSeen',   // date 2
+  'Rescues',    // integer 1
+  'Disasters',  // integer 2
+  'Power',      // float 1
+  'Speed',      // float 2
+  'Note',       // empty 1
+  'Spare'       // empty 2
 ];
 
 function csvEscape(s){
@@ -71,35 +75,35 @@ function csvEscape(s){
 const lines = [];
 
 // Metadata rows (12 columns, pad with empties to keep width consistent)
-lines.push(['meta','Title','Animal Shenanigans CSV','', '', '', '', '', '', '', '', ''].map(csvEscape).join(','));
-lines.push(['meta','Author','The CSV Menagerie','', '', '', '', '', '', '', '', ''].map(csvEscape).join(','));
-lines.push(['meta','About','Fictional animals with quirky traits','', '', '', '', '', '', '', '', ''].map(csvEscape).join(','));
+lines.push(['meta','Title','Super Example CSV','', '', '', '', '', '', '', '', ''].map(csvEscape).join(','));
+lines.push(['meta','Author','The Wild Justice League','', '', '', '', '', '', '', '', ''].map(csvEscape).join(','));
+lines.push(['meta','About','Exotic animal superheroes and their feats','', '', '', '', '', '', '', '', ''].map(csvEscape).join(','));
 
 // Header
 lines.push(header.join(','));
 
 for (let i = 1; i <= ROWS; i++){
   const animal = animals[i % animals.length];
-  const who = humanish[i % humanish.length];
-  const side = humanish[(i * 3) % humanish.length];
+  const code = codenames[i % codenames.length];
+  const side = codenames[(i * 3) % codenames.length];
 
-  const name1 = `${who} the ${animal}`; // string
-  const name2 = (i % 37 === 0) ? '' : `Buddy ${side}`; // sometimes empty
-  const bool1 = (i % 2 === 0) ? 'true' : 'false';
-  const bool2 = (i % 3 === 0) ? 'TRUE' : 'FALSE'; // case mix
-  const d1 = date1(i);
-  const d2 = date2(i);
-  const int1 = (i % 41 === 0) ? '' : String((i * 13) % 1000); // sometimes empty
-  const int2 = String(1000 + i * 3);
-  const f1 = snackBudget(i);
-  const f2 = agilityScore(i);
-  const empty1 = '';
-  const empty2 = '';
+  const hero = `${code} ${animal}`; // string
+  const sidekick = (i % 37 === 0) ? '' : `Kid ${side}`; // sometimes empty
+  const canFly = (i % 2 === 0) ? 'true' : 'false';
+  const hasCape = (i % 3 === 0) ? 'TRUE' : 'FALSE'; // case mix
+  const firstSeen = date1(i);
+  const lastSeen = date2(i);
+  const rescues = (i % 41 === 0) ? '' : String((i * 13) % 1000); // sometimes empty
+  const disasters = String(500 + i * 2);
+  const power = powerValue(i);
+  const speed = speedValue(i);
+  const note = '';
+  const spare = '';
 
-  const row = [name1, name2, bool1, bool2, d1, d2, int1, int2, f1, f2, empty1, empty2].map(csvEscape).join(',');
+  const row = [hero, sidekick, canFly, hasCape, firstSeen, lastSeen, rescues, disasters, power, speed, note, spare].map(csvEscape).join(',');
   lines.push(row);
 }
 
-fs.mkdirSync(path.join(process.cwd(), 'tests'), { recursive: true });
+fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, lines.join('\n') + '\n', 'utf8');
 console.log(`Wrote ${ROWS} data rows (+4 meta/header) to ${OUT}`);

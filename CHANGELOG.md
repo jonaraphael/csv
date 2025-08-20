@@ -4,6 +4,13 @@ All notable changes to the "CSV" extension will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2025-08-20
+- Fixed: Scrolling freeze at 1000 rows when header was enabled by making chunking consistent across modes and using a safe JSON transport to the webview.
+- Fixed: Phantom virtual row indices caused by EOF newlines; now trims trailing empty rows and uses stable counts for the final virtual row.
+- Fixed: View jumping back to ~1000 after blur/save when editing later chunks by loading additional chunks before restoring scroll.
+- Tests: Added fixture-based tests for separators, dates, header heuristics, and chunking variations.
+- Internal: More robust chunk loader with IntersectionObserver + scroll fallback.
+
 ## [1.2.0] - 2025-08-17
 - Added: Dual editing modes — quick edit (type to start; arrow keys save and move) and detail edit (Enter/double‑click; caret left/right; Up/Down jump to start/end).
 - Added: Virtual bottom row always present; virtual cells extend short rows; empty edits no longer create real rows/columns.
