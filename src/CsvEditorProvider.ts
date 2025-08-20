@@ -160,47 +160,10 @@ class CsvEditorController {
     const data = result.data as string[][];
     const hadRows = data.length;
     const hadColsAtRow = (data[row] ? data[row].length : 0);
-    const wasEditingLastRow = row >= (data.length - 1);
 
-    const rowExists = row < data.length;
-    const colExists = rowExists && col < data[row].length;
+    const { data: nextData, trimmed, createdRow, createdCol } = this.mutateDataForEdit(data, row, col, value);
 
-    if (value === '') {
-      if (!rowExists) {
-        // Do not expand file with an empty virtual row
-        this.isUpdatingDocument = false;
-        return;
-      }
-      if (!colExists) {
-        // Do not expand row width with an empty virtual cell
-        this.isUpdatingDocument = false;
-        return;
-      }
-      // Existing cell: clear value
-      data[row][col] = '';
-    } else {
-      // Non-empty value: expand as needed and set
-      while (data.length <= row) data.push([]);
-      while (data[row].length <= col) data[row].push('');
-      data[row][col] = value;
-    }
-    // If we edited the (previous) last row, trim trailing empty rows recursively
-    let trimmed = false;
-    if (wasEditingLastRow) {
-      const isRowEmpty = (arr: string[] | undefined) => {
-        if (!arr || arr.length === 0) return true;
-        for (let i = 0; i < arr.length; i++) {
-          if ((arr[i] ?? '') !== '') return false;
-        }
-        return true;
-      };
-      while (data.length > 0 && isRowEmpty(data[data.length - 1])) {
-        data.pop();
-        trimmed = true;
-      }
-    }
-
-    const newCsvText = Papa.unparse(data, { delimiter: separator });
+    const newCsvText = Papa.unparse(nextData, { delimiter: separator });
 
     const fullRange = new vscode.Range(
       0, 0,
@@ -216,9 +179,59 @@ class CsvEditorController {
     this.currentWebviewPanel?.webview.postMessage({ type: 'updateCell', row, col, value });
 
     // Trigger a full re-render if structure may have changed (new row/col created)
-    if (trimmed || row >= hadRows || col >= hadColsAtRow) {
+    if (trimmed || createdRow || createdCol || row >= hadRows || col >= hadColsAtRow) {
       try { this.updateWebviewContent(); } catch (e) { console.error('CSV: refresh failed after structural edit', e); }
     }
+  }
+
+  // Apply an edit to a 2D data array, enforcing virtual row/cell invariants.
+  // - Empty edits on non-existent virtual row/col are ignored
+  // - Non-empty edits expand rows/cols as needed
+  // - When editing the last row, trailing empty rows are trimmed
+  private mutateDataForEdit(data: string[][], row: number, col: number, value: string): { data: string[][]; trimmed: boolean; createdRow: boolean; createdCol: boolean } {
+    // Work on the same array instance (callers pass freshly parsed data)
+    const hadRows = data.length;
+    const hadColsAtRow = (data[row] ? data[row].length : 0);
+    const wasEditingLastRow = row >= (data.length - 1);
+
+    const rowExists = row < data.length;
+    const colExists = rowExists && col < (data[row]?.length ?? 0);
+
+    if (value === '') {
+      if (!rowExists) {
+        return { data, trimmed: false, createdRow: false, createdCol: false };
+      }
+      if (!colExists) {
+        return { data, trimmed: false, createdRow: false, createdCol: false };
+      }
+      data[row][col] = '';
+    } else {
+      while (data.length <= row) data.push([]);
+      while (data[row].length <= col) data[row].push('');
+      data[row][col] = value;
+    }
+
+    let trimmed = false;
+    if (wasEditingLastRow) {
+      const isRowEmpty = (arr: string[] | undefined) => {
+        if (!arr || arr.length === 0) return true;
+        for (let i = 0; i < arr.length; i++) {
+          if ((arr[i] ?? '') !== '') return false;
+        }
+        return true;
+      };
+      while (data.length > 0 && isRowEmpty(data[data.length - 1])) {
+        data.pop();
+        trimmed = true;
+      }
+    }
+
+    return {
+      data,
+      trimmed,
+      createdRow: value !== '' && row >= hadRows,
+      createdCol: value !== '' && col >= hadColsAtRow
+    };
   }
 
   private async handleSave() {
@@ -347,7 +360,8 @@ class CsvEditorController {
 
     const text   = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const rows   = result.data as string[][];
+    // Exclude virtual/trailing empty rows from sort input
+    const rows   = this.trimTrailingEmptyRows(result.data as string[][]);
     const treatHeader  = this.getEffectiveHeader(rows, this.getHiddenRows());
 
     const offset = Math.min(Math.max(0, hidden), rows.length);
@@ -362,9 +376,26 @@ class CsvEditorController {
     }
 
     const cmp = (a: string, b: string) => {
-      const na = parseFloat(a), nb = parseFloat(b);
+      const sa = (a ?? '').trim();
+      const sb = (b ?? '').trim();
+      const aEmpty = sa === '';
+      const bEmpty = sb === '';
+      if (aEmpty && bEmpty) return 0;
+      if (aEmpty) return 1; // empty sorts last
+      if (bEmpty) return -1;
+
+      // Dates take precedence over numeric compare (avoid parseFloat on ISO)
+      const aIsDate = this.isDate(sa);
+      const bIsDate = this.isDate(sb);
+      if (aIsDate && bIsDate) {
+        const da = Date.parse(sa);
+        const db = Date.parse(sb);
+        if (!isNaN(da) && !isNaN(db)) return da - db;
+      }
+
+      const na = parseFloat(sa), nb = parseFloat(sb);
       if (!isNaN(na) && !isNaN(nb)) return na - nb;
-      return a.localeCompare(b, undefined, { sensitivity: 'base' });
+      return sa.localeCompare(sb, undefined, { sensitivity: 'base' });
     };
 
     body.sort((r1, r2) => {
@@ -374,7 +405,19 @@ class CsvEditorController {
 
     const prefix = rows.slice(0, offset);
     const combined = treatHeader ? [...prefix, header, ...body] : [...prefix, ...body];
-    const newCsv = Papa.unparse(combined, { delimiter: separator });
+
+    // Sanitize before unparse: ensure undefined/null/NaN become empty strings
+    const sanitized: string[][] = combined.map(r => r.map((v: any) => {
+      if (v === undefined || v === null) return '';
+      const t = typeof v;
+      if (t === 'number') {
+        return Number.isNaN(v) ? '' : String(v);
+      }
+      const s = String(v);
+      return s.toLowerCase() === 'nan' ? '' : s;
+    }));
+
+    const newCsv = Papa.unparse(sanitized, { delimiter: separator });
 
     const fullRange = new vscode.Range(
       0, 0,
@@ -1038,9 +1081,74 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
 
   // Test helpers to access internal utilities without VS Code runtime
   public static __test = {
+    // Pure helper mirroring sort behavior; returns combined rows after sort.
+    sortByColumn(rows: string[][], index: number, ascending: boolean, treatHeader: boolean, hiddenRows: number): string[][] {
+      // Trim trailing empty rows like runtime before sorting
+      const isEmpty = (r: string[] | undefined) => {
+        if (!r || r.length === 0) return true;
+        for (let i = 0; i < r.length; i++) { if ((r[i] ?? '') !== '') return false; }
+        return true;
+      };
+      let end = rows.length;
+      while (end > 0 && isEmpty(rows[end - 1])) { end--; }
+      const trimmed = rows.slice(0, end);
+
+      const offset = Math.min(Math.max(0, hiddenRows), trimmed.length);
+      let header: string[] = [];
+      let body:   string[][] = [];
+      if (treatHeader && offset < trimmed.length) {
+        header = trimmed[offset];
+        body   = trimmed.slice(offset + 1);
+      } else {
+        body   = trimmed.slice(offset);
+      }
+      const isDateStr = (v: string) => {
+        const s = (v ?? '').trim();
+        if (!s) return false;
+        const isoDate = /^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+        const isoSlash = /^\d{4}\/\d{2}\/\d{2}$/;
+        return isoDate.test(s) || isoSlash.test(s);
+      };
+      const cmp = (a: string, b: string) => {
+        const sa = (a ?? '').trim();
+        const sb = (b ?? '').trim();
+        const aEmpty = sa === '';
+        const bEmpty = sb === '';
+        if (aEmpty && bEmpty) return 0;
+        if (aEmpty) return 1; // empty sorts last
+        if (bEmpty) return -1;
+        if (isDateStr(sa) && isDateStr(sb)) {
+          const da = Date.parse(sa);
+          const db = Date.parse(sb);
+          if (!isNaN(da) && !isNaN(db)) return da - db;
+        }
+        const na = parseFloat(sa), nb = parseFloat(sb);
+        if (!isNaN(na) && !isNaN(nb)) return na - nb;
+        return sa.localeCompare(sb, undefined, { sensitivity: 'base' });
+      };
+      body.sort((r1, r2) => {
+        const diff = cmp(r1[index] ?? '', r2[index] ?? '');
+        return ascending ? diff : -diff;
+      });
+      const prefix = trimmed.slice(0, offset);
+
+      // Apply same sanitation used before unparse in runtime path
+      const combined = (treatHeader ? [...prefix, header, ...body] : [...prefix, ...body]).map(r => r.map((v: any) => {
+        if (v === undefined || v === null) return '';
+        const t = typeof v;
+        if (t === 'number') return Number.isNaN(v) ? '' : String(v);
+        const s = String(v);
+        return s.toLowerCase() === 'nan' ? '' : s;
+      }));
+      return combined;
+    },
     computeColumnWidths(data: string[][]): number[] {
       const c: any = new (CsvEditorController as any)({} as any);
       return c.computeColumnWidths(data);
+    },
+    mutateDataForEdit(data: string[][], row: number, col: number, value: string): { data: string[][]; trimmed: boolean; createdRow: boolean; createdCol: boolean } {
+      const c: any = new (CsvEditorController as any)({} as any);
+      return c.mutateDataForEdit(data, row, col, value);
     },
     isDate(v: string): boolean {
       const c: any = new (CsvEditorController as any)({} as any);
@@ -1104,6 +1212,13 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       } catch {
         return { chunkCount: 0, hasTable: false };
       }
+    },
+    generateTableAndChunksRaw(data: string[][], treatHeader: boolean, addSerialIndex: boolean, hiddenRows: number): { tableHtml: string; chunks: string[] } {
+      const c: any = new (CsvEditorController as any)({} as any);
+      const result = c.generateTableAndChunks(data, treatHeader, addSerialIndex, hiddenRows);
+      let chunks: string[] = [];
+      try { chunks = JSON.parse(result.chunksJson); } catch {}
+      return { tableHtml: result.tableHtml, chunks };
     }
   };
 }
