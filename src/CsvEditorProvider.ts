@@ -440,7 +440,7 @@ class CsvEditorController {
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
     const data = result.data as string[][];
-    const numColumns = Math.max(...data.map(r => r.length), 0);
+    const numColumns = data.reduce((max, r) => Math.max(max, r.length), 0);
     const newRow = Array(numColumns).fill('');
     if (index > data.length) {
       while (data.length < index) data.push(Array(numColumns).fill(''));
@@ -466,7 +466,7 @@ class CsvEditorController {
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
     const data = result.data as string[][];
-    const numColumns = Math.max(...data.map(r => r.length), 0);
+    const numColumns = data.reduce((max, r) => Math.max(max, r.length), 0);
     for (let k = 0; k < count; k++) {
       const newRow = Array(numColumns).fill('');
       if (index > data.length) {
@@ -603,7 +603,7 @@ class CsvEditorController {
       bodyData = data.slice(offset);
     }
     const visibleForWidth = headerFlag ? [headerRow, ...bodyData] : bodyData;
-    let numColumns = Math.max(...visibleForWidth.map(row => row.length), 0);
+    let numColumns = visibleForWidth.reduce((max, row) => Math.max(max, row.length), 0);
     if (numColumns === 0) numColumns = 1; // ensure at least 1 column for the virtual row
 
     const columnData = Array.from({ length: numColumns }, (_, i) => bodyData.map(row => row[i] || ''));
@@ -856,7 +856,7 @@ class CsvEditorController {
   // ───────────── Utilities ─────────────
 
   private computeColumnWidths(data: string[][]): number[] {
-    const numColumns = Math.max(...data.map(row => row.length), 0);
+    const numColumns = data.reduce((max, row) => Math.max(max, row.length), 0);
     const widths = Array(numColumns).fill(0);
     for (const row of data) {
       for (let i = 0; i < numColumns; i++){
