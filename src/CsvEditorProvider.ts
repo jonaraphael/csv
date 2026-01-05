@@ -743,11 +743,7 @@ class CsvEditorController {
       return true; // with only one row visible, lean toward header
     }
 
-    const numColumns = Math.max(
-      headerRow.length,
-      ...body.map(r => r.length),
-      0
-    );
+    const numColumns = body.reduce((max, r) => Math.max(max, r.length), Math.max(headerRow.length, 0));
     const bodyColData = Array.from({ length: numColumns }, (_, i) => body.map(r => r[i] || ''));
     const bodyTypes = bodyColData.map(col => this.estimateColumnDataType(col));
     const headerTypes = Array.from({ length: numColumns }, (_, i) => this.estimateColumnDataType([headerRow[i] || '']));
