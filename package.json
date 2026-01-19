@@ -23,7 +23,8 @@
     "onCommand:csv.changeSeparator",
     "onCommand:csv.changeFontFamily",
     "onCommand:csv.changeIgnoreRows",
-    "onCommand:csv.changeEncoding"
+    "onCommand:csv.changeEncoding",
+    "onCommand:csv.toggleClickableLinks"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -48,7 +49,8 @@
       { "command": "csv.changeSeparator",   "title": "CSV: Change CSV Separator" },
       { "command": "csv.changeFontFamily",  "title": "CSV: Change Font Family" },
       { "command": "csv.changeIgnoreRows",  "title": "CSV: Hide First N Rows" },
-      { "command": "csv.changeEncoding",    "title": "CSV: Change File Encoding" }
+      { "command": "csv.changeEncoding",    "title": "CSV: Change File Encoding" },
+      { "command": "csv.toggleClickableLinks", "title": "CSV: Toggle Clickable Links" }
     ],
     "configuration": {
       "type": "object",
@@ -69,6 +71,11 @@
           "type": "number",
           "default": 4,
           "description": "Vertical padding in pixels for table cells."
+        },
+        "csv.clickableLinks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Make URLs in cells clickable. Ctrl/Cmd+click to open links."
         }
       }
     },

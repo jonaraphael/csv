@@ -16,6 +16,9 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('csv.toggleExtension', () =>
       toggleBooleanConfig('enabled', true, 'CSV extension')
     ),
+    vscode.commands.registerCommand('csv.toggleClickableLinks', () =>
+      toggleBooleanConfig('clickableLinks', true, 'CSV clickable links')
+    ),
     vscode.commands.registerCommand('csv.toggleHeader', async () => {
       const active = CsvEditorProvider.getActiveProvider();
       if (!active) { vscode.window.showInformationMessage('Open a CSV/TSV file in the CSV editor.'); return; }
