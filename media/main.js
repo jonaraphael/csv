@@ -1436,12 +1436,50 @@ document.addEventListener('keydown', e => {
     return;
   }
 
+  if (!editingCell && e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    const refCell = anchorCell || getCellTarget(document.activeElement) || currentSelection[0] || document.querySelector('td.selected, th.selected');
+    if (!refCell) return;
+    const coords = getCellCoords(refCell);
+    if (!coords || !Number.isInteger(coords.row) || !Number.isInteger(coords.col) || coords.col < 0) {
+      return;
+    }
+    const bounds = getDataColumnBounds();
+    if (!bounds) return;
+    const { minCol, maxCol } = bounds;
+    const firstDataRow = getFirstDataRow();
+    const isBackward = !!e.shiftKey;
+    let targetRow = coords.row;
+    let targetCol = coords.col + (isBackward ? -1 : 1);
+    if (!isBackward && targetCol > maxCol) {
+      targetRow += 1;
+      targetCol = minCol;
+    } else if (isBackward && targetCol < minCol) {
+      if (targetRow <= firstDataRow) {
+        return;
+      }
+      targetRow -= 1;
+      targetCol = maxCol;
+    }
+    const nextCell = ensureRenderedCellByCoords(targetRow, targetCol);
+    if (nextCell) {
+      setSingleSelection(nextCell);
+    }
+    return;
+  }
+
   /* ──────── NEW: ENTER + DIRECT TYPING HANDLERS ──────── */
   if (!editingCell && anchorCell && currentSelection.length === 1) {
     if (e.key === 'Enter') {
       e.preventDefault();
+      const cell = anchorCell;
       // Detail edit via Enter
-      editCell(anchorCell, undefined, 'detail');
+      editCell(cell, undefined, 'detail');
+      if (e.shiftKey) {
+        // Shift+Enter from selection should open detail edit and insert
+        // a newline immediately on the very first keypress.
+        appendVisibleNewlineAtEnd(cell);
+      }
       return;
     }
     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -1560,31 +1598,57 @@ document.addEventListener('keydown', e => {
   }
   if (editingCell && e.key === 'Enter') {
     e.preventDefault();
+    if (e.shiftKey) {
+      if (!insertNewlineAtCaret(editingCell)) {
+        appendVisibleNewlineAtEnd(editingCell);
+      }
+      return;
+    }
     const { row, col } = getCellCoords(editingCell);
     editingCell.blur();
     const targetRow = row + 1;
-    const nextCell = table.querySelector('td[data-row="'+targetRow+'\"][data-col="'+col+'"]');
+    // Editing Enter commits and moves selection down (no auto-edit).
+    const nextCell = ensureRenderedCellByCoords(targetRow, col);
     if (nextCell) {
-      editCell(nextCell);
+      setSingleSelection(nextCell);
     } else {
       try {
         const st = vscode.getState() || {};
-        vscode.setState({ ...st, anchorRow: targetRow, anchorCol: col, pendingEdit: 'detail' });
+        vscode.setState({ ...st, anchorRow: targetRow, anchorCol: col });
       } catch {}
     }
   }
   if (editingCell && e.key === 'Tab') {
     e.preventDefault();
-    const { row, col } = getCellCoords(editingCell);
-    editingCell.blur();
-    let nextCell;
-    if (e.shiftKey) {
-      nextCell = table.querySelector('td[data-row="'+row+'"][data-col="'+(col-1)+'"]');
-    } else {
-      nextCell = table.querySelector('td[data-row="'+row+'"][data-col="'+(col+1)+'"]');
+    const cell = editingCell;
+    const { row, col } = getCellCoords(cell);
+    const bounds = getDataColumnBounds();
+    const firstDataRow = getFirstDataRow();
+    const isBackward = !!e.shiftKey;
+    let targetRow = row;
+    let targetCol = col;
+    let canMove = !!bounds;
+    if (bounds) {
+      targetCol = col + (isBackward ? -1 : 1);
+      if (!isBackward && targetCol > bounds.maxCol) {
+        targetRow += 1;
+        targetCol = bounds.minCol;
+      } else if (isBackward && targetCol < bounds.minCol) {
+        if (targetRow <= firstDataRow) {
+          canMove = false;
+        } else {
+          targetRow -= 1;
+          targetCol = bounds.maxCol;
+        }
+      }
     }
+    cell.blur();
+    // Editing Tab commits and moves selection only (no auto-edit).
+    const nextCell = canMove ? ensureRenderedCellByCoords(targetRow, targetCol) : null;
     if (nextCell) {
-      editCell(nextCell);
+      setSingleSelection(nextCell);
+    } else {
+      setSingleSelection(cell);
     }
   }
   if (editingCell && e.key === 'Escape') {
@@ -1614,6 +1678,94 @@ const setCursorAtPoint = (cell, x, y) => {
   if(range){ let sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range); }
 };
 
+const getDataColumnBounds = () => {
+  const cols = Array.from(table.querySelectorAll('td[data-col], th[data-col]'))
+    .map(el => parseInt(el.getAttribute('data-col') || 'NaN', 10))
+    .filter(col => Number.isInteger(col) && col >= 0);
+  if (!cols.length) {
+    return null;
+  }
+  return { minCol: Math.min(...cols), maxCol: Math.max(...cols) };
+};
+
+const setSingleSelection = cell => {
+  if (!cell) return;
+  clearSelection();
+  cell.classList.add('selected');
+  currentSelection.push(cell);
+  anchorCell = cell;
+  rangeEndCell = cell;
+  persistState();
+  try { cell.focus({ preventScroll: true }); } catch { try { cell.focus(); } catch {} }
+  cell.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+};
+
+const NEWLINE_SENTINEL_ATTR = 'data-csv-newline-sentinel';
+const removeNewlineSentinels = cell => {
+  if (!cell) return;
+  cell.querySelectorAll(`[${NEWLINE_SENTINEL_ATTR}="true"]`).forEach(node => node.remove());
+};
+
+const placeCaretBeforeSentinel = sentinel => {
+  const sel = window.getSelection();
+  if (!sel) return;
+  const range = document.createRange();
+  if (sentinel.firstChild) {
+    range.setStart(sentinel.firstChild, 0);
+  } else {
+    range.setStartBefore(sentinel);
+  }
+  range.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(range);
+};
+
+const appendVisibleNewlineAtEnd = cell => {
+  removeNewlineSentinels(cell);
+  const sentinel = document.createElement('span');
+  sentinel.setAttribute(NEWLINE_SENTINEL_ATTR, 'true');
+  sentinel.textContent = '\u200B';
+  cell.appendChild(document.createTextNode('\n'));
+  cell.appendChild(sentinel);
+  placeCaretBeforeSentinel(sentinel);
+};
+
+const isRangeAtEndOfCell = (cell, range) => {
+  const probe = document.createRange();
+  probe.selectNodeContents(cell);
+  probe.setEnd(range.endContainer, range.endOffset);
+  const caretOffset = probe.toString().length;
+  return caretOffset >= (cell.textContent || '').length;
+};
+
+const insertNewlineAtCaret = cell => {
+  removeNewlineSentinels(cell);
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return false;
+  const range = sel.getRangeAt(0);
+  if (!cell.contains(range.commonAncestorContainer)) return false;
+  const atEnd = range.collapsed && isRangeAtEndOfCell(cell, range);
+  range.deleteContents();
+  if (atEnd) {
+    const sentinel = document.createElement('span');
+    sentinel.setAttribute(NEWLINE_SENTINEL_ATTR, 'true');
+    sentinel.textContent = '\u200B';
+    const fragment = document.createDocumentFragment();
+    fragment.appendChild(document.createTextNode('\n'));
+    fragment.appendChild(sentinel);
+    range.insertNode(fragment);
+    placeCaretBeforeSentinel(sentinel);
+    return true;
+  }
+  const newlineNode = document.createTextNode('\n');
+  range.insertNode(newlineNode);
+  range.setStartAfter(newlineNode);
+  range.setEndAfter(newlineNode);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  return true;
+};
+
 const editCell = (cell, event, mode = 'detail') => {
   if(editingCell === cell) return;
   if(editingCell) editingCell.blur();
@@ -1625,6 +1777,7 @@ const editCell = (cell, event, mode = 'detail') => {
   cell.setAttribute('contenteditable', 'true');
   cell.focus();
   const onBlurHandler = () => {
+    removeNewlineSentinels(cell);
     const value = cell.textContent;
     const coords = getCellCoords(cell);
     vscode.postMessage({ type: 'editCell', row: coords.row, col: coords.col, value: value });

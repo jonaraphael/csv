@@ -38,6 +38,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Column Sorting:** Right-click a header and choose A–Z or Z–A.
 - **Custom Font Selection:** Choose a font from a dropdown or inherit VS Code's default.
 - **Find & Replace Overlay:** Built-in find/replace bar with match options (case, whole-word, regex), keyboard navigation, and single/all replace actions across the full file (including chunked rows).
+- **Multiline Cell Display:** Cells with embedded newlines render as wrapped multi-line content (with preserved line breaks and matching row height).
 - **Clickable Links:** URLs in cells are automatically detected and displayed as clickable links. Ctrl/Cmd+click to open them in your browser.
 - **Preserved CSV Integrity:** All modifications respect CSV formatting—no unwanted extra characters or formatting issues.
 - **Optimized for Performance:** Designed for medium-sized datasets, ensuring a smooth editing experience without compromising on functionality.
@@ -123,6 +124,7 @@ Per-file (stored by the extension; set via commands):
 - Detail edit:
   - Start: press `Enter` on a selected cell or double‑click a cell.
   - Caret navigation: Arrow Left/Right move one character; Arrow Up moves caret to start; Arrow Down moves caret to end.
+  - New line in cell: `Shift + Enter` inserts a line break inside the current cell.
   - Exit/save: click outside the cell or move focus to commit changes.
 - Global:
   - Copy selection: `Ctrl/Cmd + C`

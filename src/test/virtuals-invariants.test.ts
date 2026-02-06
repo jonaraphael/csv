@@ -73,6 +73,21 @@ describe('Virtual row and cell invariants', () => {
     assert.ok(!disabled.tableHtml.includes('class="csv-link"'));
   });
 
+  it('renders multiline cell values with preserved line breaks and wrap styling', () => {
+    const rows = [['Hello\nWorld'], ['Another\nmulti-line\nvalue']];
+    const rendered = CsvEditorProvider.__test.generateTableAndChunksRaw(
+      rows,
+      /*treatHeader*/ false,
+      /*addSerialIndex*/ false,
+      /*hiddenRows*/ 0,
+      /*clickableLinks*/ true
+    );
+    assert.ok(rendered.tableHtml.includes('white-space: pre-wrap;'));
+    assert.ok(rendered.tableHtml.includes('overflow-wrap: anywhere;'));
+    assert.ok(rendered.tableHtml.includes('Hello\nWorld'));
+    assert.match(rendered.tableHtml, /title="Hello[\r\n]+World"/);
+  });
+
   it('supports opt-in theme foreground column colors', () => {
     const rows = [['alpha', 'beta']];
     const themed = CsvEditorProvider.__test.generateTableAndChunksRaw(

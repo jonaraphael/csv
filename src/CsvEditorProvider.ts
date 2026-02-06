@@ -1057,8 +1057,10 @@ class CsvEditorController {
           const displayIdx = i + localR + 1; // numbering relative to first visible data row
           let cells = '';
           for (let cIdx = 0; cIdx < numColumns; cIdx++) {
-            const safe = this.formatCellContent(row[cIdx] || '', clickableLinks);
-            cells += `<td tabindex="0" style="min-width:${Math.min(columnWidths[cIdx]||0,100)}ch;max-width:100ch;border:1px solid ${isDark?'#555':'#ccc'};color:${columnColors[cIdx]};overflow:hidden;white-space: pre;text-overflow:ellipsis;" data-row="${absRow}" data-col="${cIdx}">${safe}</td>`;
+            const rawValue = row[cIdx] || '';
+            const safe = this.formatCellContent(rawValue, clickableLinks);
+            const titleAttr = this.getMultilineCellTitleAttr(rawValue);
+            cells += `<td tabindex="0" style="min-width:${Math.min(columnWidths[cIdx]||0,100)}ch;max-width:100ch;border:1px solid ${isDark?'#555':'#ccc'};color:${columnColors[cIdx]};overflow:visible;white-space: pre-wrap;overflow-wrap:anywhere;"${titleAttr} data-row="${absRow}" data-col="${cIdx}">${safe}</td>`;
           }
 
           return `<tr>${
@@ -1094,7 +1096,7 @@ class CsvEditorController {
       }`;
       for (let i = 0; i < numColumns; i++) {
         const safe = this.formatCellContent(headerRow[i] || '', clickableLinks);
-        tableHtml += `<th tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: ${columnColors[i]}; overflow: hidden; white-space: pre; text-overflow: ellipsis;" data-row="${offset}" data-col="${i}">${safe}</th>`;
+        tableHtml += `<th tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${offset}" data-col="${i}">${safe}</th>`;
       }
       tableHtml += `</tr></thead><tbody>`;
       bodyData.forEach((row, r) => {
@@ -1104,15 +1106,17 @@ class CsvEditorController {
             : ''
         }`;
         for (let i = 0; i < numColumns; i++) {
-          const safe = this.formatCellContent(row[i] || '', clickableLinks);
-          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: pre; text-overflow: ellipsis;" data-row="${offset + 1 + r}" data-col="${i}">${safe}</td>`;
+          const rawValue = row[i] || '';
+          const safe = this.formatCellContent(rawValue, clickableLinks);
+          const titleAttr = this.getMultilineCellTitleAttr(rawValue);
+          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;"${titleAttr} data-row="${offset + 1 + r}" data-col="${i}">${safe}</td>`;
         }
         tableHtml += `</tr>`;
       });
       if (!chunked) {
         const virtualAbs = offset + 1 + bodyData.length;
         const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${bodyData.length + 1}</td>` : '';
-        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: pre; text-overflow: ellipsis;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
         tableHtml += `<tr>${idxCell}${dataCells}</tr>`;
       }
       tableHtml += `</tbody>`;
@@ -1127,8 +1131,10 @@ class CsvEditorController {
             : ''
         }`;
         for (let i = 0; i < numColumns; i++) {
-          const safe = this.formatCellContent(row[i] || '', clickableLinks);
-          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: pre; text-overflow: ellipsis;" data-row="${offset + r}" data-col="${i}">${safe}</td>`;
+          const rawValue = row[i] || '';
+          const safe = this.formatCellContent(rawValue, clickableLinks);
+          const titleAttr = this.getMultilineCellTitleAttr(rawValue);
+          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;"${titleAttr} data-row="${offset + r}" data-col="${i}">${safe}</td>`;
         }
         tableHtml += `</tr>`;
       });
@@ -1136,7 +1142,7 @@ class CsvEditorController {
         const virtualAbs = offset + nonHeaderRows.length;
         const displayIdx = nonHeaderRows.length + 1;
         const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
-        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: pre; text-overflow: ellipsis;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
         tableHtml += `<tr>${idxCell}${dataCells}</tr>`;
       }
       tableHtml += `</tbody>`;
@@ -1148,7 +1154,7 @@ class CsvEditorController {
       const virtualAbs = startAbs + allRowsCount;
       const displayIdx = allRowsCount + 1;
       const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
-      const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: pre; text-overflow: ellipsis;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+      const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
       const vrow = `<tr>${idxCell}${dataCells}</tr>`;
       chunks.push(vrow);
     }
@@ -1216,10 +1222,11 @@ class CsvEditorController {
       body { font-family: ${this.escapeCss(fontFamily)}; margin: 0; padding: 0; user-select: none; }
       .table-container { overflow: auto; height: 100vh; }
       table { border-collapse: collapse; width: max-content; }
-      th, td { padding: ${cellPadding}px 8px; border: 1px solid ${isDark ? '#555' : '#ccc'}; overflow: hidden; white-space: pre; text-overflow: ellipsis; }
-      th { position: sticky; top: 0; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; }
+      th, td { padding: ${cellPadding}px 8px; border: 1px solid ${isDark ? '#555' : '#ccc'}; }
+      th { position: sticky; top: 0; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+      td { overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
       td.selected, th.selected { background-color: ${isDark ? '#333333' : '#cce0ff'} !important; }
-      td.editing, th.editing { overflow: visible !important; white-space: normal !important; max-width: none !important; }
+      td.editing, th.editing { overflow: visible !important; white-space: pre-wrap !important; overflow-wrap: anywhere !important; max-width: none !important; }
       .highlight { background-color: ${isDark ? '#2a2a2a' : '#fefefe'} !important; }
       .active-match { background-color: ${isDark ? '#444444' : '#ffffcc'} !important; }
       .csv-link { color: ${isDark ? '#6cb6ff' : '#0066cc'}; text-decoration: underline; cursor: pointer; }
@@ -1569,6 +1576,13 @@ class CsvEditorController {
   private formatCellContent(text: string, linkify: boolean): string {
     const escaped = this.escapeHtml(text);
     return linkify ? this.linkifyUrls(escaped) : escaped;
+  }
+
+  private getMultilineCellTitleAttr(text: string): string {
+    if (!text || (text.indexOf('\n') === -1 && text.indexOf('\r') === -1)) {
+      return '';
+    }
+    return ` title="${this.escapeHtml(text)}"`;
   }
 
   private escapeCss(text: string): string {
