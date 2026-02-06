@@ -41,7 +41,9 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
       const active = CsvEditorProvider.getActiveProvider();
       if (!active) { vscode.window.showInformationMessage('Open a CSV/TSV file in the CSV editor.'); return; }
       const uri = active.getDocumentUri();
-      const currentSep = CsvEditorProvider.getSeparatorForUri(context, uri) ?? (uri.fsPath.toLowerCase().endsWith('.tsv') ? '\\t' : ',');
+      const uriPath = uri.fsPath.toLowerCase();
+      const defaultSep = (uriPath.endsWith('.tsv') || uriPath.endsWith('.tab')) ? '\\t' : ',';
+      const currentSep = CsvEditorProvider.getSeparatorForUri(context, uri) ?? defaultSep;
       const input = await vscode.window.showInputBox({ prompt: 'Enter new CSV separator (empty to inherit from file)', value: currentSep });
       if (input !== undefined) {
         const sep = input;

@@ -1087,7 +1087,8 @@ class CsvEditorController {
     const stored = CsvEditorProvider.getSeparatorForUri(this.context, this.document.uri);
     if (stored && stored.length) return stored;
     // Default inherited from file
-    return this.document?.uri.fsPath.toLowerCase().endsWith('.tsv') ? '\t' : ',';
+    const fsPath = this.document?.uri.fsPath.toLowerCase() || '';
+    return (fsPath.endsWith('.tsv') || fsPath.endsWith('.tab')) ? '\t' : ',';
   }
 
   private getHiddenRows(): number {

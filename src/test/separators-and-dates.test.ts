@@ -23,9 +23,12 @@ describe('Separators and date edge cases', () => {
     assert.strictEqual(eff('/tmp/sample.csv', undefined), ',');
     // Default TSV -> '\t'
     assert.strictEqual(eff('/tmp/sample.tsv', undefined), '\t');
+    // Default TAB -> '\t'
+    assert.strictEqual(eff('/tmp/sample.tab', undefined), '\t');
     // Override wins regardless of extension
     assert.strictEqual(eff('/tmp/sample.csv', ';'), ';');
     assert.strictEqual(eff('/tmp/sample.tsv', ';'), ';');
+    assert.strictEqual(eff('/tmp/sample.tab', ';'), ';');
   });
 
   it('isDate handles offsets, time components, and rejects bogus values', () => {
@@ -43,4 +46,3 @@ describe('Separators and date edge cases', () => {
     assert.strictEqual(isDate('42'), false);
   });
 });
-

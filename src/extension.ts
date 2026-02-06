@@ -32,9 +32,9 @@ export function activate(context: vscode.ExtensionContext) {
             if (viewType === CsvEditorProvider.viewType) return; // already our editor
             if (!uri) return;
             const fsPath = uri.fsPath?.toLowerCase?.() || '';
-            const isCsv = fsPath.endsWith('.csv') || fsPath.endsWith('.tsv');
-            console.log(`[CSV(enable)]: -> eligible=${isCsv}`);
-            if (!isCsv) return;
+            const isCsvLike = fsPath.endsWith('.csv') || fsPath.endsWith('.tsv') || fsPath.endsWith('.tab');
+            console.log(`[CSV(enable)]: -> eligible=${isCsvLike}`);
+            if (!isCsvLike) return;
             candidates.push({ group, groupIndex: gi, tab, tabIndex: ti, uri, wasActive: tab.isActive, wasPreview: tab.isPreview, viewColumn: group.viewColumn });
           });
         });

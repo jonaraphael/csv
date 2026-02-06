@@ -47,11 +47,14 @@
       {
         "id": "tsv",
         "extensions": [
-          ".tsv"
+          ".tsv",
+          ".tab"
         ],
         "aliases": [
           "TSV",
-          "tsv"
+          "tsv",
+          "TAB",
+          "tab"
         ],
         "configuration": "./language-configuration.json"
       }
@@ -133,6 +136,9 @@
           },
           {
             "filenamePattern": "*.tsv"
+          },
+          {
+            "filenamePattern": "*.tab"
           }
         ]
       }
