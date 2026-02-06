@@ -32,7 +32,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (viewType === CsvEditorProvider.viewType) return; // already our editor
             if (!uri) return;
             const fsPath = uri.fsPath?.toLowerCase?.() || '';
-            const isCsvLike = fsPath.endsWith('.csv') || fsPath.endsWith('.tsv') || fsPath.endsWith('.tab');
+            const isCsvLike = fsPath.endsWith('.csv') || fsPath.endsWith('.tsv') || fsPath.endsWith('.tab') || fsPath.endsWith('.psv');
             console.log(`[CSV(enable)]: -> eligible=${isCsvLike}`);
             if (!isCsvLike) return;
             candidates.push({ group, groupIndex: gi, tab, tabIndex: ti, uri, wasActive: tab.isActive, wasPreview: tab.isPreview, viewColumn: group.viewColumn });
@@ -86,7 +86,16 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
 
-    const keys = ['csv.fontFamily', 'csv.cellPadding', 'csv.columnColorMode', 'csv.columnColorPalette', 'csv.clickableLinks'];
+    const keys = [
+      'csv.fontFamily',
+      'csv.cellPadding',
+      'csv.columnColorMode',
+      'csv.columnColorPalette',
+      'csv.clickableLinks',
+      'csv.separatorMode',
+      'csv.defaultSeparator',
+      'csv.separatorByExtension'
+    ];
     const changed = keys.filter(k => e.affectsConfiguration(k));
     if (changed.length) {
       CsvEditorProvider.editors.forEach(ed => ed.refresh());

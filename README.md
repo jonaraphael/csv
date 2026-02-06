@@ -42,7 +42,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Preserved CSV Integrity:** All modifications respect CSV formatting—no unwanted extra characters or formatting issues.
 - **Optimized for Performance:** Designed for medium-sized datasets, ensuring a smooth editing experience without compromising on functionality.
 - **Large File Support:** Loads big CSVs in chunks so even large datasets open quickly.
-- **TSV/TAB Support:** `.tsv` and `.tab` files are recognized automatically and use tabs as the default separator.
+- **CSV/TSV/TAB/PSV Support:** `.csv`, `.tsv`, `.tab`, and `.psv` files are recognized automatically. Defaults: comma for CSV, tab for TSV/TAB, pipe for PSV.
 
 ---
 
@@ -59,9 +59,9 @@ Cursor (built on VS Code 1.99) and the latest VS Code releases (1.102).
 - Go to the Extensions view (`Ctrl+Shift+X` or `Cmd+Shift+X` on macOS).
 - Search for **CSV** and click **Install**.
 
-### 2. Open a CSV, TSV, or TAB File
+### 2. Open a CSV, TSV, TAB, or PSV File
 
-- Open any `.csv`, `.tsv`, or `.tab` file in VS Code.
+- Open any `.csv`, `.tsv`, `.tab`, or `.psv` file in VS Code.
 - The file will automatically load, presenting your data in an interactive grid view.
 
 ### 3. Edit and Navigate
@@ -83,6 +83,7 @@ Open the Command Palette and search for:
 - `CSV: Toggle First Row as Header` (`csv.toggleHeader`)
 - `CSV: Toggle Serial Index Column` (`csv.toggleSerialIndex`)
 - `CSV: Change CSV Separator` (`csv.changeSeparator`)
+- `CSV: Reset CSV Separator (Inherit)` (`csv.resetSeparator`)
 - `CSV: Change Font Family` (`csv.changeFontFamily`)
 - `CSV: Hide First N Rows` (`csv.changeIgnoreRows`)
 - `CSV: Change File Encoding` (`csv.changeEncoding`)
@@ -99,6 +100,9 @@ Global (Settings UI or `settings.json`):
 - `csv.columnColorMode` (string, default `type`): `type` keeps CSV’s type-based column colors; `theme` uses your theme foreground color for all columns.
 - `csv.columnColorPalette` (string, default `default`): Type-color palette when `csv.columnColorMode` is `type`. `cool` biases colors toward greens/blues; `warm` biases colors toward oranges/reds.
 - `csv.clickableLinks` (boolean, default `true`): Make URLs in cells clickable. Ctrl/Cmd+click to open links.
+- `csv.separatorMode` (string, default `extension`): Separator selection mode when no per-file override exists. `extension` uses extension mapping, `auto` detects from content first, `default` always uses `csv.defaultSeparator`.
+- `csv.defaultSeparator` (string, default `,`): Fallback separator. Use `\\t` in `settings.json` for tabs.
+- `csv.separatorByExtension` (object): Extension-to-separator mapping (defaults include `.csv`→`,`, `.tsv`/`.tab`→tab, `.psv`→`|`).
 - `csv.maxFileSizeMB` (number, default `10`): Soft limit for opening files in CSV view. If exceeded, CSV prompts: `Cancel`, `Continue This Time`, or `Ignore Forever` (sets this setting to `0`).
 - Per-file encoding: use `CSV: Change File Encoding` to set a file's encoding (e.g., `utf8`, `utf16le`, `windows1250`, `gbk`). The extension will reopen the file using the chosen encoding.
 
@@ -106,7 +110,7 @@ Per-file (stored by the extension; set via commands):
 
 - First row as header (default `true`) — `CSV: Toggle First Row as Header`
 - Serial index column (default `true`) — `CSV: Toggle Serial Index Column`
-- CSV separator (default inherit: `.tsv`/`.tab` → tab, otherwise comma) — `CSV: Change CSV Separator`
+- CSV separator override — `CSV: Change CSV Separator` (or clear it with `CSV: Reset CSV Separator (Inherit)`)
 - Hide first N rows (default `0`) — `CSV: Hide First N Rows`
 
 ---

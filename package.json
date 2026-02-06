@@ -25,6 +25,7 @@
     "onCommand:csv.toggleHeader",
     "onCommand:csv.toggleSerialIndex",
     "onCommand:csv.changeSeparator",
+    "onCommand:csv.resetSeparator",
     "onCommand:csv.changeFontFamily",
     "onCommand:csv.changeIgnoreRows",
     "onCommand:csv.changeEncoding",
@@ -36,11 +37,14 @@
       {
         "id": "csv",
         "extensions": [
-          ".csv"
+          ".csv",
+          ".psv"
         ],
         "aliases": [
           "CSV",
-          "csv"
+          "csv",
+          "PSV",
+          "psv"
         ],
         "configuration": "./language-configuration.json"
       },
@@ -75,6 +79,10 @@
       {
         "command": "csv.changeSeparator",
         "title": "CSV: Change CSV Separator"
+      },
+      {
+        "command": "csv.resetSeparator",
+        "title": "CSV: Reset CSV Separator (Inherit)"
       },
       {
         "command": "csv.changeFontFamily",
@@ -137,6 +145,34 @@
           "default": true,
           "description": "Make URLs in cells clickable. Ctrl/Cmd+click to open links."
         },
+        "csv.separatorMode": {
+          "type": "string",
+          "enum": [
+            "extension",
+            "auto",
+            "default"
+          ],
+          "default": "extension",
+          "description": "How CSV chooses the separator when no per-file override exists. 'extension' uses extension mapping, 'auto' attempts detection from file content first, and 'default' always uses csv.defaultSeparator."
+        },
+        "csv.defaultSeparator": {
+          "type": "string",
+          "default": ",",
+          "description": "Fallback separator used by separator modes. Use '\\t' for tab in settings JSON."
+        },
+        "csv.separatorByExtension": {
+          "type": "object",
+          "default": {
+            ".csv": ",",
+            ".tsv": "\t",
+            ".tab": "\t",
+            ".psv": "|"
+          },
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Separator mapping by file extension. Keys may be '.ext' or 'ext'. Values are separator strings."
+        },
         "csv.maxFileSizeMB": {
           "type": "number",
           "default": 10,
@@ -158,6 +194,9 @@
           },
           {
             "filenamePattern": "*.tab"
+          },
+          {
+            "filenamePattern": "*.psv"
           }
         ]
       }

@@ -2,6 +2,13 @@ import Papa from 'papaparse';
 import * as vscode from 'vscode';
 import * as path from 'path';
 
+type SeparatorMode = 'extension' | 'auto' | 'default';
+type SeparatorSettings = {
+  mode: SeparatorMode;
+  defaultSeparator: string;
+  byExtension: Record<string, string>;
+};
+
 // Per-document controller. Manages one webview + document.
 class CsvEditorController {
   // Note: Global registry lives on CsvEditorProvider (wrapper)
@@ -15,6 +22,7 @@ class CsvEditorController {
   private isSaving = false;
   private currentWebviewPanel: vscode.WebviewPanel | undefined;
   private document!: vscode.TextDocument;
+  private separatorCache: { version: number; configKey: string; separator: string } | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -259,6 +267,10 @@ class CsvEditorController {
 
   public getDocumentUri(): vscode.Uri {
     return this.document.uri;
+  }
+
+  public getCurrentSeparator(): string {
+    return this.getSeparator();
   }
 
   // ───────────── Document Editing Methods ─────────────
@@ -1415,9 +1427,23 @@ class CsvEditorController {
   private getSeparator(): string {
     const stored = CsvEditorProvider.getSeparatorForUri(this.context, this.document.uri);
     if (stored && stored.length) return stored;
-    // Default inherited from file
-    const fsPath = this.document?.uri.fsPath.toLowerCase() || '';
-    return (fsPath.endsWith('.tsv') || fsPath.endsWith('.tab')) ? '\t' : ',';
+
+    const settings = CsvEditorProvider.getSeparatorSettings(this.document.uri);
+    const configKey = CsvEditorProvider.serializeSeparatorSettings(settings);
+    const version = this.document.version;
+    if (
+      this.separatorCache &&
+      this.separatorCache.version === version &&
+      this.separatorCache.configKey === configKey
+    ) {
+      return this.separatorCache.separator;
+    }
+
+    const filePath = this.document?.uri.fsPath || this.document?.uri.path || '';
+    const text = this.document.getText();
+    const separator = CsvEditorProvider.resolveInheritedSeparator(filePath, text, settings);
+    this.separatorCache = { version, configKey, separator };
+    return separator;
   }
 
   private getHiddenRows(): number {
@@ -1632,6 +1658,185 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   public static readonly headerKey     = 'csv.headerByUri';
   public static readonly serialKey     = 'csv.serialIndexByUri';
   public static readonly sepKey        = 'csv.separatorByUri';
+  private static readonly DEFAULT_SEPARATOR = ',';
+  private static readonly DEFAULT_SEPARATOR_MODE: SeparatorMode = 'extension';
+  private static readonly BUILTIN_SEPARATORS_BY_EXTENSION: Record<string, string> = {
+    '.csv': ',',
+    '.tsv': '\t',
+    '.tab': '\t',
+    '.psv': '|'
+  };
+  private static readonly AUTO_SEPARATOR_CANDIDATES = [',', ';', '\t', '|'];
+
+  private static normalizeExtension(rawExt: string): string {
+    const trimmed = (rawExt ?? '').trim().toLowerCase();
+    if (!trimmed) return '';
+    return trimmed.startsWith('.') ? trimmed : `.${trimmed}`;
+  }
+
+  private static normalizeSeparator(rawSep: unknown): string | undefined {
+    if (typeof rawSep !== 'string') return undefined;
+    if (rawSep.length === 0) return undefined;
+    if (rawSep === '\\t') return '\t';
+    return rawSep;
+  }
+
+  public static getSeparatorSettings(uri: vscode.Uri): SeparatorSettings {
+    const fallback: SeparatorSettings = {
+      mode: CsvEditorProvider.DEFAULT_SEPARATOR_MODE,
+      defaultSeparator: CsvEditorProvider.DEFAULT_SEPARATOR,
+      byExtension: { ...CsvEditorProvider.BUILTIN_SEPARATORS_BY_EXTENSION }
+    };
+
+    const workspaceAny = (vscode as any).workspace;
+    if (!workspaceAny || typeof workspaceAny.getConfiguration !== 'function') {
+      return fallback;
+    }
+
+    const cfg = workspaceAny.getConfiguration('csv', uri) as vscode.WorkspaceConfiguration;
+    const rawMode = cfg.get<string>('separatorMode', CsvEditorProvider.DEFAULT_SEPARATOR_MODE);
+    const mode: SeparatorMode =
+      rawMode === 'auto' || rawMode === 'default' || rawMode === 'extension'
+        ? rawMode
+        : CsvEditorProvider.DEFAULT_SEPARATOR_MODE;
+
+    const defaultSeparator =
+      CsvEditorProvider.normalizeSeparator(cfg.get<string>('defaultSeparator', CsvEditorProvider.DEFAULT_SEPARATOR)) ??
+      CsvEditorProvider.DEFAULT_SEPARATOR;
+
+    const byExtension: Record<string, string> = {
+      ...CsvEditorProvider.BUILTIN_SEPARATORS_BY_EXTENSION
+    };
+    const rawMap = cfg.get<Record<string, unknown>>('separatorByExtension', {});
+    if (rawMap && typeof rawMap === 'object') {
+      for (const [rawExt, rawSep] of Object.entries(rawMap)) {
+        const ext = CsvEditorProvider.normalizeExtension(rawExt);
+        const sep = CsvEditorProvider.normalizeSeparator(rawSep);
+        if (!ext || !sep) continue;
+        byExtension[ext] = sep;
+      }
+    }
+
+    return { mode, defaultSeparator, byExtension };
+  }
+
+  public static serializeSeparatorSettings(settings: SeparatorSettings): string {
+    const sortedMapEntries = Object.entries(settings.byExtension)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([ext, sep]) => `${ext}:${sep}`)
+      .join('|');
+    return `${settings.mode}::${settings.defaultSeparator}::${sortedMapEntries}`;
+  }
+
+  private static resolveSeparatorFromExtension(filePath: string, settings: SeparatorSettings): string {
+    const ext = CsvEditorProvider.normalizeExtension(path.extname((filePath ?? '').toLowerCase()));
+    if (!ext) return settings.defaultSeparator;
+    return settings.byExtension[ext] ?? settings.defaultSeparator;
+  }
+
+  private static countDelimiterOutsideQuotes(line: string, delimiter: string): number {
+    if (!delimiter) return 0;
+    let inQuotes = false;
+    let count = 0;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          i++;
+          continue;
+        }
+        inQuotes = !inQuotes;
+        continue;
+      }
+      if (!inQuotes && line.startsWith(delimiter, i)) {
+        count++;
+        i += delimiter.length - 1;
+      }
+    }
+    return count;
+  }
+
+  private static detectSeparatorFromText(text: string, candidates: string[]): string | undefined {
+    if (!text) return undefined;
+    const sampleText = text.length > 300000 ? text.slice(0, 300000) : text;
+    const allLines = sampleText.split(/\r\n|\n|\r/);
+    const lines: string[] = [];
+    for (const line of allLines) {
+      if (line.trim().length === 0) continue;
+      lines.push(line);
+      if (lines.length >= 200) break;
+    }
+    if (lines.length === 0) return undefined;
+
+    const minRowsWithDelimiter = lines.length === 1 ? 1 : 2;
+    let best:
+      | {
+          separator: string;
+          rowsWithDelimiter: number;
+          consistency: number;
+          avgDelimiterCount: number;
+          score: number;
+        }
+      | undefined;
+
+    for (const separator of candidates) {
+      if (!separator) continue;
+      const counts = lines.map(line => CsvEditorProvider.countDelimiterOutsideQuotes(line, separator));
+      const withDelimiter = counts.filter(count => count > 0);
+      if (withDelimiter.length < minRowsWithDelimiter) continue;
+
+      const frequencies = new Map<number, number>();
+      for (const count of withDelimiter) {
+        frequencies.set(count, (frequencies.get(count) ?? 0) + 1);
+      }
+      let modeRowCount = 0;
+      for (const freq of frequencies.values()) {
+        if (freq > modeRowCount) modeRowCount = freq;
+      }
+
+      const consistency = withDelimiter.length > 0 ? modeRowCount / withDelimiter.length : 0;
+      const avgDelimiterCount = withDelimiter.reduce((sum, count) => sum + count, 0) / withDelimiter.length;
+      const firstLineBonus = (counts[0] ?? 0) > 0 ? 25 : -25;
+      const score = withDelimiter.length * 10 + consistency * 100 + avgDelimiterCount + firstLineBonus;
+      const candidate = { separator, rowsWithDelimiter: withDelimiter.length, consistency, avgDelimiterCount, score };
+
+      if (!best) {
+        best = candidate;
+        continue;
+      }
+      if (candidate.score > best.score) {
+        best = candidate;
+        continue;
+      }
+      if (candidate.score === best.score && candidate.rowsWithDelimiter > best.rowsWithDelimiter) {
+        best = candidate;
+      }
+    }
+
+    return best?.separator;
+  }
+
+  public static resolveInheritedSeparator(filePath: string, text: string, settings: SeparatorSettings): string {
+    const extensionSeparator = CsvEditorProvider.resolveSeparatorFromExtension(filePath, settings);
+    if (settings.mode === 'default') {
+      return settings.defaultSeparator;
+    }
+    if (settings.mode === 'auto') {
+      const candidates: string[] = [];
+      const seen = new Set<string>();
+      const push = (value: string | undefined) => {
+        if (!value || seen.has(value)) return;
+        seen.add(value);
+        candidates.push(value);
+      };
+      push(extensionSeparator);
+      push(settings.defaultSeparator);
+      CsvEditorProvider.AUTO_SEPARATOR_CANDIDATES.forEach(push);
+      Object.values(settings.byExtension).forEach(push);
+      return CsvEditorProvider.detectSeparatorFromText(text, candidates) ?? extensionSeparator;
+    }
+    return extensionSeparator;
+  }
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -1854,21 +2059,37 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       return c.getEffectiveHeader(data, hiddenRows);
     },
     // Compute the effective separator used for a given file path with optional override.
-    getEffectiveSeparator(filePath: string, override: string | undefined): string {
-      const c: any = new (CsvEditorController as any)({} as any);
-      const fakeUri = { toString: () => `vscode-test://csv/${filePath}`, fsPath: filePath } as any;
-      const state: Record<string, any> = {};
-      if (override !== undefined) {
-        state[CsvEditorProvider.sepKey] = { [fakeUri.toString()]: override };
+    getEffectiveSeparator(
+      filePath: string,
+      override: string | undefined,
+      options?: {
+        mode?: SeparatorMode;
+        defaultSeparator?: string;
+        byExtension?: Record<string, string>;
+        text?: string;
       }
-      c.context = {
-        workspaceState: {
-          get: (key: string, def: any) => (key in state ? state[key] : def),
-          update: async (key: string, val: any) => { state[key] = val; }
+    ): string {
+      if (override && override.length) {
+        return override;
+      }
+      const mode = options?.mode ?? 'extension';
+      const defaultSeparator =
+        CsvEditorProvider.normalizeSeparator(options?.defaultSeparator) ?? CsvEditorProvider.DEFAULT_SEPARATOR;
+      const byExtension: Record<string, string> = { ...CsvEditorProvider.BUILTIN_SEPARATORS_BY_EXTENSION };
+      if (options?.byExtension) {
+        for (const [rawExt, rawSep] of Object.entries(options.byExtension)) {
+          const ext = CsvEditorProvider.normalizeExtension(rawExt);
+          const sep = CsvEditorProvider.normalizeSeparator(rawSep);
+          if (!ext || !sep) continue;
+          byExtension[ext] = sep;
         }
-      } as any;
-      c.document = { uri: fakeUri } as any;
-      return c.getSeparator();
+      }
+      const text = options?.text ?? '';
+      return CsvEditorProvider.resolveInheritedSeparator(filePath, text, {
+        mode,
+        defaultSeparator,
+        byExtension
+      });
     },
     // Expose chunking/table generation for large-data tests. Returns parsed chunk count.
     generateTableChunksMeta(

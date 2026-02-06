@@ -2,6 +2,14 @@ import { getFonts } from 'font-list';
 import * as vscode from 'vscode';
 import { CsvEditorProvider } from './CsvEditorProvider';
 
+function displaySeparator(separator: string): string {
+  return separator === '\t' ? '\\t' : separator;
+}
+
+function parseSeparatorInput(raw: string): string {
+  return raw === '\\t' ? '\t' : raw;
+}
+
 async function toggleBooleanConfig(key: string, defaultVal: boolean, messagePrefix: string) {
   const config = vscode.workspace.getConfiguration('csv');
   const currentVal = config.get<boolean>(key, defaultVal);
@@ -21,7 +29,7 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
     ),
     vscode.commands.registerCommand('csv.toggleHeader', async () => {
       const active = CsvEditorProvider.getActiveProvider();
-      if (!active) { vscode.window.showInformationMessage('Open a CSV/TSV file in the CSV editor.'); return; }
+      if (!active) { vscode.window.showInformationMessage('Open a CSV/TSV/PSV file in the CSV editor.'); return; }
       const uri = active.getDocumentUri();
       const cur = CsvEditorProvider.getHeaderForUri(context, uri);
       await CsvEditorProvider.setHeaderForUri(context, uri, !cur);
@@ -30,7 +38,7 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('csv.toggleSerialIndex', async () => {
       const active = CsvEditorProvider.getActiveProvider();
-      if (!active) { vscode.window.showInformationMessage('Open a CSV/TSV file in the CSV editor.'); return; }
+      if (!active) { vscode.window.showInformationMessage('Open a CSV/TSV/PSV file in the CSV editor.'); return; }
       const uri = active.getDocumentUri();
       const cur = CsvEditorProvider.getSerialIndexForUri(context, uri);
       await CsvEditorProvider.setSerialIndexForUri(context, uri, !cur);
@@ -39,18 +47,34 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('csv.changeSeparator', async () => {
       const active = CsvEditorProvider.getActiveProvider();
-      if (!active) { vscode.window.showInformationMessage('Open a CSV/TSV file in the CSV editor.'); return; }
+      if (!active) { vscode.window.showInformationMessage('Open a CSV/TSV/PSV file in the CSV editor.'); return; }
       const uri = active.getDocumentUri();
-      const uriPath = uri.fsPath.toLowerCase();
-      const defaultSep = (uriPath.endsWith('.tsv') || uriPath.endsWith('.tab')) ? '\\t' : ',';
-      const currentSep = CsvEditorProvider.getSeparatorForUri(context, uri) ?? defaultSep;
-      const input = await vscode.window.showInputBox({ prompt: 'Enter new CSV separator (empty to inherit from file)', value: currentSep });
+      const currentOverride = CsvEditorProvider.getSeparatorForUri(context, uri);
+      const currentSep = currentOverride ?? active.getCurrentSeparator();
+      const input = await vscode.window.showInputBox({
+        prompt: 'Enter new CSV separator for this file (empty to inherit configured rules; use \\t for tab)',
+        value: displaySeparator(currentSep)
+      });
       if (input !== undefined) {
-        const sep = input;
-        await CsvEditorProvider.setSeparatorForUri(context, uri, sep.length ? sep : undefined);
-        vscode.window.showInformationMessage(`CSV separator ${sep.length ? `set to "${sep}"` : 'now inherits from file type'}`);
+        const sep = input.length ? parseSeparatorInput(input) : undefined;
+        await CsvEditorProvider.setSeparatorForUri(context, uri, sep);
+        vscode.window.showInformationMessage(
+          sep && sep.length
+            ? `CSV separator set to "${displaySeparator(sep)}" for this file.`
+            : 'CSV separator now inherits from configured separator settings.'
+        );
         CsvEditorProvider.editors.filter(ed => ed.getDocumentUri().toString() === uri.toString()).forEach(ed => ed.refresh());
       }
+    }),
+    vscode.commands.registerCommand('csv.resetSeparator', async () => {
+      const active = CsvEditorProvider.getActiveProvider();
+      if (!active) { vscode.window.showInformationMessage('Open a CSV/TSV/PSV file in the CSV editor.'); return; }
+      const uri = active.getDocumentUri();
+      await CsvEditorProvider.setSeparatorForUri(context, uri, undefined);
+      vscode.window.showInformationMessage('CSV separator override cleared for this file.');
+      CsvEditorProvider.editors
+        .filter(ed => ed.getDocumentUri().toString() === uri.toString())
+        .forEach(ed => ed.refresh());
     }),
     vscode.commands.registerCommand('csv.changeFontFamily', async () => {
       const csvCfg     = vscode.workspace.getConfiguration('csv');
@@ -84,7 +108,7 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('csv.changeIgnoreRows', async () => {
       const active = CsvEditorProvider.getActiveProvider();
       if (!active) {
-        vscode.window.showInformationMessage('Open a CSV/TSV file with the CSV editor to change hidden rows.');
+        vscode.window.showInformationMessage('Open a CSV/TSV/PSV file with the CSV editor to change hidden rows.');
         return;
       }
       const uri = active.getDocumentUri();
@@ -102,11 +126,10 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
         .filter(ed => ed.getDocumentUri().toString() === uri.toString())
         .forEach(ed => ed.refresh());
       vscode.window.showInformationMessage(`CSV: Hiding first ${n} row(s) for this file.`);
-    })
-    ,
+    }),
     vscode.commands.registerCommand('csv.changeEncoding', async () => {
       const active = CsvEditorProvider.getActiveProvider();
-      if (!active) { vscode.window.showInformationMessage('Open a CSV/TSV file in the CSV editor.'); return; }
+      if (!active) { vscode.window.showInformationMessage('Open a CSV/TSV/PSV file in the CSV editor.'); return; }
       const uri = active.getDocumentUri();
 
       // Close any existing tabs for this URI so we can reuse the slot cleanly
