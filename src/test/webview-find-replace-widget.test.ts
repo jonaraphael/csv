@@ -26,6 +26,7 @@ describe('Webview find/replace widget', () => {
   it('supports find and replace keyboard shortcuts', () => {
     assert.ok(webviewSource.includes("key === 'f'"));
     assert.ok(webviewSource.includes("key === 'h'"));
+    assert.ok(webviewSource.includes("e.key === 'F3'"));
     assert.ok(webviewSource.includes('openFindReplace(false);'));
     assert.ok(webviewSource.includes('openFindReplace(true);'));
     assert.ok(webviewSource.includes('if (findReplaceState.open && e.key === \'Escape\') {'));

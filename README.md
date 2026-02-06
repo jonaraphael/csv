@@ -120,8 +120,9 @@ Per-file (stored by the extension; set via commands):
   - Exit/save: click outside the cell or move focus to commit changes.
 - Global:
   - Copy selection: `Ctrl/Cmd + C`
-- Find: `Ctrl/Cmd + F`
-- Replace: `Ctrl/Cmd + H`
+  - Find: `Ctrl/Cmd + F`
+  - Replace: `Ctrl/Cmd + H`
+  - Next/Previous match: `F3` / `Shift + F3` (also `Enter` / `Shift + Enter` in the Find box)
   - Select all: `Ctrl/Cmd + A`
 
 ---

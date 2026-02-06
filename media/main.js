@@ -1160,6 +1160,11 @@ findInput.addEventListener('keydown', e => {
     navigateFind(e.shiftKey);
     return;
   }
+  if (e.key === 'F3') {
+    e.preventDefault();
+    navigateFind(e.shiftKey);
+    return;
+  }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') {
     e.preventDefault();
     navigateFind(e.shiftKey);
@@ -1170,6 +1175,11 @@ replaceInput.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     e.preventDefault();
     closeFindReplace();
+    return;
+  }
+  if (e.key === 'F3') {
+    e.preventDefault();
+    navigateFind(e.shiftKey);
     return;
   }
   if (e.key === 'Enter') {
@@ -1331,6 +1341,11 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (findReplaceState.open && (e.ctrlKey || e.metaKey) && key === 'g') {
+    e.preventDefault();
+    navigateFind(e.shiftKey);
+    return;
+  }
+  if (findReplaceState.open && e.key === 'F3') {
     e.preventDefault();
     navigateFind(e.shiftKey);
     return;
