@@ -13,7 +13,11 @@
     "vscode": "^1.70.0",
     "node": ">=14"
   },
-  "categories": ["Data Science", "Programming Languages", "Other"],
+  "categories": [
+    "Data Science",
+    "Programming Languages",
+    "Other"
+  ],
   "activationEvents": [
     "onLanguage:csv",
     "onLanguage:tsv",
@@ -31,26 +35,60 @@
     "languages": [
       {
         "id": "csv",
-        "extensions": [".csv"],
-        "aliases": ["CSV", "csv"],
+        "extensions": [
+          ".csv"
+        ],
+        "aliases": [
+          "CSV",
+          "csv"
+        ],
         "configuration": "./language-configuration.json"
       },
       {
         "id": "tsv",
-        "extensions": [".tsv"],
-        "aliases": ["TSV", "tsv"],
+        "extensions": [
+          ".tsv"
+        ],
+        "aliases": [
+          "TSV",
+          "tsv"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
     "commands": [
-      { "command": "csv.toggleExtension",   "title": "CSV: Toggle Extension On/Off" },
-      { "command": "csv.toggleHeader",      "title": "CSV: Toggle First Row as Header" },
-      { "command": "csv.toggleSerialIndex", "title": "CSV: Toggle Serial Index Column" },
-      { "command": "csv.changeSeparator",   "title": "CSV: Change CSV Separator" },
-      { "command": "csv.changeFontFamily",  "title": "CSV: Change Font Family" },
-      { "command": "csv.changeIgnoreRows",  "title": "CSV: Hide First N Rows" },
-      { "command": "csv.changeEncoding",    "title": "CSV: Change File Encoding" },
-      { "command": "csv.toggleClickableLinks", "title": "CSV: Toggle Clickable Links" }
+      {
+        "command": "csv.toggleExtension",
+        "title": "CSV: Toggle Extension On/Off"
+      },
+      {
+        "command": "csv.toggleHeader",
+        "title": "CSV: Toggle First Row as Header"
+      },
+      {
+        "command": "csv.toggleSerialIndex",
+        "title": "CSV: Toggle Serial Index Column"
+      },
+      {
+        "command": "csv.changeSeparator",
+        "title": "CSV: Change CSV Separator"
+      },
+      {
+        "command": "csv.changeFontFamily",
+        "title": "CSV: Change Font Family"
+      },
+      {
+        "command": "csv.changeIgnoreRows",
+        "title": "CSV: Hide First N Rows"
+      },
+      {
+        "command": "csv.changeEncoding",
+        "title": "CSV: Change File Encoding"
+      },
+      {
+        "command": "csv.toggleClickableLinks",
+        "title": "CSV: Toggle Clickable Links"
+      }
     ],
     "configuration": {
       "type": "object",
@@ -84,17 +122,22 @@
         "viewType": "csv.editor",
         "displayName": "CSV",
         "selector": [
-          { "filenamePattern": "*.csv" },
-          { "filenamePattern": "*.tsv" }
+          {
+            "filenamePattern": "*.csv"
+          },
+          {
+            "filenamePattern": "*.tsv"
+          }
         ]
       }
     ]
   },
   "scripts": {
     "compile": "tsc -p ./",
+    "vscode:prepublish": "npm run compile",
     "lint": "eslint '**/*.ts'",
     "package": "vsce package",
-    "test": "npm run compile && node --test out/test/**/*.test.js"
+    "test": "npm run compile && node --test out/test"
   },
   "dependencies": {
     "font-list": "^1.5.1",
@@ -106,6 +149,7 @@
     "@types/vscode": "^1.70.0",
     "@typescript-eslint/eslint-plugin": "^7.9.0",
     "@typescript-eslint/parser": "^7.9.0",
+    "@vscode/vsce": "^3.7.1",
     "eslint": "^8.57.0",
     "typescript": "^4.4.3",
     "vscode": "^1.1.37"

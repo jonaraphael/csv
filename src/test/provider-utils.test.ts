@@ -26,6 +26,17 @@ describe('CsvEditorProvider utility methods', () => {
     assert.deepStrictEqual(widths, [4, 2, 3]);
   });
 
+  it('handles very large row counts without stack overflow', () => {
+    const rows: string[][] = Array.from({ length: 70000 }, (_, i) => [String(i)]);
+
+    assert.doesNotThrow(() => {
+      CsvEditorProvider.__test.computeColumnWidths(rows);
+    });
+    assert.doesNotThrow(() => {
+      CsvEditorProvider.__test.getEffectiveHeader(rows, 0);
+    });
+  });
+
   it('isDate correctly identifies date strings', () => {
     const isDate = CsvEditorProvider.__test.isDate;
     assert.strictEqual(isDate('2024-01-02'), true);
