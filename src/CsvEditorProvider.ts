@@ -28,6 +28,7 @@ class CsvEditorController {
   private currentWebviewPanel: vscode.WebviewPanel | undefined;
   private document!: vscode.TextDocument;
   private separatorCache: { version: number; configKey: string; separator: string } | undefined;
+  private isDiffContext = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -61,6 +62,7 @@ class CsvEditorController {
       localResourceRoots: [vscode.Uri.file(path.join(this.context.extensionPath, 'media'))]
     };
 
+    this.refreshDiffContext(webviewPanel);
     this.updateWebviewContent();
 
     if (webviewPanel.active) {
@@ -70,6 +72,10 @@ class CsvEditorController {
     webviewPanel.webview.postMessage({ type: 'focus' });
     webviewPanel.onDidChangeViewState(e => {
       if (e.webviewPanel.active) {
+        const diffChanged = this.refreshDiffContext(e.webviewPanel);
+        if (diffChanged) {
+          this.updateWebviewContent();
+        }
         e.webviewPanel.webview.postMessage({ type: 'focus' });
         CsvEditorProvider.currentActive = this;
       }
@@ -268,6 +274,54 @@ class CsvEditorController {
 
   public isActive(): boolean {
     return !!this.currentWebviewPanel?.active;
+  }
+
+  private refreshDiffContext(webviewPanel: vscode.WebviewPanel): boolean {
+    const next = this.isLikelyDiffContext(webviewPanel, this.document.uri);
+    const changed = next !== this.isDiffContext;
+    this.isDiffContext = next;
+    return changed;
+  }
+
+  private isLikelyDiffContext(webviewPanel: vscode.WebviewPanel, uri: vscode.Uri): boolean {
+    if (uri.scheme === 'git') {
+      return true;
+    }
+
+    const title = webviewPanel.title || '';
+    if (title.includes('↔')) {
+      return true;
+    }
+
+    const key = uri.toString();
+    const tabGroups = (vscode.window as any)?.tabGroups?.all;
+    if (!Array.isArray(tabGroups)) {
+      return false;
+    }
+    for (const group of tabGroups) {
+      const activeTab: any = group?.activeTab;
+      const input: any = activeTab?.input;
+      const original: unknown = input?.original;
+      const modified: unknown = input?.modified;
+      if (original instanceof vscode.Uri && modified instanceof vscode.Uri) {
+        if (original.toString() === key || modified.toString() === key) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private static resolveEffectiveColumnColorMode(
+    baseMode: string,
+    isDiffContext: boolean,
+    useThemeForegroundInDiff: boolean
+  ): 'type' | 'theme' {
+    const normalizedBase: 'type' | 'theme' = baseMode === 'theme' ? 'theme' : 'type';
+    if (isDiffContext && useThemeForegroundInDiff) {
+      return 'theme';
+    }
+    return normalizedBase;
   }
 
   public getDocumentUri(): vscode.Uri {
@@ -974,7 +1028,13 @@ class CsvEditorController {
     const data = this.trimTrailingEmptyRows((parsed.data || []) as string[][]);
     const treatHeader = this.getEffectiveHeader(data, hiddenRows);
     const clickableLinks = config.get<boolean>('clickableLinks', true);
-    const columnColorMode = config.get<string>('columnColorMode', 'type');
+    const configuredColumnColorMode = config.get<string>('columnColorMode', 'type');
+    const diffUseThemeForeground = config.get<boolean>('diffUseThemeForeground', true);
+    const columnColorMode = CsvEditorController.resolveEffectiveColumnColorMode(
+      configuredColumnColorMode,
+      this.isDiffContext,
+      diffUseThemeForeground
+    );
     const columnColorPalette = config.get<string>('columnColorPalette', 'default');
     const showTrailingEmptyRow = config.get<boolean>('showTrailingEmptyRow', true);
 
@@ -2215,6 +2275,9 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     getColumnColor(t: string, dark: boolean, i: number, palette: 'default' | 'cool' | 'warm' = 'default'): string {
       const c: any = new (CsvEditorController as any)({} as any);
       return c.getColumnColor(t, dark, i, palette);
+    },
+    resolveEffectiveColumnColorMode(baseMode: string, isDiffContext: boolean, diffUseThemeForeground: boolean): 'type' | 'theme' {
+      return (CsvEditorController as any).resolveEffectiveColumnColorMode(baseMode, isDiffContext, diffUseThemeForeground);
     },
     hslToHex(h: number, s: number, l: number): string {
       const c: any = new (CsvEditorController as any)({} as any);

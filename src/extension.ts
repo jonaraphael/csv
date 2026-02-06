@@ -91,7 +91,9 @@ export function activate(context: vscode.ExtensionContext) {
       'csv.cellPadding',
       'csv.columnColorMode',
       'csv.columnColorPalette',
+      'csv.diffUseThemeForeground',
       'csv.clickableLinks',
+      'csv.showTrailingEmptyRow',
       'csv.separatorMode',
       'csv.defaultSeparator',
       'csv.separatorByExtension'

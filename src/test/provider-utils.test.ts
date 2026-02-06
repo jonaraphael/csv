@@ -138,6 +138,16 @@ describe('CsvEditorProvider utility methods', () => {
     assert.notStrictEqual(def, warm);
   });
 
+  it('resolves effective column color mode for diff contexts', () => {
+    const resolveMode = CsvEditorProvider.__test.resolveEffectiveColumnColorMode;
+    assert.strictEqual(resolveMode('type', false, true), 'type');
+    assert.strictEqual(resolveMode('theme', false, true), 'theme');
+    assert.strictEqual(resolveMode('type', true, true), 'theme');
+    assert.strictEqual(resolveMode('theme', true, true), 'theme');
+    assert.strictEqual(resolveMode('type', true, false), 'type');
+    assert.strictEqual(resolveMode('invalid', false, false), 'type');
+  });
+
   it('hslToHex converts known colors', () => {
     const hslToHex = CsvEditorProvider.__test.hslToHex;
     assert.strictEqual(hslToHex(0, 100, 50), '#ff0000');   // red
