@@ -283,7 +283,25 @@ const showContextMenu = (x, y, row, col) => {
   contextMenu.style.display = 'block';
 };
 
-document.addEventListener('click', () => { contextMenu.style.display = 'none'; });
+document.addEventListener('click', (e) => {
+  contextMenu.style.display = 'none';
+  
+  // Handle clicks on CSV links
+  if (e.target.classList.contains('csv-link')) {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Ctrl/Cmd+click to open link
+    if (e.ctrlKey || e.metaKey) {
+      const url = e.target.getAttribute('href');
+      if (url) {
+        vscode.postMessage({ type: 'openLink', url: url });
+      }
+    }
+    // Regular click just selects the cell (don't start editing)
+    return;
+  }
+});
 
 /* ──────── UPDATED contextmenu listener ──────── */
 table.addEventListener('contextmenu', e => {
@@ -300,6 +318,10 @@ table.addEventListener('contextmenu', e => {
 });
 
 table.addEventListener('mousedown', e => {
+  // Don't interfere with link clicks
+  if (e.target.classList.contains('csv-link')) {
+    return;
+  }
   if(e.target.tagName !== 'TD' && e.target.tagName !== 'TH') return;
   const target = e.target;
 
@@ -886,7 +908,25 @@ const editCell = (cell, event, mode = 'detail') => {
   event ? setCursorAtPoint(cell, event.clientX, event.clientY) : setCursorToEnd(cell);
 };
 
-table.addEventListener('dblclick', e => { const target = e.target; if(target.tagName !== 'TD' && target.tagName !== 'TH') return; clearSelection(); editCell(target, e); });
+table.addEventListener('dblclick', e => {
+  const target = e.target;
+  // Don't enter edit mode when double-clicking a link
+  if (target.classList.contains('csv-link')) {
+    e.preventDefault();
+    e.stopPropagation();
+    // Ctrl/Cmd+double-click opens the link
+    if (e.ctrlKey || e.metaKey) {
+      const url = target.getAttribute('href');
+      if (url) {
+        vscode.postMessage({ type: 'openLink', url: url });
+      }
+    }
+    return;
+  }
+  if(target.tagName !== 'TD' && target.tagName !== 'TH') return;
+  clearSelection();
+  editCell(target, e);
+});
 
 const copySelectionToClipboard = () => {
   if (currentSelection.length === 0) return;

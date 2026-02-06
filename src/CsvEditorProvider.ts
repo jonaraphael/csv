@@ -96,6 +96,11 @@ class CsvEditorController {
         case 'sortColumn':
           await this.sortColumn(e.index, e.ascending);
           break;
+        case 'openLink':
+          if (e.url) {
+            vscode.env.openExternal(vscode.Uri.parse(e.url));
+          }
+          break;
       }
     });
 
@@ -562,9 +567,10 @@ class CsvEditorController {
     const cellPadding = config.get<number>('cellPadding', 4);
     const data = this.trimTrailingEmptyRows((parsed.data || []) as string[][]);
     const treatHeader = this.getEffectiveHeader(data, hiddenRows);
+    const clickableLinks = config.get<boolean>('clickableLinks', true);
 
     const { tableHtml, chunksJson, colorCss } =
-      this.generateTableAndChunks(data, treatHeader, addSerialIndex, hiddenRows);
+      this.generateTableAndChunks(data, treatHeader, addSerialIndex, hiddenRows, clickableLinks);
 
     const nonce = this.getNonce();
 
@@ -584,7 +590,8 @@ class CsvEditorController {
     data: string[][],
     treatHeader: boolean,
     addSerialIndex: boolean,
-    hiddenRows: number
+    hiddenRows: number,
+    clickableLinks: boolean
   ): { tableHtml: string; chunksJson: string; colorCss: string } {
     let headerFlag = treatHeader;
     const totalRows = data.length;
@@ -625,7 +632,7 @@ class CsvEditorController {
           const displayIdx = i + localR + 1; // numbering relative to first visible data row
           let cells = '';
           for (let cIdx = 0; cIdx < numColumns; cIdx++) {
-            const safe = this.escapeHtml(row[cIdx] || '');
+            const safe = this.formatCellContent(row[cIdx] || '', clickableLinks);
             cells += `<td tabindex="0" style="min-width:${Math.min(columnWidths[cIdx]||0,100)}ch;max-width:100ch;border:1px solid ${isDark?'#555':'#ccc'};color:${columnColors[cIdx]};overflow:hidden;white-space:nowrap;text-overflow:ellipsis;" data-row="${absRow}" data-col="${cIdx}">${safe}</td>`;
           }
 
@@ -661,7 +668,7 @@ class CsvEditorController {
           : ''
       }`;
       for (let i = 0; i < numColumns; i++) {
-        const safe = this.escapeHtml(headerRow[i] || '');
+        const safe = this.formatCellContent(headerRow[i] || '', clickableLinks);
         tableHtml += `<th tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${offset}" data-col="${i}">${safe}</th>`;
       }
       tableHtml += `</tr></thead><tbody>`;
@@ -672,7 +679,7 @@ class CsvEditorController {
             : ''
         }`;
         for (let i = 0; i < numColumns; i++) {
-          const safe = this.escapeHtml(row[i] || '');
+          const safe = this.formatCellContent(row[i] || '', clickableLinks);
           tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${offset + 1 + r}" data-col="${i}">${safe}</td>`;
         }
         tableHtml += `</tr>`;
@@ -695,7 +702,7 @@ class CsvEditorController {
             : ''
         }`;
         for (let i = 0; i < numColumns; i++) {
-          const safe = this.escapeHtml(row[i] || '');
+          const safe = this.formatCellContent(row[i] || '', clickableLinks);
           tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${offset + r}" data-col="${i}">${safe}</td>`;
         }
         tableHtml += `</tr>`;
@@ -790,6 +797,8 @@ class CsvEditorController {
       td.editing, th.editing { overflow: visible !important; white-space: normal !important; max-width: none !important; }
       .highlight { background-color: ${isDark ? '#222222' : '#fefefe'} !important; }
       .active-match { background-color: ${isDark ? '#444444' : '#ffffcc'} !important; }
+      .csv-link { color: ${isDark ? '#6cb6ff' : '#0066cc'}; text-decoration: underline; cursor: pointer; }
+      .csv-link:hover { color: ${isDark ? '#8ecfff' : '#0044aa'}; }
       #findWidget {
         position: fixed;
         top: 20px;
@@ -882,6 +891,22 @@ class CsvEditorController {
       '"': '&quot;',
       "'": '&#39;'
     })[m] as string);
+  }
+
+  private linkifyUrls(escapedText: string): string {
+    // Match URLs in already-escaped text (handles &amp; in query strings)
+    // Supports http, https, ftp, mailto protocols
+    const urlPattern = /(?:https?:\/\/|ftp:\/\/|mailto:)[^\s<>&"']+(?:&amp;[^\s<>&"']+)*/gi;
+    return escapedText.replace(urlPattern, (url) => {
+      // Decode &amp; back to & for the href attribute
+      const href = url.replace(/&amp;/g, '&');
+      return `<a href="${href}" class="csv-link" title="Ctrl/Cmd+click to open">${url}</a>`;
+    });
+  }
+
+  private formatCellContent(text: string, linkify: boolean): string {
+    const escaped = this.escapeHtml(text);
+    return linkify ? this.linkifyUrls(escaped) : escaped;
   }
 
   private escapeCss(text: string): string {

@@ -38,6 +38,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Column Sorting:** Right-click a header and choose A–Z or Z–A.
 - **Custom Font Selection:** Choose a font from a dropdown or inherit VS Code's default.
 - **Find & Highlight:** Built-in find widget helps you search for text within your CSV with real-time highlighting and navigation through matches.
+- **Clickable Links:** URLs in cells are automatically detected and displayed as clickable links. Ctrl/Cmd+click to open them in your browser.
 - **Preserved CSV Integrity:** All modifications respect CSV formatting—no unwanted extra characters or formatting issues.
 - **Optimized for Performance:** Designed for medium-sized datasets, ensuring a smooth editing experience without compromising on functionality.
 - **Large File Support:** Loads big CSVs in chunks so even large datasets open quickly.
@@ -85,6 +86,7 @@ Open the Command Palette and search for:
 - `CSV: Change Font Family` (`csv.changeFontFamily`)
 - `CSV: Hide First N Rows` (`csv.changeIgnoreRows`)
 - `CSV: Change File Encoding` (`csv.changeEncoding`)
+- `CSV: Toggle Clickable Links` (`csv.toggleClickableLinks`)
   
 
 ## Settings
@@ -94,7 +96,8 @@ Global (Settings UI or `settings.json`):
 - `csv.enabled` (boolean, default `true`): Enable/disable the custom editor.
 - `csv.fontFamily` (string, default empty): Override font family; falls back to `editor.fontFamily`.
 - `csv.cellPadding` (number, default `4`): Vertical cell padding in pixels.
-- Per-file encoding: use `CSV: Change File Encoding` to set a file’s encoding (e.g., `utf8`, `utf16le`, `windows1250`, `gbk`). The extension will reopen the file using the chosen encoding.
+- `csv.clickableLinks` (boolean, default `true`): Make URLs in cells clickable. Ctrl/Cmd+click to open links.
+- Per-file encoding: use `CSV: Change File Encoding` to set a file's encoding (e.g., `utf8`, `utf16le`, `windows1250`, `gbk`). The extension will reopen the file using the chosen encoding.
 
 Per-file (stored by the extension; set via commands):
 
