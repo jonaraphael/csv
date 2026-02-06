@@ -145,6 +145,11 @@
           "default": true,
           "description": "Make URLs in cells clickable. Ctrl/Cmd+click to open links."
         },
+        "csv.showTrailingEmptyRow": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show an extra empty row at the end of the table for quick append-style editing."
+        },
         "csv.separatorMode": {
           "type": "string",
           "enum": [

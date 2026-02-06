@@ -976,6 +976,7 @@ class CsvEditorController {
     const clickableLinks = config.get<boolean>('clickableLinks', true);
     const columnColorMode = config.get<string>('columnColorMode', 'type');
     const columnColorPalette = config.get<string>('columnColorPalette', 'default');
+    const showTrailingEmptyRow = config.get<boolean>('showTrailingEmptyRow', true);
 
     const { tableHtml, chunksJson, colorCss } =
       this.generateTableAndChunks(
@@ -985,7 +986,8 @@ class CsvEditorController {
         hiddenRows,
         clickableLinks,
         columnColorMode,
-        columnColorPalette
+        columnColorPalette,
+        showTrailingEmptyRow
       );
 
     const nonce = this.getNonce();
@@ -1009,7 +1011,8 @@ class CsvEditorController {
     hiddenRows: number,
     clickableLinks: boolean,
     columnColorMode: string,
-    columnColorPalette: string
+    columnColorPalette: string,
+    showTrailingEmptyRow: boolean
   ): { tableHtml: string; chunksJson: string; colorCss: string } {
     let headerFlag = treatHeader;
     const totalRows = data.length;
@@ -1045,7 +1048,11 @@ class CsvEditorController {
     const CHUNK_SIZE = 1000;
     const allRows = headerFlag ? bodyData : data.slice(offset);
     const allRowsCount = allRows.length; // preserve total before any truncation
-    const serialIndexWidthCh = Math.max(4, String(Math.max(1, allRowsCount + 1)).length + 1);
+    // Always keep one editable row for fully empty views; otherwise allow disabling the
+    // trailing virtual row via settings.
+    const includeTrailingEmptyRow = showTrailingEmptyRow || allRowsCount === 0;
+    const serialIndexMaxDisplay = includeTrailingEmptyRow ? allRowsCount + 1 : allRowsCount;
+    const serialIndexWidthCh = Math.max(4, String(Math.max(1, serialIndexMaxDisplay)).length + 1);
     const chunks: string[] = [];
     const chunked = allRowsCount > CHUNK_SIZE;
 
@@ -1113,7 +1120,7 @@ class CsvEditorController {
         }
         tableHtml += `</tr>`;
       });
-      if (!chunked) {
+      if (!chunked && includeTrailingEmptyRow) {
         const virtualAbs = offset + 1 + bodyData.length;
         const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${bodyData.length + 1}</td>` : '';
         const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
@@ -1138,7 +1145,7 @@ class CsvEditorController {
         }
         tableHtml += `</tr>`;
       });
-      if (!chunked) {
+      if (!chunked && includeTrailingEmptyRow) {
         const virtualAbs = offset + nonHeaderRows.length;
         const displayIdx = nonHeaderRows.length + 1;
         const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
@@ -1148,8 +1155,8 @@ class CsvEditorController {
       tableHtml += `</tbody>`;
     }
     tableHtml += `</table>`;
-    // If chunked, append a final chunk with the virtual row so it appears at the end
-    if (chunked) {
+    // If chunked, append a final chunk with the virtual row so it appears at the end.
+    if (chunked && includeTrailingEmptyRow) {
       const startAbs = headerFlag ? offset + 1 : offset;
       const virtualAbs = startAbs + allRowsCount;
       const displayIdx = allRowsCount + 1;
@@ -2292,10 +2299,20 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       hiddenRows: number,
       clickableLinks: boolean = true,
       columnColorMode: 'type' | 'theme' = 'type',
-      columnColorPalette: 'default' | 'cool' | 'warm' = 'default'
+      columnColorPalette: 'default' | 'cool' | 'warm' = 'default',
+      showTrailingEmptyRow: boolean = true
     ): { chunkCount: number; hasTable: boolean } {
       const c: any = new (CsvEditorController as any)({} as any);
-      const result = c.generateTableAndChunks(data, treatHeader, addSerialIndex, hiddenRows, clickableLinks, columnColorMode, columnColorPalette);
+      const result = c.generateTableAndChunks(
+        data,
+        treatHeader,
+        addSerialIndex,
+        hiddenRows,
+        clickableLinks,
+        columnColorMode,
+        columnColorPalette,
+        showTrailingEmptyRow
+      );
       try {
         const chunks = JSON.parse(result.chunksJson);
         return { chunkCount: Array.isArray(chunks) ? chunks.length : 0, hasTable: typeof result.tableHtml === 'string' && result.tableHtml.includes('<table') };
@@ -2310,10 +2327,20 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       hiddenRows: number,
       clickableLinks: boolean = true,
       columnColorMode: 'type' | 'theme' = 'type',
-      columnColorPalette: 'default' | 'cool' | 'warm' = 'default'
+      columnColorPalette: 'default' | 'cool' | 'warm' = 'default',
+      showTrailingEmptyRow: boolean = true
     ): { tableHtml: string; chunks: string[] } {
       const c: any = new (CsvEditorController as any)({} as any);
-      const result = c.generateTableAndChunks(data, treatHeader, addSerialIndex, hiddenRows, clickableLinks, columnColorMode, columnColorPalette);
+      const result = c.generateTableAndChunks(
+        data,
+        treatHeader,
+        addSerialIndex,
+        hiddenRows,
+        clickableLinks,
+        columnColorMode,
+        columnColorPalette,
+        showTrailingEmptyRow
+      );
       let chunks: string[] = [];
       try { chunks = JSON.parse(result.chunksJson); } catch {}
       return { tableHtml: result.tableHtml, chunks };

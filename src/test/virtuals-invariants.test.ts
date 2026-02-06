@@ -53,6 +53,61 @@ describe('Virtual row and cell invariants', () => {
     }
   });
 
+  it('can hide the trailing virtual row for non-empty non-chunked data', () => {
+    const data = [
+      ['a'],
+      ['b', 'c', 'd']
+    ];
+    const { tableHtml, chunks } = CsvEditorProvider.__test.generateTableAndChunksRaw(
+      data,
+      /*treatHeader*/ false,
+      /*addSerialIndex*/ false,
+      /*hiddenRows*/ 0,
+      /*clickableLinks*/ true,
+      /*columnColorMode*/ 'type',
+      /*columnColorPalette*/ 'default',
+      /*showTrailingEmptyRow*/ false
+    );
+    assert.strictEqual(chunks.length, 0);
+    assert.ok(!tableHtml.includes('data-row="2" data-col="0"'));
+    assert.ok(!tableHtml.includes('data-row="2" data-col="1"'));
+    assert.ok(!tableHtml.includes('data-row="2" data-col="2"'));
+  });
+
+  it('can hide the trailing virtual row for non-empty chunked data', () => {
+    const rows: string[][] = Array.from({ length: 1500 }, (_, i) => [String(i + 1), 'x', 'y']);
+    const { tableHtml, chunks } = CsvEditorProvider.__test.generateTableAndChunksRaw(
+      rows,
+      /*treatHeader*/ false,
+      /*addSerialIndex*/ false,
+      /*hiddenRows*/ 0,
+      /*clickableLinks*/ true,
+      /*columnColorMode*/ 'type',
+      /*columnColorPalette*/ 'default',
+      /*showTrailingEmptyRow*/ false
+    );
+    assert.ok(!tableHtml.includes('data-row="1500"'));
+    // Only one chunk should remain (rows 1000-1499). No final virtual-row chunk.
+    assert.strictEqual(chunks.length, 1);
+    assert.ok(!chunks[0].includes('data-row="1500"'));
+  });
+
+  it('still renders one editable row for empty data even when trailing row is disabled', () => {
+    const rows: string[][] = [];
+    const { tableHtml, chunks } = CsvEditorProvider.__test.generateTableAndChunksRaw(
+      rows,
+      /*treatHeader*/ false,
+      /*addSerialIndex*/ false,
+      /*hiddenRows*/ 0,
+      /*clickableLinks*/ true,
+      /*columnColorMode*/ 'type',
+      /*columnColorPalette*/ 'default',
+      /*showTrailingEmptyRow*/ false
+    );
+    assert.strictEqual(chunks.length, 0);
+    assert.ok(tableHtml.includes('data-row="0" data-col="0"'));
+  });
+
   it('sizes serial index column from total row count for chunked data', () => {
     const rows: string[][] = Array.from({ length: 12345 }, (_, i) => [String(i + 1), 'x']);
     const { tableHtml, chunks } = CsvEditorProvider.__test.generateTableAndChunksRaw(rows, /*treatHeader*/ false, /*addSerialIndex*/ true, /*hiddenRows*/ 0);
