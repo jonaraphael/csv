@@ -13,6 +13,26 @@ type CsvFieldSpan = {
   end: number;
   quoted: boolean;
 };
+type PasteSelectionBounds = {
+  minRow: number;
+  maxRow: number;
+  minCol: number;
+  maxCol: number;
+  rectangular: boolean;
+};
+type PastePlan = {
+  startRow: number;
+  startCol: number;
+  endRow: number;
+  endCol: number;
+  fillSelection: boolean;
+};
+type PasteApplyResult = {
+  changed: boolean;
+  structuralChange: boolean;
+  updates: Array<{ row: number; col: number; value: string }>;
+  plan: PastePlan;
+};
 
 // Per-document controller. Manages one webview + document.
 class CsvEditorController {
@@ -88,6 +108,9 @@ class CsvEditorController {
           break;
         case 'replaceCells':
           await this.replaceCells(e.replacements);
+          break;
+        case 'pasteCells':
+          await this.pasteCells(e.text, e.anchorRow, e.anchorCol, e.selection);
           break;
         case 'findMatches':
           await this.findMatches(e.requestId, e.query, e.options);
@@ -461,6 +484,227 @@ class CsvEditorController {
       await vscode.workspace.applyEdit(edit);
 
       this.updateWebviewContent();
+    } finally {
+      this.isUpdatingDocument = false;
+    }
+  }
+
+  private parseClipboardMatrix(text: string): string[][] {
+    if (!text || text.length === 0) {
+      return [];
+    }
+    const parsed = Papa.parse(text, { dynamicTyping: false, delimiter: '' });
+    const rowsRaw = Array.isArray(parsed.data) ? parsed.data : [];
+    const matrix: string[][] = rowsRaw.map(rawRow => {
+      if (Array.isArray(rawRow)) {
+        return rawRow.map(cell => String(cell ?? ''));
+      }
+      return [String(rawRow ?? '')];
+    });
+    while (matrix.length > 0 && matrix[matrix.length - 1].every(value => value === '')) {
+      matrix.pop();
+    }
+    if (matrix.length === 0) {
+      return [];
+    }
+    const width = matrix.reduce((max, row) => Math.max(max, row.length), 0);
+    if (width <= 0) {
+      return [];
+    }
+    matrix.forEach(row => {
+      while (row.length < width) {
+        row.push('');
+      }
+    });
+    return matrix;
+  }
+
+  private static parsePasteSelectionBounds(raw: unknown): PasteSelectionBounds | undefined {
+    if (!raw || typeof raw !== 'object') {
+      return undefined;
+    }
+    const minRow = Number((raw as any).minRow);
+    const maxRow = Number((raw as any).maxRow);
+    const minCol = Number((raw as any).minCol);
+    const maxCol = Number((raw as any).maxCol);
+    if (
+      !Number.isInteger(minRow) || minRow < 0 ||
+      !Number.isInteger(maxRow) || maxRow < minRow ||
+      !Number.isInteger(minCol) || minCol < 0 ||
+      !Number.isInteger(maxCol) || maxCol < minCol
+    ) {
+      return undefined;
+    }
+    return {
+      minRow,
+      maxRow,
+      minCol,
+      maxCol,
+      rectangular: !!(raw as any).rectangular
+    };
+  }
+
+  private static computePastePlan(
+    matrix: string[][],
+    anchorRow: number,
+    anchorCol: number,
+    selection: PasteSelectionBounds | undefined
+  ): PastePlan | undefined {
+    const height = matrix.length;
+    const width = height > 0 ? Math.max(0, matrix[0].length) : 0;
+    if (height <= 0 || width <= 0) {
+      return undefined;
+    }
+    const canFillSelection = !!selection
+      && selection.rectangular
+      && (selection.maxRow > selection.minRow || selection.maxCol > selection.minCol)
+      && height === 1
+      && width === 1;
+    if (canFillSelection) {
+      return {
+        startRow: selection.minRow,
+        startCol: selection.minCol,
+        endRow: selection.maxRow,
+        endCol: selection.maxCol,
+        fillSelection: true
+      };
+    }
+    return {
+      startRow: anchorRow,
+      startCol: anchorCol,
+      endRow: anchorRow + height - 1,
+      endCol: anchorCol + width - 1,
+      fillSelection: false
+    };
+  }
+
+  private static applyPasteMatrixToData(
+    data: string[][],
+    matrix: string[][],
+    anchorRow: number,
+    anchorCol: number,
+    selection: PasteSelectionBounds | undefined
+  ): PasteApplyResult {
+    const plan = CsvEditorController.computePastePlan(matrix, anchorRow, anchorCol, selection);
+    if (!plan) {
+      return {
+        changed: false,
+        structuralChange: false,
+        updates: [],
+        plan: {
+          startRow: anchorRow,
+          startCol: anchorCol,
+          endRow: anchorRow,
+          endCol: anchorCol,
+          fillSelection: false
+        }
+      };
+    }
+
+    const updates: Array<{ row: number; col: number; value: string }> = [];
+    let changed = false;
+    let structuralChange = false;
+
+    const setCellValue = (row: number, col: number, nextValue: string) => {
+      const hasRow = row >= 0 && row < data.length;
+      const hasCol = hasRow && col >= 0 && col < data[row].length;
+      const prevValue = hasCol ? String(data[row][col] ?? '') : '';
+      if (prevValue === nextValue) {
+        return;
+      }
+      if (!hasRow || !hasCol) {
+        structuralChange = true;
+      }
+      while (data.length <= row) {
+        data.push([]);
+      }
+      while (data[row].length <= col) {
+        data[row].push('');
+      }
+      data[row][col] = nextValue;
+      updates.push({ row, col, value: nextValue });
+      changed = true;
+    };
+
+    if (plan.fillSelection) {
+      const value = String(matrix[0][0] ?? '');
+      for (let row = plan.startRow; row <= plan.endRow; row++) {
+        for (let col = plan.startCol; col <= plan.endCol; col++) {
+          setCellValue(row, col, value);
+        }
+      }
+    } else {
+      for (let r = 0; r < matrix.length; r++) {
+        for (let c = 0; c < matrix[r].length; c++) {
+          setCellValue(plan.startRow + r, plan.startCol + c, String(matrix[r][c] ?? ''));
+        }
+      }
+    }
+
+    return { changed, structuralChange, updates, plan };
+  }
+
+  private async pasteCells(
+    rawText: unknown,
+    rawAnchorRow: unknown,
+    rawAnchorCol: unknown,
+    rawSelection: unknown
+  ): Promise<void> {
+    const text = typeof rawText === 'string' ? rawText : '';
+    if (!text) {
+      return;
+    }
+    const anchorRow = Number(rawAnchorRow);
+    const anchorCol = Number(rawAnchorCol);
+    if (!Number.isInteger(anchorRow) || anchorRow < 0 || !Number.isInteger(anchorCol) || anchorCol < 0) {
+      return;
+    }
+    const matrix = this.parseClipboardMatrix(text);
+    if (!matrix.length || !matrix[0].length) {
+      return;
+    }
+    const selection = CsvEditorController.parsePasteSelectionBounds(rawSelection);
+
+    this.isUpdatingDocument = true;
+    try {
+      const separator = this.getSeparator();
+      const oldText = this.document.getText();
+      const result = Papa.parse(oldText, { dynamicTyping: false, delimiter: separator });
+      const data = result.data as string[][];
+
+      const pasteResult = CsvEditorController.applyPasteMatrixToData(data, matrix, anchorRow, anchorCol, selection);
+      if (!pasteResult.changed) {
+        return;
+      }
+
+      let newCsvText: string | undefined;
+      if (!pasteResult.structuralChange) {
+        newCsvText = CsvEditorProvider.applyFieldUpdatesPreservingFormat(oldText, separator, pasteResult.updates);
+      }
+      if (newCsvText === undefined) {
+        newCsvText = Papa.unparse(data, { delimiter: separator });
+      }
+      if (newCsvText === oldText) {
+        return;
+      }
+
+      const fullRange = new vscode.Range(
+        0, 0,
+        this.document.lineCount,
+        this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0
+      );
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(this.document.uri, fullRange, newCsvText);
+      await vscode.workspace.applyEdit(edit);
+
+      this.updateWebviewContent();
+      this.currentWebviewPanel?.webview.postMessage({
+        type: 'pasteApplied',
+        startRow: pasteResult.plan.startRow,
+        startCol: pasteResult.plan.startCol,
+        endRow: pasteResult.plan.endRow,
+        endCol: pasteResult.plan.endCol
+      });
     } finally {
       this.isUpdatingDocument = false;
     }
@@ -2353,6 +2597,28 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       updates: Array<{ row: number; col: number; value: string }>
     ): string | undefined {
       return CsvEditorProvider.applyFieldUpdatesPreservingFormat(text, delimiter, updates);
+    },
+    computePastePlan(
+      matrix: string[][],
+      anchorRow: number,
+      anchorCol: number,
+      selection?: { minRow: number; maxRow: number; minCol: number; maxCol: number; rectangular: boolean }
+    ): { startRow: number; startCol: number; endRow: number; endCol: number; fillSelection: boolean } | undefined {
+      return (CsvEditorController as any).computePastePlan(matrix, anchorRow, anchorCol, selection);
+    },
+    applyPasteMatrixToData(
+      data: string[][],
+      matrix: string[][],
+      anchorRow: number,
+      anchorCol: number,
+      selection?: { minRow: number; maxRow: number; minCol: number; maxCol: number; rectangular: boolean }
+    ): {
+      changed: boolean;
+      structuralChange: boolean;
+      updates: Array<{ row: number; col: number; value: string }>;
+      plan: { startRow: number; startCol: number; endRow: number; endCol: number; fillSelection: boolean };
+    } {
+      return (CsvEditorController as any).applyPasteMatrixToData(data, matrix, anchorRow, anchorCol, selection);
     },
     // Expose chunking/table generation for large-data tests. Returns parsed chunk count.
     generateTableChunksMeta(

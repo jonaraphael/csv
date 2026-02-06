@@ -849,6 +849,41 @@ const selectFullRowRange = (row1, row2) => {
   });
 };
 
+const getDataCellCoords = cell => {
+  if (!cell || typeof cell.getAttribute !== 'function') return null;
+  const coords = getCellCoords(cell);
+  if (!coords || !Number.isInteger(coords.row) || !Number.isInteger(coords.col)) return null;
+  if (coords.row < 0 || coords.col < 0) return null;
+  return coords;
+};
+
+const getDataSelectionBounds = () => {
+  const coords = currentSelection
+    .map(cell => getDataCellCoords(cell))
+    .filter(Boolean);
+  if (!coords.length) return null;
+  const keys = new Set(coords.map(c => `${c.row}:${c.col}`));
+  const rows = coords.map(c => c.row);
+  const cols = coords.map(c => c.col);
+  const minRow = Math.min(...rows);
+  const maxRow = Math.max(...rows);
+  const minCol = Math.min(...cols);
+  const maxCol = Math.max(...cols);
+  const expectedCount = (maxRow - minRow + 1) * (maxCol - minCol + 1);
+  const rectangular = keys.size === expectedCount;
+  return { minRow, maxRow, minCol, maxCol, rectangular };
+};
+
+const getPasteAnchorCoords = () => {
+  const anchor = getDataCellCoords(anchorCell);
+  if (anchor) return anchor;
+  const fromActive = getDataCellCoords(getCellTarget(document.activeElement));
+  if (fromActive) return fromActive;
+  const bounds = getDataSelectionBounds();
+  if (bounds) return { row: bounds.minRow, col: bounds.minCol };
+  return null;
+};
+
 const findReplaceWidget = document.getElementById('findReplaceWidget');
 const replaceToggleGutter = document.getElementById('replaceToggleGutter');
 const replaceToggle = document.getElementById('replaceToggle');
@@ -1659,6 +1694,36 @@ document.addEventListener('keydown', e => {
   }
 });
 
+document.addEventListener('paste', e => {
+  if (isFindWidgetTarget(e.target)) {
+    return;
+  }
+  if (editingCell) {
+    return;
+  }
+  const clipboard = e.clipboardData;
+  if (!clipboard) {
+    return;
+  }
+  const text = clipboard.getData('text/plain');
+  if (typeof text !== 'string' || text.length === 0) {
+    return;
+  }
+  const anchor = getPasteAnchorCoords();
+  if (!anchor) {
+    return;
+  }
+  e.preventDefault();
+  const selection = getDataSelectionBounds();
+  vscode.postMessage({
+    type: 'pasteCells',
+    text,
+    anchorRow: anchor.row,
+    anchorCol: anchor.col,
+    selection: selection || undefined
+  });
+});
+
 const selectAllCells = () => { clearSelection(); document.querySelectorAll('td, th').forEach(cell => { cell.classList.add('selected'); currentSelection.push(cell); }); };
 
 const setCursorToEnd = cell => { setTimeout(() => { 
@@ -1866,6 +1931,29 @@ window.addEventListener('message', event => {
     if (findReplaceState.open && findInput.value) {
       scheduleFind(true);
     }
+  } else if (message.type === 'pasteApplied') {
+    const startRow = Number(message.startRow);
+    const startCol = Number(message.startCol);
+    const endRow = Number(message.endRow);
+    const endCol = Number(message.endCol);
+    if (
+      !Number.isInteger(startRow) || !Number.isInteger(startCol) ||
+      !Number.isInteger(endRow) || !Number.isInteger(endCol) ||
+      startRow < 0 || startCol < 0 || endRow < startRow || endCol < startCol
+    ) {
+      return;
+    }
+    const startCell = ensureRenderedCellByCoords(startRow, startCol);
+    const endCell = ensureRenderedCellByCoords(endRow, endCol);
+    if (!startCell || !endCell) {
+      return;
+    }
+    anchorCell = startCell;
+    rangeEndCell = endCell;
+    selectRange({ row: startRow, col: startCol }, { row: endRow, col: endCol });
+    persistState();
+    try { startCell.focus({ preventScroll: true }); } catch { try { startCell.focus(); } catch {} }
+    endCell.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
   } else if (message.type === 'findMatchesResult') {
     if (!findReplaceState.open) {
       return;

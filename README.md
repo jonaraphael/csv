@@ -19,6 +19,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Smart Column Sizing & Dynamic Color Coding:** Columns automatically adjust to fit content while being visually distinguished by data type. Whether it’s boolean, date, integer, float, or text, each column gets its own adaptive color that adjusts for light and dark themes.
 - **Sticky Headers & Fluid Navigation:** Keep your header row always visible as you scroll. Effortlessly move through cells using intuitive keyboard shortcuts like `Tab`, `Shift + Tab`, and arrow keys—just like a full-featured spreadsheet.
 - **Efficient Multi-Cell Selection & Clipboard Integration:** Select a range of cells with click-and-drag and copy them as well-formatted CSV data using `Ctrl/Cmd + C`.
+- **Grid Paste Support:** Paste copied ranges directly into the selected cell/range with `Ctrl/Cmd + V` in selection mode.
 - **Robust Data Handling:** Leveraging the power of [Papa Parse](https://www.papaparse.com/), the extension handles complex CSV structures, special characters, and various data types gracefully.
 - **Theme-Optimized Interface:** Whether you prefer light or dark mode, CSV automatically adapts its styles for an optimal viewing experience.
 
@@ -130,6 +131,7 @@ Per-file (stored by the extension; set via commands):
   - Exit/save: click outside the cell or move focus to commit changes.
 - Global:
   - Copy selection: `Ctrl/Cmd + C`
+  - Paste selection: `Ctrl/Cmd + V` (selection mode). Pasting a single value into a selected rectangle fills that rectangle.
   - Find: `Ctrl/Cmd + F`
   - Replace: `Ctrl/Cmd + H`
   - Next/Previous match: `F3` / `Shift + F3` (also `Enter` / `Shift + Enter` in the Find box)

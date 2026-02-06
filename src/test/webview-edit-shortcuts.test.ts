@@ -47,4 +47,12 @@ describe('Webview edit shortcuts', () => {
     assert.ok(webviewSource.includes('const nextCell = canMove ? ensureRenderedCellByCoords(targetRow, targetCol) : null;'));
     assert.ok(webviewSource.includes('setSingleSelection(nextCell);'));
   });
+
+  it('handles selection-mode paste as a grid operation', () => {
+    assert.ok(webviewSource.includes("document.addEventListener('paste', e => {"));
+    assert.ok(webviewSource.includes("type: 'pasteCells'"));
+    assert.ok(webviewSource.includes('const selection = getDataSelectionBounds();'));
+    assert.ok(webviewSource.includes("} else if (message.type === 'pasteApplied') {"));
+    assert.ok(webviewSource.includes("selectRange({ row: startRow, col: startCol }, { row: endRow, col: endCol });"));
+  });
 });

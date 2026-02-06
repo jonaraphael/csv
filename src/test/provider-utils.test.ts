@@ -148,6 +148,60 @@ describe('CsvEditorProvider utility methods', () => {
     assert.strictEqual(resolveMode('invalid', false, false), 'type');
   });
 
+  it('computes paste plan to fill rectangular selection for single-cell clipboard value', () => {
+    const plan = CsvEditorProvider.__test.computePastePlan(
+      [['X']],
+      5,
+      6,
+      { minRow: 1, maxRow: 2, minCol: 3, maxCol: 4, rectangular: true }
+    );
+    assert.deepStrictEqual(plan, {
+      startRow: 1,
+      startCol: 3,
+      endRow: 2,
+      endCol: 4,
+      fillSelection: true
+    });
+  });
+
+  it('applies matrix paste and expands data when needed', () => {
+    const data = [['a']];
+    const result = CsvEditorProvider.__test.applyPasteMatrixToData(
+      data,
+      [['x', 'y'], ['z', 'w']],
+      0,
+      1
+    );
+    assert.strictEqual(result.changed, true);
+    assert.strictEqual(result.structuralChange, true);
+    assert.strictEqual(result.plan.fillSelection, false);
+    assert.deepStrictEqual(data, [
+      ['a', 'x', 'y'],
+      ['', 'z', 'w']
+    ]);
+  });
+
+  it('fills selected rectangle when pasting a single-cell value', () => {
+    const data = [
+      ['a', 'b'],
+      ['c', 'd']
+    ];
+    const result = CsvEditorProvider.__test.applyPasteMatrixToData(
+      data,
+      [['q']],
+      0,
+      0,
+      { minRow: 0, maxRow: 1, minCol: 0, maxCol: 1, rectangular: true }
+    );
+    assert.strictEqual(result.changed, true);
+    assert.strictEqual(result.structuralChange, false);
+    assert.strictEqual(result.plan.fillSelection, true);
+    assert.deepStrictEqual(data, [
+      ['q', 'q'],
+      ['q', 'q']
+    ]);
+  });
+
   it('hslToHex converts known colors', () => {
     const hslToHex = CsvEditorProvider.__test.hslToHex;
     assert.strictEqual(hslToHex(0, 100, 50), '#ff0000');   // red
