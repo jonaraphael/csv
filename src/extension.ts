@@ -86,7 +86,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
 
-    const keys = ['csv.fontFamily', 'csv.cellPadding', 'csv.clickableLinks'];
+    const keys = ['csv.fontFamily', 'csv.cellPadding', 'csv.columnColorMode', 'csv.columnColorPalette', 'csv.clickableLinks'];
     const changed = keys.filter(k => e.affectsConfiguration(k));
     if (changed.length) {
       CsvEditorProvider.editors.forEach(ed => ed.refresh());

@@ -915,9 +915,19 @@ class CsvEditorController {
     const data = this.trimTrailingEmptyRows((parsed.data || []) as string[][]);
     const treatHeader = this.getEffectiveHeader(data, hiddenRows);
     const clickableLinks = config.get<boolean>('clickableLinks', true);
+    const columnColorMode = config.get<string>('columnColorMode', 'type');
+    const columnColorPalette = config.get<string>('columnColorPalette', 'default');
 
     const { tableHtml, chunksJson, colorCss } =
-      this.generateTableAndChunks(data, treatHeader, addSerialIndex, hiddenRows, clickableLinks);
+      this.generateTableAndChunks(
+        data,
+        treatHeader,
+        addSerialIndex,
+        hiddenRows,
+        clickableLinks,
+        columnColorMode,
+        columnColorPalette
+      );
 
     const nonce = this.getNonce();
 
@@ -938,7 +948,9 @@ class CsvEditorController {
     treatHeader: boolean,
     addSerialIndex: boolean,
     hiddenRows: number,
-    clickableLinks: boolean
+    clickableLinks: boolean,
+    columnColorMode: string,
+    columnColorPalette: string
   ): { tableHtml: string; chunksJson: string; colorCss: string } {
     let headerFlag = treatHeader;
     const totalRows = data.length;
@@ -962,7 +974,13 @@ class CsvEditorController {
 
     const columnData = Array.from({ length: numColumns }, (_, i) => bodyData.map(row => row[i] || ''));
     const columnTypes = columnData.map(col => this.estimateColumnDataType(col));
-    const columnColors = columnTypes.map((type, i) => this.getColumnColor(type, isDark, i));
+    const useThemeForeground = columnColorMode === 'theme';
+    const palette = columnColorPalette === 'cool'
+      ? 'cool'
+      : (columnColorPalette === 'warm' ? 'warm' : 'default');
+    const columnColors = useThemeForeground
+      ? Array.from({ length: numColumns }, () => 'var(--vscode-editor-foreground)')
+      : columnTypes.map((type, i) => this.getColumnColor(type, isDark, i, palette));
     const columnWidths = this.computeColumnWidths(visibleForWidth);
 
     const CHUNK_SIZE = 1000;
@@ -1004,9 +1022,9 @@ class CsvEditorController {
       }
     }
 
-    const colorCss = columnColors
-      .map((hex, i) => `td[data-col="${i}"], th[data-col="${i}"] { color: ${hex}; }`)
-      .join('');
+    const colorCss = useThemeForeground
+      ? ''
+      : columnColors.map((hex, i) => `td[data-col="${i}"], th[data-col="${i}"] { color: ${hex}; }`).join('');
 
     let tableHtml = `<table>`;
     if (headerFlag) {
@@ -1529,15 +1547,35 @@ class CsvEditorController {
     return "string";
   }
 
-  private getColumnColor(type: string, isDark: boolean, columnIndex: number): string {
+  private getColumnColor(type: string, isDark: boolean, columnIndex: number, palette: 'default' | 'cool' | 'warm' = 'default'): string {
     let hueRange = 0, isDefault = false;
-    switch (type){
-      case "boolean": hueRange = 30; break;
-      case "date": hueRange = 210; break;
-      case "float": hueRange = isDark ? 60 : 270; break;
-      case "integer": hueRange = 120; break;
-      case "string": hueRange = 0; break;
-      case "empty": isDefault = true; break;
+    if (palette === 'cool') {
+      switch (type){
+        case "boolean": hueRange = 160; break;
+        case "date": hueRange = 210; break;
+        case "float": hueRange = isDark ? 195 : 205; break;
+        case "integer": hueRange = 130; break;
+        case "string": hueRange = 190; break;
+        case "empty": isDefault = true; break;
+      }
+    } else if (palette === 'warm') {
+      switch (type){
+        case "boolean": hueRange = 55; break;
+        case "date": hueRange = 28; break;
+        case "float": hueRange = isDark ? 18 : 24; break;
+        case "integer": hueRange = 42; break;
+        case "string": hueRange = 8; break;
+        case "empty": isDefault = true; break;
+      }
+    } else {
+      switch (type){
+        case "boolean": hueRange = 30; break;
+        case "date": hueRange = 210; break;
+        case "float": hueRange = isDark ? 60 : 270; break;
+        case "integer": hueRange = 120; break;
+        case "string": hueRange = 0; break;
+        case "empty": isDefault = true; break;
+      }
     }
     if (isDefault) return isDark ? "#BBB" : "#444";
     const saturationOffset = ((columnIndex * 7) % 31) - 15;
@@ -1776,9 +1814,9 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       const c: any = new (CsvEditorController as any)({} as any);
       return c.estimateColumnDataType(col);
     },
-    getColumnColor(t: string, dark: boolean, i: number): string {
+    getColumnColor(t: string, dark: boolean, i: number, palette: 'default' | 'cool' | 'warm' = 'default'): string {
       const c: any = new (CsvEditorController as any)({} as any);
-      return c.getColumnColor(t, dark, i);
+      return c.getColumnColor(t, dark, i, palette);
     },
     hslToHex(h: number, s: number, l: number): string {
       const c: any = new (CsvEditorController as any)({} as any);
@@ -1833,9 +1871,17 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       return c.getSeparator();
     },
     // Expose chunking/table generation for large-data tests. Returns parsed chunk count.
-    generateTableChunksMeta(data: string[][], treatHeader: boolean, addSerialIndex: boolean, hiddenRows: number, clickableLinks: boolean = true): { chunkCount: number; hasTable: boolean } {
+    generateTableChunksMeta(
+      data: string[][],
+      treatHeader: boolean,
+      addSerialIndex: boolean,
+      hiddenRows: number,
+      clickableLinks: boolean = true,
+      columnColorMode: 'type' | 'theme' = 'type',
+      columnColorPalette: 'default' | 'cool' | 'warm' = 'default'
+    ): { chunkCount: number; hasTable: boolean } {
       const c: any = new (CsvEditorController as any)({} as any);
-      const result = c.generateTableAndChunks(data, treatHeader, addSerialIndex, hiddenRows, clickableLinks);
+      const result = c.generateTableAndChunks(data, treatHeader, addSerialIndex, hiddenRows, clickableLinks, columnColorMode, columnColorPalette);
       try {
         const chunks = JSON.parse(result.chunksJson);
         return { chunkCount: Array.isArray(chunks) ? chunks.length : 0, hasTable: typeof result.tableHtml === 'string' && result.tableHtml.includes('<table') };
@@ -1843,9 +1889,17 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         return { chunkCount: 0, hasTable: false };
       }
     },
-    generateTableAndChunksRaw(data: string[][], treatHeader: boolean, addSerialIndex: boolean, hiddenRows: number, clickableLinks: boolean = true): { tableHtml: string; chunks: string[] } {
+    generateTableAndChunksRaw(
+      data: string[][],
+      treatHeader: boolean,
+      addSerialIndex: boolean,
+      hiddenRows: number,
+      clickableLinks: boolean = true,
+      columnColorMode: 'type' | 'theme' = 'type',
+      columnColorPalette: 'default' | 'cool' | 'warm' = 'default'
+    ): { tableHtml: string; chunks: string[] } {
       const c: any = new (CsvEditorController as any)({} as any);
-      const result = c.generateTableAndChunks(data, treatHeader, addSerialIndex, hiddenRows, clickableLinks);
+      const result = c.generateTableAndChunks(data, treatHeader, addSerialIndex, hiddenRows, clickableLinks, columnColorMode, columnColorPalette);
       let chunks: string[] = [];
       try { chunks = JSON.parse(result.chunksJson); } catch {}
       return { tableHtml: result.tableHtml, chunks };

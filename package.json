@@ -113,6 +113,25 @@
           "default": 4,
           "description": "Vertical padding in pixels for table cells."
         },
+        "csv.columnColorMode": {
+          "type": "string",
+          "enum": [
+            "type",
+            "theme"
+          ],
+          "default": "type",
+          "description": "Column text color mode. 'type' uses CSV's type-based colors. 'theme' uses the current theme foreground color for all columns."
+        },
+        "csv.columnColorPalette": {
+          "type": "string",
+          "enum": [
+            "default",
+            "cool",
+            "warm"
+          ],
+          "default": "default",
+          "description": "Type-color palette when csv.columnColorMode is 'type'. 'default' keeps the original palette, 'cool' biases colors toward greens/blues, and 'warm' biases colors toward oranges/reds."
+        },
         "csv.clickableLinks": {
           "type": "boolean",
           "default": true,

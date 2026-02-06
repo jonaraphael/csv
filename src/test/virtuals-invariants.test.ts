@@ -72,4 +72,17 @@ describe('Virtual row and cell invariants', () => {
     assert.ok(disabled.tableHtml.includes('www.example.com/path?q=1'));
     assert.ok(!disabled.tableHtml.includes('class="csv-link"'));
   });
+
+  it('supports opt-in theme foreground column colors', () => {
+    const rows = [['alpha', 'beta']];
+    const themed = CsvEditorProvider.__test.generateTableAndChunksRaw(
+      rows,
+      /*treatHeader*/ false,
+      /*addSerialIndex*/ false,
+      /*hiddenRows*/ 0,
+      /*clickableLinks*/ true,
+      /*columnColorMode*/ 'theme'
+    );
+    assert.ok(themed.tableHtml.includes('color: var(--vscode-editor-foreground);'));
+  });
 });

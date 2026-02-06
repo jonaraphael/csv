@@ -122,6 +122,22 @@ describe('CsvEditorProvider utility methods', () => {
     assert.match(hex, /^#[0-9a-fA-F]{6}$/);
   });
 
+  it('getColumnColor supports an opt-in cool palette', () => {
+    const getColor = CsvEditorProvider.__test.getColumnColor;
+    const def = getColor('string', false, 0, 'default');
+    const cool = getColor('string', false, 0, 'cool');
+    assert.match(cool, /^#[0-9a-fA-F]{6}$/);
+    assert.notStrictEqual(def, cool);
+  });
+
+  it('getColumnColor supports an opt-in warm palette', () => {
+    const getColor = CsvEditorProvider.__test.getColumnColor;
+    const def = getColor('string', false, 0, 'default');
+    const warm = getColor('string', false, 0, 'warm');
+    assert.match(warm, /^#[0-9a-fA-F]{6}$/);
+    assert.notStrictEqual(def, warm);
+  });
+
   it('hslToHex converts known colors', () => {
     const hslToHex = CsvEditorProvider.__test.hslToHex;
     assert.strictEqual(hslToHex(0, 100, 50), '#ff0000');   // red
