@@ -33,6 +33,25 @@ type PasteApplyResult = {
   updates: Array<{ row: number; col: number; value: string }>;
   plan: PastePlan;
 };
+type ChunkRenderState = {
+  startAbs: number;
+  allRows: string[][];
+  allRowsCount: number;
+  chunkRows: number;
+  includeTrailingEmptyRow: boolean;
+  addSerialIndex: boolean;
+  numColumns: number;
+  columnWidths: number[];
+  columnColors: string[];
+  clickableLinks: boolean;
+  isDark: boolean;
+  serialIndexWidthCh: number;
+};
+type ChunkResponse = {
+  html: string;
+  nextStart: number;
+  done: boolean;
+};
 
 // Per-document controller. Manages one webview + document.
 class CsvEditorController {
@@ -49,6 +68,7 @@ class CsvEditorController {
   private document!: vscode.TextDocument;
   private separatorCache: { version: number; configKey: string; separator: string } | undefined;
   private isDiffContext = false;
+  private chunkRenderState: ChunkRenderState | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -111,6 +131,9 @@ class CsvEditorController {
           break;
         case 'pasteCells':
           await this.pasteCells(e.text, e.anchorRow, e.anchorCol, e.selection);
+          break;
+        case 'requestChunk':
+          await this.requestChunk(e.start, e.requestId);
           break;
         case 'findMatches':
           await this.findMatches(e.requestId, e.query, e.options);
@@ -710,6 +733,78 @@ class CsvEditorController {
     }
   }
 
+  private renderChunkFromState(state: ChunkRenderState, start: number): ChunkResponse {
+    if (!Number.isInteger(start) || start < 0) {
+      return { html: '', nextStart: -1, done: true };
+    }
+
+    if (start < state.allRowsCount) {
+      const end = Math.min(start + state.chunkRows, state.allRowsCount);
+      const html = state.allRows.slice(start, end).map((row, localR) => {
+        const absRow = state.startAbs + start + localR;
+        const displayIdx = start + localR + 1;
+        let cells = '';
+        for (let cIdx = 0; cIdx < state.numColumns; cIdx++) {
+          const rawValue = row[cIdx] || '';
+          const safe = this.formatCellContent(rawValue, state.clickableLinks);
+          const titleAttr = this.getMultilineCellTitleAttr(rawValue);
+          cells += `<td tabindex="0" style="min-width:${Math.min(state.columnWidths[cIdx] || 0, 100)}ch;max-width:100ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:${state.columnColors[cIdx]};overflow:visible;white-space: pre-wrap;overflow-wrap:anywhere;"${titleAttr} data-row="${absRow}" data-col="${cIdx}">${safe}</td>`;
+        }
+        const idxCell = state.addSerialIndex
+          ? `<td tabindex="0" style="min-width:${state.serialIndexWidthCh}ch;max-width:${state.serialIndexWidthCh}ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:#888;" data-row="${absRow}" data-col="-1">${displayIdx}</td>`
+          : '';
+        return `<tr>${idxCell}${cells}</tr>`;
+      }).join('');
+
+      if (end < state.allRowsCount) {
+        return { html, nextStart: end, done: false };
+      }
+      if (state.includeTrailingEmptyRow) {
+        return { html, nextStart: state.allRowsCount, done: false };
+      }
+      return { html, nextStart: -1, done: true };
+    }
+
+    if (start === state.allRowsCount && state.includeTrailingEmptyRow) {
+      const virtualAbs = state.startAbs + state.allRowsCount;
+      const displayIdx = state.allRowsCount + 1;
+      const idxCell = state.addSerialIndex
+        ? `<td tabindex="0" style="min-width:${state.serialIndexWidthCh}ch;max-width:${state.serialIndexWidthCh}ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:#888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>`
+        : '';
+      const dataCells = Array.from({ length: state.numColumns }, (_, i) => `<td tabindex="0" style="min-width:${Math.min(state.columnWidths[i] || 0, 100)}ch;max-width:100ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:${state.columnColors[i]};overflow:visible;white-space: pre-wrap;overflow-wrap:anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+      return { html: `<tr>${idxCell}${dataCells}</tr>`, nextStart: -1, done: true };
+    }
+
+    return { html: '', nextStart: -1, done: true };
+  }
+
+  private async requestChunk(rawStart: unknown, requestId: unknown): Promise<void> {
+    if (!this.currentWebviewPanel || !this.chunkRenderState) {
+      return;
+    }
+    const start = Number(rawStart);
+    if (!Number.isInteger(start) || start < 0) {
+      this.currentWebviewPanel.webview.postMessage({
+        type: 'chunkData',
+        requestId,
+        start: -1,
+        html: '',
+        nextStart: -1,
+        done: true
+      });
+      return;
+    }
+    const response = this.renderChunkFromState(this.chunkRenderState, start);
+    this.currentWebviewPanel.webview.postMessage({
+      type: 'chunkData',
+      requestId,
+      start,
+      html: response.html,
+      nextStart: response.nextStart,
+      done: response.done
+    });
+  }
+
   private escapeFindRegex(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
@@ -1282,7 +1377,7 @@ class CsvEditorController {
     const columnColorPalette = config.get<string>('columnColorPalette', 'default');
     const showTrailingEmptyRow = config.get<boolean>('showTrailingEmptyRow', true);
 
-    const { tableHtml, chunksJson, colorCss } =
+    const { tableHtml, chunksJson, colorCss, nextChunkStart, hasRemoteChunks, chunkState } =
       this.generateTableAndChunks(
         data,
         treatHeader,
@@ -1291,8 +1386,10 @@ class CsvEditorController {
         clickableLinks,
         columnColorMode,
         columnColorPalette,
-        showTrailingEmptyRow
+        showTrailingEmptyRow,
+        /* maxSerializedChunks */ 0
       );
+    this.chunkRenderState = chunkState;
 
     const nonce = this.getNonce();
 
@@ -1304,7 +1401,9 @@ class CsvEditorController {
       separator,
       tableHtml,
       chunksJson,
-      extraColumnColorCss: colorCss
+      extraColumnColorCss: colorCss,
+      nextChunkStart,
+      hasRemoteChunks
     });
   }
 
@@ -1316,8 +1415,16 @@ class CsvEditorController {
     clickableLinks: boolean,
     columnColorMode: string,
     columnColorPalette: string,
-    showTrailingEmptyRow: boolean
-  ): { tableHtml: string; chunksJson: string; colorCss: string } {
+    showTrailingEmptyRow: boolean,
+    maxSerializedChunks: number = Number.MAX_SAFE_INTEGER
+  ): {
+    tableHtml: string;
+    chunksJson: string;
+    colorCss: string;
+    nextChunkStart: number;
+    hasRemoteChunks: boolean;
+    chunkState: ChunkRenderState | undefined;
+  } {
     let headerFlag = treatHeader;
     const totalRows = data.length;
     const offset = Math.min(Math.max(0, hiddenRows), totalRows);
@@ -1349,20 +1456,35 @@ class CsvEditorController {
       : columnTypes.map((type, i) => this.getColumnColor(type, isDark, i, palette));
     const columnWidths = this.computeColumnWidths(visibleForWidth);
 
-    const CHUNK_SIZE = 1000;
-    const allRows = headerFlag ? bodyData : data.slice(offset);
+    const BASE_CHUNK_ROWS = 1000;
+    const MAX_CELLS_PER_CHUNK = 20000;
+    const MIN_CHUNK_ROWS = 10;
+    const allRows = headerFlag ? data.slice(offset + 1) : data.slice(offset);
     const allRowsCount = allRows.length; // preserve total before any truncation
+    const chunkRows = Math.max(
+      MIN_CHUNK_ROWS,
+      Math.min(BASE_CHUNK_ROWS, Math.floor(MAX_CELLS_PER_CHUNK / Math.max(1, numColumns)))
+    );
     // Always keep one editable row for fully empty views; otherwise allow disabling the
     // trailing virtual row via settings.
     const includeTrailingEmptyRow = showTrailingEmptyRow || allRowsCount === 0;
     const serialIndexMaxDisplay = includeTrailingEmptyRow ? allRowsCount + 1 : allRowsCount;
     const serialIndexWidthCh = Math.max(4, String(Math.max(1, serialIndexMaxDisplay)).length + 1);
     const chunks: string[] = [];
-    const chunked = allRowsCount > CHUNK_SIZE;
+    const chunked = allRowsCount > chunkRows;
+    let nextChunkStart = -1;
+    const safeMaxSerializedChunks = Number.isFinite(maxSerializedChunks)
+      ? Math.max(0, Math.trunc(maxSerializedChunks))
+      : 0;
+    let serializedChunkCount = 0;
 
-    if (allRowsCount > CHUNK_SIZE) {
-      for (let i = CHUNK_SIZE; i < allRowsCount; i += CHUNK_SIZE) {
-        const htmlChunk = allRows.slice(i, i + CHUNK_SIZE).map((row, localR) => {
+    if (chunked) {
+      for (let i = chunkRows; i < allRowsCount; i += chunkRows) {
+        if (serializedChunkCount >= safeMaxSerializedChunks) {
+          nextChunkStart = i;
+          break;
+        }
+        const htmlChunk = allRows.slice(i, i + chunkRows).map((row, localR) => {
           const startAbs = headerFlag ? offset + 1 : offset;
           const absRow = startAbs + i + localR;
           const displayIdx = i + localR + 1; // numbering relative to first visible data row
@@ -1380,17 +1502,7 @@ class CsvEditorController {
         }).join('');
 
         chunks.push(htmlChunk);
-      }
-
-      // Only render the first chunk worth of rows in the initial table; the rest
-      // are appended lazily from `chunks` via the webview script's loader.
-      if (headerFlag) {
-        bodyData.length = CHUNK_SIZE;
-      } else {
-        // For non-header mode, limit visible rows for the initial render as well.
-        // The remainder will stream from `chunks`.
-        // Note: we don't mutate the original data array; simply rely on the
-        // limited `nonHeaderRows` below when rendering the table body.
+        serializedChunkCount++;
       }
     }
 
@@ -1410,7 +1522,8 @@ class CsvEditorController {
         tableHtml += `<th tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${offset}" data-col="${i}">${safe}</th>`;
       }
       tableHtml += `</tr></thead><tbody>`;
-      bodyData.forEach((row, r) => {
+      const initialBodyRows = chunked ? allRows.slice(0, chunkRows) : allRows;
+      initialBodyRows.forEach((row, r) => {
         tableHtml += `<tr>${
           addSerialIndex
             ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${offset + 1 + r}" data-col="-1">${r + 1}</td>`
@@ -1425,16 +1538,15 @@ class CsvEditorController {
         tableHtml += `</tr>`;
       });
       if (!chunked && includeTrailingEmptyRow) {
-        const virtualAbs = offset + 1 + bodyData.length;
-        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${bodyData.length + 1}</td>` : '';
+        const virtualAbs = offset + 1 + initialBodyRows.length;
+        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${initialBodyRows.length + 1}</td>` : '';
         const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
         tableHtml += `<tr>${idxCell}${dataCells}</tr>`;
       }
       tableHtml += `</tbody>`;
     } else {
       tableHtml += `<tbody>`;
-      const nonHeaderAll = data.slice(offset);
-      const nonHeaderRows = chunked ? nonHeaderAll.slice(0, CHUNK_SIZE) : nonHeaderAll;
+      const nonHeaderRows = chunked ? allRows.slice(0, chunkRows) : allRows;
       nonHeaderRows.forEach((row, r) => {
         tableHtml += `<tr>${
           addSerialIndex
@@ -1461,16 +1573,45 @@ class CsvEditorController {
     tableHtml += `</table>`;
     // If chunked, append a final chunk with the virtual row so it appears at the end.
     if (chunked && includeTrailingEmptyRow) {
-      const startAbs = headerFlag ? offset + 1 : offset;
-      const virtualAbs = startAbs + allRowsCount;
-      const displayIdx = allRowsCount + 1;
-      const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
-      const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
-      const vrow = `<tr>${idxCell}${dataCells}</tr>`;
-      chunks.push(vrow);
+      if (nextChunkStart === -1 && serializedChunkCount < safeMaxSerializedChunks) {
+        const startAbs = headerFlag ? offset + 1 : offset;
+        const virtualAbs = startAbs + allRowsCount;
+        const displayIdx = allRowsCount + 1;
+        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
+        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+        const vrow = `<tr>${idxCell}${dataCells}</tr>`;
+        chunks.push(vrow);
+      } else if (nextChunkStart === -1) {
+        nextChunkStart = allRowsCount;
+      }
     }
 
-    return { tableHtml, chunksJson: JSON.stringify(chunks), colorCss };
+    const hasRemoteChunks = nextChunkStart >= 0;
+    const chunkState: ChunkRenderState | undefined = chunked
+      ? {
+          startAbs: headerFlag ? offset + 1 : offset,
+          allRows,
+          allRowsCount,
+          chunkRows,
+          includeTrailingEmptyRow,
+          addSerialIndex,
+          numColumns,
+          columnWidths,
+          columnColors,
+          clickableLinks,
+          isDark,
+          serialIndexWidthCh
+        }
+      : undefined;
+
+    return {
+      tableHtml,
+      chunksJson: JSON.stringify(chunks),
+      colorCss,
+      nextChunkStart,
+      hasRemoteChunks,
+      chunkState
+    };
   }
 
   // Heuristic: If there is no explicit override for this file, compute default header as
@@ -1510,8 +1651,10 @@ class CsvEditorController {
     tableHtml: string;
     chunksJson: string;
     extraColumnColorCss: string;
+    nextChunkStart: number;
+    hasRemoteChunks: boolean;
   }): string {
-    const { webview, nonce, fontFamily, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss } = args;
+    const { webview, nonce, fontFamily, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks } = args;
     const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
     // Build script URI using file path for compatibility (older APIs may lack Uri.joinPath)
     const scriptUri = webview.asWebviewUri(
@@ -1722,7 +1865,7 @@ class CsvEditorController {
     </style>
   </head>
   <body>
-    <div id="csv-root" class="table-container" data-sepcode="${sepCode}">
+    <div id="csv-root" class="table-container" data-sepcode="${sepCode}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
       ${tableHtml}
     </div>
 
@@ -2673,6 +2816,55 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       let chunks: string[] = [];
       try { chunks = JSON.parse(result.chunksJson); } catch {}
       return { tableHtml: result.tableHtml, chunks };
+    },
+    generateRuntimeChunkTransport(
+      data: string[][],
+      treatHeader: boolean,
+      addSerialIndex: boolean,
+      hiddenRows: number,
+      start: number | undefined = undefined
+    ): {
+      serializedChunkCount: number;
+      nextChunkStart: number;
+      hasRemoteChunks: boolean;
+      hasChunkState: boolean;
+      response?: { html: string; nextStart: number; done: boolean };
+    } {
+      const c: any = new (CsvEditorController as any)({} as any);
+      const result = c.generateTableAndChunks(
+        data,
+        treatHeader,
+        addSerialIndex,
+        hiddenRows,
+        /* clickableLinks */ true,
+        /* columnColorMode */ 'type',
+        /* columnColorPalette */ 'default',
+        /* showTrailingEmptyRow */ true,
+        /* maxSerializedChunks */ 0
+      );
+      let chunks: string[] = [];
+      try { chunks = JSON.parse(result.chunksJson); } catch {}
+      const out: {
+        serializedChunkCount: number;
+        nextChunkStart: number;
+        hasRemoteChunks: boolean;
+        hasChunkState: boolean;
+        response?: { html: string; nextStart: number; done: boolean };
+      } = {
+        serializedChunkCount: chunks.length,
+        nextChunkStart: result.nextChunkStart,
+        hasRemoteChunks: result.hasRemoteChunks,
+        hasChunkState: !!result.chunkState
+      };
+      if (typeof start === 'number' && result.chunkState) {
+        const response = c.renderChunkFromState(result.chunkState, start);
+        out.response = {
+          html: response.html,
+          nextStart: response.nextStart,
+          done: response.done
+        };
+      }
+      return out;
     }
   };
 }

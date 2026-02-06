@@ -108,11 +108,10 @@ const restoreState = () => {
         let guard = 100;
       while (
         typeof window.__csvLoadNextChunk === 'function' &&
-        csvChunks && csvChunks.length &&
         (scrollContainer.scrollHeight - scrollContainer.clientHeight < st.scrollY) &&
         guard-- > 0
       ) {
-        window.__csvLoadNextChunk();
+        if (!window.__csvLoadNextChunk()) break;
       }
       applySizeStateToRenderedCells();
       scrollContainer.scrollTop = st.scrollY;
@@ -126,8 +125,8 @@ const restoreState = () => {
       // If not present yet (due to chunking), load chunks until available or exhausted
       if (!sel && typeof window.__csvLoadNextChunk === 'function') {
         let guard = 100; // prevent infinite loops
-        while (!sel && typeof window.__csvLoadNextChunk === 'function' && csvChunks && csvChunks.length && guard-- > 0) {
-          window.__csvLoadNextChunk();
+        while (!sel && typeof window.__csvLoadNextChunk === 'function' && guard-- > 0) {
+          if (!window.__csvLoadNextChunk()) break;
           sel = table.querySelector(`${tag}[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"]`);
         }
       }
@@ -148,7 +147,6 @@ const restoreState = () => {
 };
 
 /* ──────────── VIRTUAL-SCROLL LOADER ──────────── */
-const CHUNK_SIZE = 1000;
 // We use a <template> to carry JSON so CSP doesn't block it like a <script> might
 const chunkTemplate = document.getElementById('__csvChunks');
 let csvChunks = [];
@@ -158,19 +156,53 @@ try {
   // Swallow parse errors; chunking will simply be disabled
   csvChunks = [];
 }
+let remoteNextChunkStart = Number.parseInt(root?.dataset?.nextchunkstart || '', 10);
+if (!Number.isInteger(remoteNextChunkStart) || remoteNextChunkStart < 0) {
+  remoteNextChunkStart = -1;
+}
+let remoteHasMoreChunks = root?.dataset?.hasmorechunks === '1' && remoteNextChunkStart >= 0;
+let remoteChunkRequestInFlight = false;
+let remoteChunkRequestedStart = -1;
+let remoteChunkRequestSeq = 0;
+let pendingEnsureTarget = null;
+let nearBottom = () => false;
+let loadNextChunk = () => false;
 
-if (csvChunks.length) {
+const requestRemoteChunk = () => {
+  if (!remoteHasMoreChunks) return;
+  if (remoteChunkRequestInFlight) return;
+  if (!Number.isInteger(remoteNextChunkStart) || remoteNextChunkStart < 0) {
+    remoteHasMoreChunks = false;
+    return;
+  }
+  remoteChunkRequestInFlight = true;
+  remoteChunkRequestedStart = remoteNextChunkStart;
+  remoteChunkRequestSeq += 1;
+  vscode.postMessage({ type: 'requestChunk', start: remoteNextChunkStart, requestId: remoteChunkRequestSeq });
+};
+
+if (csvChunks.length || remoteHasMoreChunks) {
   const tbody = table.tBodies[0];
   let loading = false;
 
-  const loadNextChunk = () => {
-    if (loading || !csvChunks.length || !tbody) return;
+  loadNextChunk = () => {
+    if (loading || !tbody) return false;
+    if (!csvChunks.length) {
+      requestRemoteChunk();
+      return false;
+    }
     loading = true;
     try {
       const html = csvChunks.shift();
-      tbody.insertAdjacentHTML('beforeend', html);
-      applySizeStateToRenderedCells();
-      window.dispatchEvent(new Event('csvChunkLoaded'));
+      if (html) {
+        tbody.insertAdjacentHTML('beforeend', html);
+        applySizeStateToRenderedCells();
+        window.dispatchEvent(new Event('csvChunkLoaded'));
+      }
+      if (!csvChunks.length) {
+        requestRemoteChunk();
+      }
+      return !!html;
     } finally {
       loading = false;
     }
@@ -178,7 +210,7 @@ if (csvChunks.length) {
   // Expose for restoration logic
   window.__csvLoadNextChunk = loadNextChunk;
 
-  const nearBottom = () => {
+  nearBottom = () => {
     if (!scrollContainer) return false;
     const remain = scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight;
     return remain < 300; // px threshold
@@ -200,12 +232,12 @@ if (csvChunks.length) {
 
   // Fallback: scroll-driven loader to ensure progress even if IO misses
   const scrollHandler = () => {
-    if (!csvChunks.length) return;
+    if (!csvChunks.length && !remoteHasMoreChunks) return;
     if (nearBottom()) {
-      // Load until we create headroom or exhaust chunks
+      // Load until we create headroom or exhaust currently available chunks
       let guard = 10;
-      while (csvChunks.length && nearBottom() && guard-- > 0) {
-        loadNextChunk();
+      while (nearBottom() && guard-- > 0) {
+        if (!loadNextChunk()) break;
       }
       prime();
     }
@@ -213,6 +245,25 @@ if (csvChunks.length) {
   if (scrollContainer) scrollContainer.addEventListener('scroll', scrollHandler, { passive: true });
   else window.addEventListener('scroll', scrollHandler, { passive: true });
 }
+
+const ensureTargetStep = () => {
+  if (!pendingEnsureTarget) return;
+  const { row, col } = pendingEnsureTarget;
+  const sel = table.querySelector(`td[data-row="${row}"][data-col="${col}"], th[data-row="${row}"][data-col="${col}"]`);
+  if (sel) {
+    pendingEnsureTarget = null;
+    return;
+  }
+  pendingEnsureTarget.guard -= 1;
+  if (pendingEnsureTarget.guard <= 0 || (!remoteHasMoreChunks && !csvChunks.length)) {
+    pendingEnsureTarget = null;
+    return;
+  }
+  if (!loadNextChunk()) {
+    requestRemoteChunk();
+  }
+};
+window.addEventListener('csvChunkLoaded', ensureTargetStep);
 /* ───────── END VIRTUAL-SCROLL LOADER ───────── */
 
 // Restore state after initial DOM is ready
@@ -999,9 +1050,13 @@ const ensureRenderedCellByCoords = (row, col) => {
     return null;
   }
   let guard = 50000;
-  while (!cell && csvChunks && csvChunks.length > 0 && guard-- > 0) {
-    window.__csvLoadNextChunk();
+  while (!cell && guard-- > 0) {
+    if (!window.__csvLoadNextChunk()) break;
     cell = getRenderedCellByCoords(row, col);
+  }
+  if (!cell && (remoteHasMoreChunks || remoteChunkRequestInFlight)) {
+    pendingEnsureTarget = { row, col, guard: 5000 };
+    requestRemoteChunk();
   }
   return cell;
 };
@@ -1915,6 +1970,37 @@ window.addEventListener('message', event => {
       try { anchorCell.focus({ preventScroll: true }); } catch { try { anchorCell.focus(); } catch {} }
     } else {
       try { document.body.focus({ preventScroll: true }); } catch { try { document.body.focus(); } catch {} }
+    }
+  } else if (message.type === 'chunkData') {
+    const requestId = Number(message.requestId);
+    const start = Number(message.start);
+    if (remoteChunkRequestInFlight) {
+      if (!Number.isInteger(requestId) || requestId !== remoteChunkRequestSeq) {
+        return;
+      }
+      if (!Number.isInteger(start) || start !== remoteChunkRequestedStart) {
+        return;
+      }
+    }
+    remoteChunkRequestInFlight = false;
+    remoteChunkRequestedStart = -1;
+    const html = typeof message.html === 'string' ? message.html : '';
+    const nextStart = Number(message.nextStart);
+    const done = !!message.done;
+    if (html.length > 0) {
+      csvChunks.push(html);
+    }
+    if (!done && Number.isInteger(nextStart) && nextStart >= 0) {
+      remoteNextChunkStart = nextStart;
+      remoteHasMoreChunks = true;
+    } else {
+      remoteNextChunkStart = -1;
+      remoteHasMoreChunks = false;
+    }
+    if (csvChunks.length && pendingEnsureTarget) {
+      ensureTargetStep();
+    } else if (csvChunks.length && nearBottom()) {
+      loadNextChunk();
     }
   } else if(message.type === 'updateCell'){
     isUpdating = true;

@@ -8,7 +8,10 @@ import Module from 'module';
 const originalRequire = Module.prototype.require;
 Module.prototype.require = function (id: string) {
   if (id === 'vscode') {
-    return {} as any;
+    return {
+      window: { activeColorTheme: { kind: 1 } },
+      ColorThemeKind: { Dark: 1 }
+    } as any;
   }
   return originalRequire.apply(this, arguments as any);
 };
@@ -207,5 +210,58 @@ describe('CsvEditorProvider utility methods', () => {
     assert.strictEqual(hslToHex(0, 100, 50), '#ff0000');   // red
     assert.strictEqual(hslToHex(120, 100, 50), '#00ff00'); // green
     assert.strictEqual(hslToHex(240, 100, 50), '#0000ff'); // blue
+  });
+
+  it('runtime transport defers chunk serialization and serves chunks on demand', () => {
+    const rows: string[][] = Array.from({ length: 2500 }, (_, i) => [String(i + 1), 'x', 'y']);
+    const meta = CsvEditorProvider.__test.generateRuntimeChunkTransport(
+      rows,
+      /* treatHeader */ false,
+      /* addSerialIndex */ false,
+      /* hiddenRows */ 0
+    );
+    assert.strictEqual(meta.serializedChunkCount, 0);
+    assert.strictEqual(meta.hasRemoteChunks, true);
+    assert.strictEqual(meta.hasChunkState, true);
+    assert.strictEqual(meta.nextChunkStart, 1000);
+
+    const nextChunk = CsvEditorProvider.__test.generateRuntimeChunkTransport(
+      rows,
+      false,
+      false,
+      0,
+      1000
+    );
+    assert.ok(nextChunk.response);
+    assert.strictEqual(nextChunk.response?.done, false);
+    assert.strictEqual(nextChunk.response?.nextStart, 2000);
+    assert.ok(nextChunk.response?.html.includes('data-row="1000" data-col="0"'));
+
+    const virtualChunk = CsvEditorProvider.__test.generateRuntimeChunkTransport(
+      rows,
+      false,
+      false,
+      0,
+      2500
+    );
+    assert.ok(virtualChunk.response);
+    assert.strictEqual(virtualChunk.response?.done, true);
+    assert.strictEqual(virtualChunk.response?.nextStart, -1);
+    assert.ok(virtualChunk.response?.html.includes('data-row="2500" data-col="0"'));
+  });
+
+  it('runtime transport shrinks chunk row count for very wide datasets', () => {
+    const width = 250;
+    const wideRow = Array.from({ length: width }, (_, i) => `c${i}`);
+    const rows: string[][] = Array.from({ length: 1300 }, () => [...wideRow]);
+    const meta = CsvEditorProvider.__test.generateRuntimeChunkTransport(
+      rows,
+      /* treatHeader */ false,
+      /* addSerialIndex */ false,
+      /* hiddenRows */ 0
+    );
+    // 20,000 max cells per chunk => floor(20000 / 250) = 80 rows per chunk.
+    assert.strictEqual(meta.nextChunkStart, 80);
+    assert.strictEqual(meta.hasRemoteChunks, true);
   });
 });
