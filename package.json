@@ -123,6 +123,18 @@
           "description": "Font size in pixels for the CSV custom editor. Set to 0 to inherit 'editor.fontSize'.",
           "scope": "application"
         },
+        "csv.mouseWheelZoom": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Ctrl/Cmd + mouse wheel zoom in the CSV editor.",
+          "scope": "application"
+        },
+        "csv.mouseWheelZoomInvert": {
+          "type": "boolean",
+          "default": false,
+          "description": "Invert the Ctrl/Cmd + mouse wheel zoom direction in the CSV editor.",
+          "scope": "application"
+        },
         "csv.cellPadding": {
           "type": "number",
           "default": 4,

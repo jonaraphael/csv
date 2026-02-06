@@ -1396,6 +1396,8 @@ class CsvEditorController {
     );
     const columnColorPalette = config.get<string>('columnColorPalette', 'default');
     const showTrailingEmptyRow = config.get<boolean>('showTrailingEmptyRow', true);
+    const mouseWheelZoomEnabled = config.get<boolean>('mouseWheelZoom', true);
+    const mouseWheelZoomInvert = config.get<boolean>('mouseWheelZoomInvert', false);
 
     const { tableHtml, chunksJson, colorCss, nextChunkStart, hasRemoteChunks, chunkState } =
       this.generateTableAndChunks(
@@ -1424,7 +1426,9 @@ class CsvEditorController {
       chunksJson,
       extraColumnColorCss: colorCss,
       nextChunkStart,
-      hasRemoteChunks
+      hasRemoteChunks,
+      mouseWheelZoomEnabled,
+      mouseWheelZoomInvert
     });
   }
 
@@ -1675,8 +1679,10 @@ class CsvEditorController {
     extraColumnColorCss: string;
     nextChunkStart: number;
     hasRemoteChunks: boolean;
+    mouseWheelZoomEnabled: boolean;
+    mouseWheelZoomInvert: boolean;
   }): string {
-    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks } = args;
+    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, mouseWheelZoomEnabled, mouseWheelZoomInvert } = args;
     const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
     // Build script URI using file path for compatibility (older APIs may lack Uri.joinPath)
     const scriptUri = webview.asWebviewUri(
@@ -1888,7 +1894,7 @@ class CsvEditorController {
     </style>
   </head>
   <body>
-    <div id="csv-root" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
+    <div id="csv-root" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
       ${tableHtml}
     </div>
 

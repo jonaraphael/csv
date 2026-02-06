@@ -12,10 +12,17 @@ const parsePositiveNumber = value => {
   if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
   return parsed;
 };
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const configuredFontSizePx = parsePositiveNumber(root?.dataset?.fontsize);
 const computedFontSizePx = parsePositiveNumber(window.getComputedStyle(document.body).fontSize);
 const BASE_FONT_SIZE_PX = configuredFontSizePx ?? computedFontSizePx ?? 14;
-const MIN_ROW_HEIGHT = Math.max(22, Math.round(BASE_FONT_SIZE_PX * 1.6));
+const MOUSE_WHEEL_ZOOM_ENABLED = root?.dataset?.wheelzoomenabled !== '0';
+const MOUSE_WHEEL_ZOOM_INVERTED = root?.dataset?.wheelzoominvert === '1';
+const ZOOM_STEP = 0.1;
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 3.0;
+let zoomScale = 1;
+const getMinRowHeight = () => Math.max(22, Math.round(BASE_FONT_SIZE_PX * zoomScale * 1.6));
 
 let lastContextIsHeader = false;   // remembers whether we right-clicked a <th>
 let isUpdating = false, isSelecting = false, anchorCell = null, rangeEndCell = null, currentSelection = [];
@@ -65,7 +72,7 @@ const applySizeStateToRenderedCells = () => {
     });
   }
   for (const [row, height] of Object.entries(rowSizeState)) {
-    const px = Math.max(MIN_ROW_HEIGHT, Math.round(Number(height)));
+    const px = Math.max(getMinRowHeight(), Math.round(Number(height)));
     table.querySelectorAll(`[data-row="${row}"]`).forEach(cell => {
       cell.style.height = `${px}px`;
       cell.style.minHeight = `${px}px`;
@@ -83,6 +90,46 @@ const getFirstDataRow = () => {
   return Number.isFinite(min) ? min : 0;
 };
 
+const setZoomScale = (nextScale, persist = true) => {
+  const normalized = clamp(Math.round(nextScale * 100) / 100, ZOOM_MIN, ZOOM_MAX);
+  if (Math.abs(normalized - zoomScale) < 0.001) {
+    return false;
+  }
+  zoomScale = normalized;
+  document.body.style.fontSize = `${Math.max(1, BASE_FONT_SIZE_PX * zoomScale)}px`;
+  applySizeStateToRenderedCells();
+  if (persist) {
+    persistState();
+  }
+  return true;
+};
+const zoomIn = () => setZoomScale(zoomScale + ZOOM_STEP);
+const zoomOut = () => setZoomScale(zoomScale - ZOOM_STEP);
+const resetZoom = () => setZoomScale(1);
+const isZoomModifier = e => (e.ctrlKey || e.metaKey) && !e.altKey;
+const isZoomInShortcut = e => e.code === 'NumpadAdd' || e.key === '+' || e.key === '=';
+const isZoomOutShortcut = e => e.code === 'NumpadSubtract' || e.key === '-' || e.key === '_';
+const isZoomResetShortcut = e => e.key === '0';
+const maybeHandleZoomShortcut = e => {
+  if (!isZoomModifier(e)) return false;
+  if (isZoomInShortcut(e)) {
+    e.preventDefault();
+    zoomIn();
+    return true;
+  }
+  if (isZoomOutShortcut(e)) {
+    e.preventDefault();
+    zoomOut();
+    return true;
+  }
+  if (isZoomResetShortcut(e)) {
+    e.preventDefault();
+    resetZoom();
+    return true;
+  }
+  return false;
+};
+
 // Persist/restore view state (scroll + selection) across webview reloads
 const persistState = () => {
   try {
@@ -95,7 +142,8 @@ const persistState = () => {
       anchorRow: anchor ? anchor.row : undefined,
       anchorCol: anchor ? anchor.col : undefined,
       columnSizes: { ...columnSizeState },
-      rowSizes: { ...rowSizeState }
+      rowSizes: { ...rowSizeState },
+      zoomScale
     };
     vscode.setState(nextState);
   } catch {}
@@ -104,8 +152,10 @@ const persistState = () => {
 const restoreState = () => {
   try {
     const st = vscode.getState() || {};
+    const restoredZoom = parsePositiveNumber(st.zoomScale);
+    setZoomScale(restoredZoom ?? 1, false);
     columnSizeState = normalizeSizeState(st.columnSizes, 40);
-    rowSizeState = normalizeSizeState(st.rowSizes, MIN_ROW_HEIGHT);
+    rowSizeState = normalizeSizeState(st.rowSizes, getMinRowHeight());
     applySizeStateToRenderedCells();
     if (typeof st.scrollX === 'number' && scrollContainer) {
       scrollContainer.scrollLeft = st.scrollX;
@@ -301,6 +351,21 @@ document.addEventListener('visibilitychange', () => {
     setTimeout(() => { try { restoreState(); } catch {} }, 0);
   }
 });
+
+const handleZoomWheel = e => {
+  if (!MOUSE_WHEEL_ZOOM_ENABLED) return;
+  if (!isZoomModifier(e)) return;
+  if (Math.abs(e.deltaY) < 0.1) return;
+  e.preventDefault();
+  const naturalDirection = e.deltaY < 0 ? 1 : -1;
+  const direction = MOUSE_WHEEL_ZOOM_INVERTED ? -naturalDirection : naturalDirection;
+  if (direction > 0) {
+    zoomIn();
+  } else {
+    zoomOut();
+  }
+};
+window.addEventListener('wheel', handleZoomWheel, { passive: false });
 
 const hasHeader = document.querySelector('thead') !== null;
 const getCellCoords = cell => ({ row: parseInt(cell.getAttribute('data-row')), col: parseInt(cell.getAttribute('data-col')) });
@@ -533,7 +598,7 @@ const resetColumnWidth = col => {
   });
 };
 const applyRowHeight = (row, heightPx) => {
-  const height = Math.max(MIN_ROW_HEIGHT, Math.round(heightPx));
+  const height = Math.max(getMinRowHeight(), Math.round(heightPx));
   rowSizeState[String(row)] = height;
   table.querySelectorAll(`[data-row="${row}"]`).forEach(cell => {
     cell.style.height = `${height}px`;
@@ -1428,6 +1493,9 @@ document.addEventListener('keydown', e => {
 }, true);
 
 document.addEventListener('keydown', e => {
+  if (maybeHandleZoomShortcut(e)) {
+    return;
+  }
   const key = typeof e.key === 'string' ? e.key.toLowerCase() : '';
   if ((e.ctrlKey || e.metaKey) && key === 'f') {
     e.preventDefault();
