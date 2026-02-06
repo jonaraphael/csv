@@ -1255,7 +1255,7 @@ document.addEventListener('keydown', e => {
   if (isFindWidgetTarget(e.target)) {
     return;
   }
-  const isArrowKey = (k) => ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Up','Down','Left','Right','Home','End','PageUp','PageDown'].includes(k);
+  const isArrowKey = (k) => ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Up','Down','Left','Right','Home','End'].includes(k);
   if (!editingCell && (e.ctrlKey || e.metaKey) && isArrowKey(e.key)) {
     e.preventDefault();
     e.stopImmediatePropagation();
@@ -1265,13 +1265,13 @@ document.addEventListener('keydown', e => {
     if (sc) {
       if (['ArrowLeft','Left','Home'].includes(e.key))  sc.scrollTo({ left: 0, behavior: 'smooth' });
       if (['ArrowRight','Right','End'].includes(e.key)) sc.scrollTo({ left: sc.scrollWidth, behavior: 'smooth' });
-      if (['ArrowUp','Up','PageUp'].includes(e.key))    sc.scrollTo({ top: 0, behavior: 'smooth' });
-      if (['ArrowDown','Down','PageDown'].includes(e.key))  sc.scrollTo({ top: sc.scrollHeight, behavior: 'smooth' });
+      if (['ArrowUp','Up'].includes(e.key))    sc.scrollTo({ top: 0, behavior: 'smooth' });
+      if (['ArrowDown','Down'].includes(e.key))  sc.scrollTo({ top: sc.scrollHeight, behavior: 'smooth' });
     } else {
-      if (['ArrowUp','Up','PageUp'].includes(e.key)) {
+      if (['ArrowUp','Up'].includes(e.key)) {
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }
-      if (['ArrowDown','Down','PageDown'].includes(e.key)) {
+      if (['ArrowDown','Down'].includes(e.key)) {
         const h = Math.max(
           document.body.scrollHeight,
           document.documentElement.scrollHeight
@@ -1296,10 +1296,10 @@ document.addEventListener('keydown', e => {
           .filter(el => el.getAttribute('data-col') !== null && el.getAttribute('data-col') !== '-1');
         const max = rowCells.reduce((acc, el) => Math.max(acc, parseInt(el.getAttribute('data-col'))), -1);
         target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === max) || ref;
-      } else if (['ArrowUp','Up','PageUp'].includes(e.key)) {
+      } else if (['ArrowUp','Up'].includes(e.key)) {
         const topRow = getFirstDataRow();
         target = table.querySelector('td[data-row="'+topRow+'"][data-col="'+col+'"]') || ref;
-      } else if (['ArrowDown','Down','PageDown'].includes(e.key)) {
+      } else if (['ArrowDown','Down'].includes(e.key)) {
         const colCells = Array.from(table.querySelectorAll('td[data-col="'+col+'"]'));
         target = (colCells.length ? colCells[colCells.length - 1] : null) || ref;
       }
@@ -1313,7 +1313,7 @@ document.addEventListener('keydown', e => {
       rangeEndCell = target;
       persistState();
       target.focus({preventScroll:true});
-      if (['ArrowUp','Up','PageUp'].includes(e.key)) {
+      if (['ArrowUp','Up'].includes(e.key)) {
         const topRow = getFirstDataRow();
         const below = table.querySelector('td[data-row="'+topRow+'"][data-col="'+getCellCoords(target).col+'"]');
         if (below) {
@@ -1381,15 +1381,15 @@ document.addEventListener('keydown', e => {
     return;
   }
 
-  const isArrowKey = (k) => ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Up','Down','Left','Right','Home','End','PageUp','PageDown'].includes(k);
+  const isArrowKey = (k) => ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Up','Down','Left','Right','Home','End'].includes(k);
   if (!editingCell && (e.ctrlKey || e.metaKey) && isArrowKey(e.key)) {
     e.preventDefault();
     const sc = document.querySelector('.table-container');
     if (sc) {
       if (['ArrowLeft','Left','Home'].includes(e.key))  sc.scrollTo({ left: 0, behavior: 'smooth' });
       if (['ArrowRight','Right','End'].includes(e.key)) sc.scrollTo({ left: sc.scrollWidth, behavior: 'smooth' });
-      if (['ArrowUp','Up','PageUp'].includes(e.key))    sc.scrollTo({ top: 0, behavior: 'smooth' });
-      if (['ArrowDown','Down','PageDown'].includes(e.key))  sc.scrollTo({ top: sc.scrollHeight, behavior: 'smooth' });
+      if (['ArrowUp','Up'].includes(e.key))    sc.scrollTo({ top: 0, behavior: 'smooth' });
+      if (['ArrowDown','Down'].includes(e.key))  sc.scrollTo({ top: sc.scrollHeight, behavior: 'smooth' });
     }
 
     let refCell = anchorCell;
@@ -1411,13 +1411,13 @@ document.addEventListener('keydown', e => {
           .filter(el => el.getAttribute('data-col') !== null && el.getAttribute('data-col') !== '-1');
         const max = rowCells.reduce((acc, el) => Math.max(acc, parseInt(el.getAttribute('data-col'))), -1);
         target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === max) || refCell;
-      } else if (['ArrowUp','Up','PageUp'].includes(e.key)) {
+      } else if (['ArrowUp','Up'].includes(e.key)) {
         if (hasHeader) {
           target = table.querySelector('th[data-row="0"][data-col="'+col+'"]') || refCell;
         } else {
           target = table.querySelector('td[data-row="0"][data-col="'+col+'"]') || refCell;
         }
-      } else if (['ArrowDown','Down','PageDown'].includes(e.key)) {
+      } else if (['ArrowDown','Down'].includes(e.key)) {
         const colCells = Array.from(table.querySelectorAll('td[data-col="'+col+'"]'));
         target = (colCells.length ? colCells[colCells.length - 1] : null) || refCell;
       }
