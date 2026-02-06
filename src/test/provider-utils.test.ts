@@ -26,6 +26,49 @@ describe('CsvEditorProvider utility methods', () => {
     assert.deepStrictEqual(widths, [4, 2, 3]);
   });
 
+  it('formatCellContent linkifies allowed URLs when enabled', () => {
+    const format = CsvEditorProvider.__test.formatCellContent;
+    const html = format('See https://example.com?a=1&b=2 and mailto:user@example.com', true);
+    assert.ok(html.includes('class="csv-link"'));
+    assert.ok(html.includes('data-href="https://example.com?a=1&amp;b=2"'));
+    assert.ok(html.includes('data-href="mailto:user@example.com"'));
+    assert.ok(html.includes('https://example.com?a=1&amp;b=2'));
+  });
+
+  it('formatCellContent linkifies www.*.* links like Google Sheets', () => {
+    const format = CsvEditorProvider.__test.formatCellContent;
+    const html = format('Visit www.google.com, then continue.', true);
+    assert.ok(html.includes('class="csv-link"'));
+    assert.ok(html.includes('data-href="https://www.google.com"'));
+    assert.ok(html.includes('>www.google.com</span>,'));
+  });
+
+  it('formatCellContent leaves URLs as plain text when linkify is disabled', () => {
+    const format = CsvEditorProvider.__test.formatCellContent;
+    const html = format('https://example.com?a=1&b=2', false);
+    assert.ok(!html.includes('class="csv-link"'));
+    assert.strictEqual(html, 'https://example.com?a=1&amp;b=2');
+  });
+
+  it('formatCellContent leaves www links as plain text when linkify is disabled', () => {
+    const format = CsvEditorProvider.__test.formatCellContent;
+    const html = format('www.google.com', false);
+    assert.ok(!html.includes('class="csv-link"'));
+    assert.strictEqual(html, 'www.google.com');
+  });
+
+  it('external link allowlist accepts only supported URL schemes', () => {
+    const allowed = CsvEditorProvider.__test.isAllowedExternalUrl;
+    assert.strictEqual(allowed('https://example.com'), true);
+    assert.strictEqual(allowed('http://example.com'), true);
+    assert.strictEqual(allowed('ftp://example.com/file.txt'), true);
+    assert.strictEqual(allowed('mailto:user@example.com'), true);
+    assert.strictEqual(allowed('javascript:alert(1)'), false);
+    assert.strictEqual(allowed('data:text/plain,hello'), false);
+    assert.strictEqual(allowed('file:///tmp/x.csv'), false);
+    assert.strictEqual(allowed(''), false);
+  });
+
   it('handles very large row counts without stack overflow', () => {
     const rows: string[][] = Array.from({ length: 70000 }, (_, i) => [String(i)]);
 

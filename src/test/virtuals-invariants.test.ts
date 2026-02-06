@@ -52,5 +52,15 @@ describe('Virtual row and cell invariants', () => {
       assert.ok(last.includes(needle), `expected virtual cell in chunk: ${needle}`);
     }
   });
-});
 
+  it('link rendering respects clickableLinks toggle', () => {
+    const rows = [['www.example.com/path?q=1']];
+    const enabled = CsvEditorProvider.__test.generateTableAndChunksRaw(rows, /*treatHeader*/ false, /*addSerialIndex*/ false, /*hiddenRows*/ 0, /*clickableLinks*/ true);
+    const disabled = CsvEditorProvider.__test.generateTableAndChunksRaw(rows, /*treatHeader*/ false, /*addSerialIndex*/ false, /*hiddenRows*/ 0, /*clickableLinks*/ false);
+
+    assert.ok(enabled.tableHtml.includes('class="csv-link"'));
+    assert.ok(enabled.tableHtml.includes('data-href="https://www.example.com/path?q=1"'));
+    assert.ok(disabled.tableHtml.includes('www.example.com/path?q=1'));
+    assert.ok(!disabled.tableHtml.includes('class="csv-link"'));
+  });
+});
