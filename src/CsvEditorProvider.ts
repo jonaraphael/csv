@@ -6,6 +6,11 @@ import * as path from 'path';
 class CsvEditorController {
   // Note: Global registry lives on CsvEditorProvider (wrapper)
 
+  private static readonly BYTES_PER_MB = 1024 * 1024;
+  private static readonly DEFAULT_MAX_FILE_SIZE_MB = 10;
+  private static readonly LARGE_FILE_CONTINUE_THIS_TIME = 'Continue This Time';
+  private static readonly LARGE_FILE_IGNORE_FOREVER = 'Ignore Forever';
+
   private isUpdatingDocument = false;
   private isSaving = false;
   private currentWebviewPanel: vscode.WebviewPanel | undefined;
@@ -25,12 +30,12 @@ class CsvEditorController {
     const config = vscode.workspace.getConfiguration('csv', this.document.uri);
     if (!config.get<boolean>('enabled', true)) {
       // When disabled, immediately hand off to the default editor and close this tab
-      try {
-        const opts: any = { viewColumn: webviewPanel.viewColumn, preserveFocus: !webviewPanel.active, preview: webviewPanel.active ? webviewPanel.active : false };
-        await vscode.commands.executeCommand('vscode.openWith', document.uri, 'default', opts);
-      } finally {
-        try { webviewPanel.dispose(); } catch {}
-      }
+      await this.openWithDefaultEditorAndClose(webviewPanel, document.uri);
+      return;
+    }
+
+    const proceed = await this.confirmLargeFileOpen(config, webviewPanel, _token);
+    if (!proceed) {
       return;
     }
 
@@ -123,6 +128,97 @@ class CsvEditorController {
       CsvEditorProvider.editors = CsvEditorProvider.editors.filter(ed => ed !== this);
       this.currentWebviewPanel = undefined;
     });
+  }
+
+  private getMaxFileSizeLimitMb(config: vscode.WorkspaceConfiguration): number {
+    const raw = Number(config.get<number>('maxFileSizeMB', CsvEditorController.DEFAULT_MAX_FILE_SIZE_MB));
+    if (!Number.isFinite(raw) || raw <= 0) {
+      return 0;
+    }
+    return raw;
+  }
+
+  private shouldPromptForLargeFile(fileSizeBytes: number, maxFileSizeMB: number): boolean {
+    if (!Number.isFinite(fileSizeBytes) || fileSizeBytes < 0) {
+      return false;
+    }
+    if (!Number.isFinite(maxFileSizeMB) || maxFileSizeMB <= 0) {
+      return false;
+    }
+    const thresholdBytes = Math.floor(maxFileSizeMB * CsvEditorController.BYTES_PER_MB);
+    return fileSizeBytes > thresholdBytes;
+  }
+
+  private formatSizeMb(fileSizeBytes: number): string {
+    if (!Number.isFinite(fileSizeBytes) || fileSizeBytes <= 0) {
+      return '0.0';
+    }
+    return (fileSizeBytes / CsvEditorController.BYTES_PER_MB).toFixed(1);
+  }
+
+  private async openWithDefaultEditorAndClose(webviewPanel: vscode.WebviewPanel, uri: vscode.Uri): Promise<void> {
+    try {
+      const opts: any = {
+        viewColumn: webviewPanel.viewColumn,
+        preserveFocus: !webviewPanel.active,
+        preview: webviewPanel.active ? webviewPanel.active : false
+      };
+      await vscode.commands.executeCommand('vscode.openWith', uri, 'default', opts);
+    } finally {
+      try { webviewPanel.dispose(); } catch {}
+    }
+  }
+
+  private async confirmLargeFileOpen(
+    config: vscode.WorkspaceConfiguration,
+    webviewPanel: vscode.WebviewPanel,
+    token: vscode.CancellationToken
+  ): Promise<boolean> {
+    const maxFileSizeMB = this.getMaxFileSizeLimitMb(config);
+    if (maxFileSizeMB <= 0) {
+      return true;
+    }
+
+    let sizeBytes = 0;
+    try {
+      const stat = await vscode.workspace.fs.stat(this.document.uri);
+      sizeBytes = Number(stat.size);
+    } catch (err) {
+      console.warn(`CSV: unable to stat file size for ${this.document.uri.toString()}`, err);
+      return true;
+    }
+
+    if (token.isCancellationRequested) {
+      return false;
+    }
+    if (!this.shouldPromptForLargeFile(sizeBytes, maxFileSizeMB)) {
+      return true;
+    }
+
+    const fileLabel = path.basename(this.document.uri.fsPath || this.document.uri.path || this.document.uri.toString());
+    const selected = await vscode.window.showWarningMessage(
+      `CSV: "${fileLabel}" is ${this.formatSizeMb(sizeBytes)} MB and exceeds the csv.maxFileSizeMB limit (${maxFileSizeMB} MB).`,
+      {
+        modal: true,
+        detail: 'Opening large files in CSV view can be slow and block the editor.'
+      },
+      CsvEditorController.LARGE_FILE_CONTINUE_THIS_TIME,
+      CsvEditorController.LARGE_FILE_IGNORE_FOREVER
+    );
+
+    if (selected === CsvEditorController.LARGE_FILE_CONTINUE_THIS_TIME) {
+      return true;
+    }
+    if (selected === CsvEditorController.LARGE_FILE_IGNORE_FOREVER) {
+      await vscode.workspace
+        .getConfiguration('csv')
+        .update('maxFileSizeMB', 0, vscode.ConfigurationTarget.Global);
+      vscode.window.showInformationMessage('CSV: Large-file prompt disabled (csv.maxFileSizeMB = 0).');
+      return true;
+    }
+
+    try { webviewPanel.dispose(); } catch {}
+    return false;
   }
 
   public refresh() {
@@ -1383,6 +1479,10 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     isAllowedExternalUrl(url: unknown): boolean {
       const c: any = new (CsvEditorController as any)({} as any);
       return c.isAllowedExternalUrl(url);
+    },
+    shouldPromptForLargeFile(fileSizeBytes: number, maxFileSizeMB: number): boolean {
+      const c: any = new (CsvEditorController as any)({} as any);
+      return c.shouldPromptForLargeFile(fileSizeBytes, maxFileSizeMB);
     },
     // Expose header heuristic for tests. Allows specifying hiddenRows and
     // optionally an override value through a mock workspaceState.

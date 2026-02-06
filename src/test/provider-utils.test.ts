@@ -69,6 +69,16 @@ describe('CsvEditorProvider utility methods', () => {
     assert.strictEqual(allowed(''), false);
   });
 
+  it('large file prompt helper honors threshold and disabled limit', () => {
+    const shouldPrompt = CsvEditorProvider.__test.shouldPromptForLargeFile;
+    const mb = 1024 * 1024;
+    assert.strictEqual(shouldPrompt(10 * mb, 10), false);
+    assert.strictEqual(shouldPrompt(10 * mb + 1, 10), true);
+    assert.strictEqual(shouldPrompt(50 * mb, 0), false);
+    assert.strictEqual(shouldPrompt(50 * mb, -1), false);
+    assert.strictEqual(shouldPrompt(50 * mb, Number.NaN), false);
+  });
+
   it('handles very large row counts without stack overflow', () => {
     const rows: string[][] = Array.from({ length: 70000 }, (_, i) => [String(i)]);
 

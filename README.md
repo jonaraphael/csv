@@ -97,6 +97,7 @@ Global (Settings UI or `settings.json`):
 - `csv.fontFamily` (string, default empty): Override font family; falls back to `editor.fontFamily`.
 - `csv.cellPadding` (number, default `4`): Vertical cell padding in pixels.
 - `csv.clickableLinks` (boolean, default `true`): Make URLs in cells clickable. Ctrl/Cmd+click to open links.
+- `csv.maxFileSizeMB` (number, default `10`): Soft limit for opening files in CSV view. If exceeded, CSV prompts: `Cancel`, `Continue This Time`, or `Ignore Forever` (sets this setting to `0`).
 - Per-file encoding: use `CSV: Change File Encoding` to set a file's encoding (e.g., `utf8`, `utf16le`, `windows1250`, `gbk`). The extension will reopen the file using the chosen encoding.
 
 Per-file (stored by the extension; set via commands):

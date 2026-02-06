@@ -114,6 +114,12 @@
           "type": "boolean",
           "default": true,
           "description": "Make URLs in cells clickable. Ctrl/Cmd+click to open links."
+        },
+        "csv.maxFileSizeMB": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "description": "Soft max size in MB for opening files in CSV view. 0 disables the limit. When exceeded, CSV prompts to cancel, continue this time, or disable the limit."
         }
       }
     },
