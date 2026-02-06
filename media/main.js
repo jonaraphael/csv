@@ -7,6 +7,15 @@ const vscode = acquireVsCodeApi();
 
 const root = document.getElementById('csv-root');
 const CSV_SEPARATOR = String.fromCodePoint(parseInt(root?.dataset?.sepcode || '44', 10)); // default ','
+const parsePositiveNumber = value => {
+  const parsed = typeof value === 'string' ? Number.parseFloat(value) : Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return parsed;
+};
+const configuredFontSizePx = parsePositiveNumber(root?.dataset?.fontsize);
+const computedFontSizePx = parsePositiveNumber(window.getComputedStyle(document.body).fontSize);
+const BASE_FONT_SIZE_PX = configuredFontSizePx ?? computedFontSizePx ?? 14;
+const MIN_ROW_HEIGHT = Math.max(22, Math.round(BASE_FONT_SIZE_PX * 1.6));
 
 let lastContextIsHeader = false;   // remembers whether we right-clicked a <th>
 let isUpdating = false, isSelecting = false, anchorCell = null, rangeEndCell = null, currentSelection = [];
@@ -56,7 +65,7 @@ const applySizeStateToRenderedCells = () => {
     });
   }
   for (const [row, height] of Object.entries(rowSizeState)) {
-    const px = Math.max(22, Math.round(Number(height)));
+    const px = Math.max(MIN_ROW_HEIGHT, Math.round(Number(height)));
     table.querySelectorAll(`[data-row="${row}"]`).forEach(cell => {
       cell.style.height = `${px}px`;
       cell.style.minHeight = `${px}px`;
@@ -96,7 +105,7 @@ const restoreState = () => {
   try {
     const st = vscode.getState() || {};
     columnSizeState = normalizeSizeState(st.columnSizes, 40);
-    rowSizeState = normalizeSizeState(st.rowSizes, 22);
+    rowSizeState = normalizeSizeState(st.rowSizes, MIN_ROW_HEIGHT);
     applySizeStateToRenderedCells();
     if (typeof st.scrollX === 'number' && scrollContainer) {
       scrollContainer.scrollLeft = st.scrollX;
@@ -524,7 +533,7 @@ const resetColumnWidth = col => {
   });
 };
 const applyRowHeight = (row, heightPx) => {
-  const height = Math.max(22, Math.round(heightPx));
+  const height = Math.max(MIN_ROW_HEIGHT, Math.round(heightPx));
   rowSizeState[String(row)] = height;
   table.querySelectorAll(`[data-row="${row}"]`).forEach(cell => {
     cell.style.height = `${height}px`;

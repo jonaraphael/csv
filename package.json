@@ -116,6 +116,13 @@
           "description": "Font family used by the CSV custom editor. Leave empty to inherit ‘editor.fontFamily’.",
           "scope": "application"
         },
+        "csv.fontSize": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Font size in pixels for the CSV custom editor. Set to 0 to inherit 'editor.fontSize'.",
+          "scope": "application"
+        },
         "csv.cellPadding": {
           "type": "number",
           "default": 4,

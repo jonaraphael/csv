@@ -370,6 +370,22 @@ class CsvEditorController {
     return normalizedBase;
   }
 
+  private static normalizeFontSize(value: unknown): number | undefined {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return undefined;
+    }
+    return Math.round(parsed * 100) / 100;
+  }
+
+  private static resolveEffectiveFontSize(csvFontSize: unknown, editorFontSize: unknown): number {
+    return (
+      CsvEditorController.normalizeFontSize(csvFontSize) ??
+      CsvEditorController.normalizeFontSize(editorFontSize) ??
+      14
+    );
+  }
+
   public getDocumentUri(): vscode.Uri {
     return this.document.uri;
   }
@@ -1362,6 +1378,10 @@ class CsvEditorController {
     const fontFamily =
       config.get<string>('fontFamily') ||
       vscode.workspace.getConfiguration('editor').get<string>('fontFamily', 'Menlo');
+    const fontSize = CsvEditorController.resolveEffectiveFontSize(
+      config.get<number>('fontSize', 0),
+      vscode.workspace.getConfiguration('editor').get<number>('fontSize', 14)
+    );
 
     const cellPadding = config.get<number>('cellPadding', 4);
     const data = this.trimTrailingEmptyRows((parsed.data || []) as string[][]);
@@ -1397,6 +1417,7 @@ class CsvEditorController {
       webview,
       nonce,
       fontFamily,
+      fontSize,
       cellPadding,
       separator,
       tableHtml,
@@ -1646,6 +1667,7 @@ class CsvEditorController {
     webview: vscode.Webview;
     nonce: string;
     fontFamily: string;
+    fontSize: number;
     cellPadding: number;
     separator: string;
     tableHtml: string;
@@ -1654,7 +1676,7 @@ class CsvEditorController {
     nextChunkStart: number;
     hasRemoteChunks: boolean;
   }): string {
-    const { webview, nonce, fontFamily, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks } = args;
+    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks } = args;
     const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
     // Build script URI using file path for compatibility (older APIs may lack Uri.joinPath)
     const scriptUri = webview.asWebviewUri(
@@ -1673,10 +1695,10 @@ class CsvEditorController {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CSV</title>
     <style nonce="${nonce}">
-      body { font-family: ${this.escapeCss(fontFamily)}; margin: 0; padding: 0; user-select: none; }
+      body { font-family: ${this.escapeCss(fontFamily)}; font-size: ${fontSize}px; margin: 0; padding: 0; user-select: none; }
       .table-container { overflow: auto; height: 100vh; }
       table { border-collapse: collapse; width: max-content; }
-      th, td { padding: ${cellPadding}px 8px; border: 1px solid ${isDark ? '#555' : '#ccc'}; }
+      th, td { padding: ${cellPadding}px 8px; border: 1px solid ${isDark ? '#555' : '#ccc'}; font-size: inherit; }
       th { position: sticky; top: 0; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
       td { overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
       td.selected, th.selected { background-color: ${isDark ? '#333333' : '#cce0ff'} !important; }
@@ -1702,6 +1724,7 @@ class CsvEditorController {
         align-items: stretch;
         color: #d4d4d4;
         font-family: ${this.escapeCss(fontFamily)};
+        font-size: inherit;
       }
       #findReplaceWidget.open { display: flex; }
       #findReplaceWidget .fr-gutter {
@@ -1750,7 +1773,7 @@ class CsvEditorController {
         background: #1c1c1c;
         color: #d4d4d4;
         padding-left: 10px;
-        font-size: 14px;
+        font-size: inherit;
         outline: none;
       }
       #findReplaceWidget .fr-input::placeholder { color: #6a6a6a; }
@@ -1778,7 +1801,7 @@ class CsvEditorController {
         border-radius: 4px;
         background: transparent;
         color: rgba(189,189,189,0.8);
-        font-size: 12px;
+        font-size: 0.86em;
         cursor: pointer;
         padding: 0 4px;
       }
@@ -1791,7 +1814,7 @@ class CsvEditorController {
         min-width: 84px;
         text-align: right;
         color: #d0d0d0;
-        font-size: 14px;
+        font-size: inherit;
       }
       #findReplaceWidget .fr-divider {
         width: 1px;
@@ -1853,10 +1876,10 @@ class CsvEditorController {
         text-align: left;
         padding: 6px 8px;
         cursor: pointer;
-        font-size: 13px;
+        font-size: inherit;
       }
       #findReplaceWidget .fr-overflow-item:hover { background: rgba(255,255,255,0.05); }
-      #contextMenu { position: absolute; display: none; background: ${isDark ? '#2d2d2d' : '#ffffff'}; border: 1px solid ${isDark ? '#555' : '#ccc'}; z-index: 10000; font-family: ${this.escapeCss(fontFamily)}; }
+      #contextMenu { position: absolute; display: none; background: ${isDark ? '#2d2d2d' : '#ffffff'}; border: 1px solid ${isDark ? '#555' : '#ccc'}; z-index: 10000; font-family: ${this.escapeCss(fontFamily)}; font-size: inherit; }
       #contextMenu div { padding: 4px 12px; cursor: pointer; }
       #contextMenu div:hover { background: ${isDark ? '#3d3d3d' : '#eeeeee'}; }
 
@@ -1865,7 +1888,7 @@ class CsvEditorController {
     </style>
   </head>
   <body>
-    <div id="csv-root" class="table-container" data-sepcode="${sepCode}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
+    <div id="csv-root" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
       ${tableHtml}
     </div>
 
@@ -2665,6 +2688,9 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     },
     resolveEffectiveColumnColorMode(baseMode: string, isDiffContext: boolean, diffUseThemeForeground: boolean): 'type' | 'theme' {
       return (CsvEditorController as any).resolveEffectiveColumnColorMode(baseMode, isDiffContext, diffUseThemeForeground);
+    },
+    resolveEffectiveFontSize(csvFontSize: unknown, editorFontSize: unknown): number {
+      return (CsvEditorController as any).resolveEffectiveFontSize(csvFontSize, editorFontSize);
     },
     hslToHex(h: number, s: number, l: number): string {
       const c: any = new (CsvEditorController as any)({} as any);

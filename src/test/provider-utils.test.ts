@@ -151,6 +151,16 @@ describe('CsvEditorProvider utility methods', () => {
     assert.strictEqual(resolveMode('invalid', false, false), 'type');
   });
 
+  it('resolves effective font size using csv override or editor fallback', () => {
+    const resolveFontSize = CsvEditorProvider.__test.resolveEffectiveFontSize;
+    assert.strictEqual(resolveFontSize(18, 14), 18);
+    assert.strictEqual(resolveFontSize(0, 14), 14);
+    assert.strictEqual(resolveFontSize(undefined, 15), 15);
+    assert.strictEqual(resolveFontSize(-2, 15), 15);
+    assert.strictEqual(resolveFontSize('abc', 15), 15);
+    assert.strictEqual(resolveFontSize(undefined, undefined), 14);
+  });
+
   it('computes paste plan to fill rectangular selection for single-cell clipboard value', () => {
     const plan = CsvEditorProvider.__test.computePastePlan(
       [['X']],

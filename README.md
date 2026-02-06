@@ -37,7 +37,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Add/Delete Rows:** Insert above/below or remove the selected row via context menu.
 - **Edit Empty CSVs:** Create or open an empty CSV file and start typing immediately.
 - **Column Sorting:** Right-click a header and choose A–Z or Z–A.
-- **Custom Font Selection:** Choose a font from a dropdown or inherit VS Code's default.
+- **Custom Font Controls:** Choose a font family and optional font-size override, or inherit VS Code defaults.
 - **Find & Replace Overlay:** Built-in find/replace bar with match options (case, whole-word, regex), keyboard navigation, and single/all replace actions across the full file (including chunked rows).
 - **Multiline Cell Display:** Cells with embedded newlines render as wrapped multi-line content (with preserved line breaks and matching row height).
 - **Clickable Links:** URLs in cells are automatically detected and displayed as clickable links. Ctrl/Cmd+click to open them in your browser.
@@ -98,6 +98,7 @@ Global (Settings UI or `settings.json`):
 
 - `csv.enabled` (boolean, default `true`): Enable/disable the custom editor.
 - `csv.fontFamily` (string, default empty): Override font family; falls back to `editor.fontFamily`.
+- `csv.fontSize` (number, default `0`): Override font size in px; set to `0` to inherit `editor.fontSize`.
 - `csv.cellPadding` (number, default `4`): Vertical cell padding in pixels.
 - `csv.columnColorMode` (string, default `type`): `type` keeps CSV’s type-based column colors; `theme` uses your theme foreground color for all columns.
 - `csv.columnColorPalette` (string, default `default`): Type-color palette when `csv.columnColorMode` is `type`. `cool` biases colors toward greens/blues; `warm` biases colors toward oranges/reds.
