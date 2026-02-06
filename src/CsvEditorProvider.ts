@@ -97,9 +97,7 @@ class CsvEditorController {
           await this.sortColumn(e.index, e.ascending);
           break;
         case 'openLink':
-          if (e.url) {
-            vscode.env.openExternal(vscode.Uri.parse(e.url));
-          }
+          await this.openLinkExternally(e.url);
           break;
       }
     });
@@ -181,7 +179,10 @@ class CsvEditorController {
 
     this.isUpdatingDocument = false;
     console.log(`CSV: Updated row ${row + 1}, column ${col + 1} to "${value}"`);
-    this.currentWebviewPanel?.webview.postMessage({ type: 'updateCell', row, col, value });
+    const config = vscode.workspace.getConfiguration('csv', this.document.uri);
+    const clickableLinks = config.get<boolean>('clickableLinks', true);
+    const rendered = this.formatCellContent(value ?? '', clickableLinks);
+    this.currentWebviewPanel?.webview.postMessage({ type: 'updateCell', row, col, value, rendered });
 
     // Trigger a full re-render if structure may have changed (new row/col created)
     if (trimmed || createdRow || createdCol || row >= hadRows || col >= hadColsAtRow) {
@@ -445,7 +446,7 @@ class CsvEditorController {
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
     const data = result.data as string[][];
-    const numColumns = Math.max(...data.map(r => r.length), 0);
+    const numColumns = data.reduce((max, r) => Math.max(max, r.length), 0);
     const newRow = Array(numColumns).fill('');
     if (index > data.length) {
       while (data.length < index) data.push(Array(numColumns).fill(''));
@@ -471,7 +472,7 @@ class CsvEditorController {
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
     const data = result.data as string[][];
-    const numColumns = Math.max(...data.map(r => r.length), 0);
+    const numColumns = data.reduce((max, r) => Math.max(max, r.length), 0);
     for (let k = 0; k < count; k++) {
       const newRow = Array(numColumns).fill('');
       if (index > data.length) {
@@ -610,7 +611,7 @@ class CsvEditorController {
       bodyData = data.slice(offset);
     }
     const visibleForWidth = headerFlag ? [headerRow, ...bodyData] : bodyData;
-    let numColumns = Math.max(...visibleForWidth.map(row => row.length), 0);
+    let numColumns = visibleForWidth.reduce((max, row) => Math.max(max, row.length), 0);
     if (numColumns === 0) numColumns = 1; // ensure at least 1 column for the virtual row
 
     const columnData = Array.from({ length: numColumns }, (_, i) => bodyData.map(row => row[i] || ''));
@@ -750,11 +751,7 @@ class CsvEditorController {
       return true; // with only one row visible, lean toward header
     }
 
-    const numColumns = Math.max(
-      headerRow.length,
-      ...body.map(r => r.length),
-      0
-    );
+    const numColumns = body.reduce((max, r) => Math.max(max, r.length), Math.max(headerRow.length, 0));
     const bodyColData = Array.from({ length: numColumns }, (_, i) => body.map(r => r[i] || ''));
     const bodyTypes = bodyColData.map(col => this.estimateColumnDataType(col));
     const headerTypes = Array.from({ length: numColumns }, (_, i) => this.estimateColumnDataType([headerRow[i] || '']));
@@ -865,7 +862,7 @@ class CsvEditorController {
   // ───────────── Utilities ─────────────
 
   private computeColumnWidths(data: string[][]): number[] {
-    const numColumns = Math.max(...data.map(row => row.length), 0);
+    const numColumns = data.reduce((max, row) => Math.max(max, row.length), 0);
     const widths = Array(numColumns).fill(0);
     for (const row of data) {
       for (let i = 0; i < numColumns; i++){
@@ -897,14 +894,62 @@ class CsvEditorController {
     })[m] as string);
   }
 
+  private isAllowedExternalScheme(scheme: string): boolean {
+    const normalized = scheme.toLowerCase();
+    return normalized === 'http' || normalized === 'https' || normalized === 'ftp' || normalized === 'mailto';
+  }
+
+  private isAllowedExternalUrl(rawUrl: unknown): rawUrl is string {
+    if (typeof rawUrl !== 'string') return false;
+    const value = rawUrl.trim();
+    if (!value) return false;
+    try {
+      const parsed = new URL(value);
+      const scheme = parsed.protocol.replace(/:$/, '').toLowerCase();
+      return this.isAllowedExternalScheme(scheme);
+    } catch {
+      return false;
+    }
+  }
+
+  private async openLinkExternally(rawUrl: unknown): Promise<void> {
+    if (!this.isAllowedExternalUrl(rawUrl)) {
+      return;
+    }
+    const value = rawUrl.trim();
+    try {
+      await vscode.env.openExternal(vscode.Uri.parse(value));
+    } catch (err) {
+      console.warn(`CSV: Failed to open external link: ${value}`, err);
+    }
+  }
+
   private linkifyUrls(escapedText: string): string {
-    // Match URLs in already-escaped text (handles &amp; in query strings)
-    // Supports http, https, ftp, mailto protocols
-    const urlPattern = /(?:https?:\/\/|ftp:\/\/|mailto:)[^\s<>&"']+(?:&amp;[^\s<>&"']+)*/gi;
-    return escapedText.replace(urlPattern, (url) => {
-      // Decode &amp; back to & for the href attribute
-      const href = url.replace(/&amp;/g, '&');
-      return `<a href="${href}" class="csv-link" title="Ctrl/Cmd+click to open">${url}</a>`;
+    // Match URLs in already-escaped text (handles &amp; in query strings).
+    // Supports http, https, ftp, mailto, and www.*.* (Google Sheets-like behavior).
+    const urlPattern = /\b(?:(?:https?:\/\/|ftp:\/\/|mailto:)[^\s<>&"']+(?:&amp;[^\s<>&"']+)*|www\.[^\s<>&"']+\.[^\s<>&"']+)/gi;
+    return escapedText.replace(urlPattern, (rawMatch) => {
+      let matched = rawMatch;
+      let trailing = '';
+      const trailingMatch = matched.match(/[.,!?;:)\]]+$/);
+      if (trailingMatch) {
+        trailing = trailingMatch[0];
+        matched = matched.slice(0, -trailing.length);
+      }
+      if (!matched) {
+        return rawMatch;
+      }
+
+      // Decode &amp; back to & for URL parsing and opening.
+      let href = matched.replace(/&amp;/g, '&');
+      if (/^www\./i.test(href)) {
+        href = `https://${href}`;
+      }
+      if (!this.isAllowedExternalUrl(href)) {
+        return rawMatch;
+      }
+
+      return `<span class="csv-link" data-href="${this.escapeHtml(href)}" title="Ctrl/Cmd+click to open">${matched}</span>${trailing}`;
     });
   }
 
@@ -1191,6 +1236,14 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       const c: any = new (CsvEditorController as any)({} as any);
       return c.hslToHex(h, s, l);
     },
+    formatCellContent(text: string, linkify: boolean): string {
+      const c: any = new (CsvEditorController as any)({} as any);
+      return c.formatCellContent(text, linkify);
+    },
+    isAllowedExternalUrl(url: unknown): boolean {
+      const c: any = new (CsvEditorController as any)({} as any);
+      return c.isAllowedExternalUrl(url);
+    },
     // Expose header heuristic for tests. Allows specifying hiddenRows and
     // optionally an override value through a mock workspaceState.
     getEffectiveHeader(data: string[][], hiddenRows: number, override: undefined | boolean = undefined): boolean {
@@ -1228,9 +1281,9 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       return c.getSeparator();
     },
     // Expose chunking/table generation for large-data tests. Returns parsed chunk count.
-    generateTableChunksMeta(data: string[][], treatHeader: boolean, addSerialIndex: boolean, hiddenRows: number): { chunkCount: number; hasTable: boolean } {
+    generateTableChunksMeta(data: string[][], treatHeader: boolean, addSerialIndex: boolean, hiddenRows: number, clickableLinks: boolean = true): { chunkCount: number; hasTable: boolean } {
       const c: any = new (CsvEditorController as any)({} as any);
-      const result = c.generateTableAndChunks(data, treatHeader, addSerialIndex, hiddenRows);
+      const result = c.generateTableAndChunks(data, treatHeader, addSerialIndex, hiddenRows, clickableLinks);
       try {
         const chunks = JSON.parse(result.chunksJson);
         return { chunkCount: Array.isArray(chunks) ? chunks.length : 0, hasTable: typeof result.tableHtml === 'string' && result.tableHtml.includes('<table') };
@@ -1238,9 +1291,9 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
         return { chunkCount: 0, hasTable: false };
       }
     },
-    generateTableAndChunksRaw(data: string[][], treatHeader: boolean, addSerialIndex: boolean, hiddenRows: number): { tableHtml: string; chunks: string[] } {
+    generateTableAndChunksRaw(data: string[][], treatHeader: boolean, addSerialIndex: boolean, hiddenRows: number, clickableLinks: boolean = true): { tableHtml: string; chunks: string[] } {
       const c: any = new (CsvEditorController as any)({} as any);
-      const result = c.generateTableAndChunks(data, treatHeader, addSerialIndex, hiddenRows);
+      const result = c.generateTableAndChunks(data, treatHeader, addSerialIndex, hiddenRows, clickableLinks);
       let chunks: string[] = [];
       try { chunks = JSON.parse(result.chunksJson); } catch {}
       return { tableHtml: result.tableHtml, chunks };

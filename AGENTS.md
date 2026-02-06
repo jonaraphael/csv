@@ -15,9 +15,10 @@ Before making changes, agents should always review:
 
 ## Build, Test, and Development Commands
 - `npm install`: Install dependencies.
+- `npm ci`: Clean, reproducible install (preferred in CI/local verification).
 - `npm run compile`: TypeScript → `out/` via `tsc`.
 - `npm run lint`: ESLint over `**/*.ts` using `eslint.config.mjs`.
-- `npm test`: Compile, then run Node’s test runner on `out/test/**/*.test.js`.
+- `npm test`: Compile, then run Node’s test runner on `out/test`.
 - `npm run package`: Create a `.vsix` using `vsce` (publish/build).
 
 Example local loop:
@@ -26,6 +27,31 @@ npm install
 npm run lint && npm run compile
 npm test
 ```
+
+## Toolchain
+- Use a modern Node runtime (recommended: Node 20 LTS).
+- If using `nvm`, run `nvm use 20` before install/build/test commands.
+- Prefer `npm ci` over `npm install` for deterministic dependency resolution when validating changes.
+
+## Mandatory Verification
+- After any code change, run `npm run compile` before sending the final response.
+- If compile fails, report the error and do not mark the task complete.
+- Skip this only for docs-only changes or when the user explicitly asks to skip compile.
+- Run `npm test` when behavior changes (commands, settings, parsing, rendering, webview interactions, or data mutations).
+- If tests are skipped, state why and call out residual risk.
+
+## Dependency & Lockfile Policy
+- Keep `package-lock.json` tracked in git; do not gitignore it.
+- Commit lockfile updates when dependencies or dependency metadata change.
+- Avoid unrelated lockfile churn; if lockfile changes are incidental, regenerate with the project’s standard Node/npm toolchain.
+
+## User-Facing Change Sync
+- When adding/changing commands or settings, update both `package.json` contributions and `README.md` in the same change.
+- For any user-visible behavior update, include a concise note in PR/test plan describing how it was validated.
+
+## Webview Change Policy
+- Changes to `media/main.js`, webview message contracts, or rendered table HTML should include/update tests in `src/test`.
+- Prefer tests that verify invariants and edge cases (selection/edit interactions, chunking behavior, escaping/linkification safety).
 
 ## Coding Style & Naming Conventions
 - Language: TypeScript with `strict` mode (see `tsconfig.json`).

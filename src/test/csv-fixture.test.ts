@@ -37,7 +37,7 @@ describe('CSV fixture: super_example.csv', () => {
   it('infers column types correctly from body', () => {
     const headerIdx = rows.findIndex(r => (r[0] || '').trim() === 'Hero');
     const body = rows.slice(headerIdx + 1);
-    const numCols = Math.max(...body.map(r => r.length), 0);
+    const numCols = body.reduce((max, r) => Math.max(max, r.length), 0);
     const cols: string[][] = Array.from({ length: numCols }, (_, i) => body.map(r => r[i] || ''));
     const estimate = CsvEditorProvider.__test.estimateColumnDataType;
     const types = cols.map(c => estimate(c));
@@ -96,7 +96,7 @@ describe('CSV fixture: super_example.csv', () => {
     const headerIdx = rows.findIndex(r => (r[0] || '').trim() === 'Hero');
     const visible = rows.slice(headerIdx); // include header + body
     const expected = (() => {
-      const n = Math.max(...visible.map(r => r.length), 0);
+      const n = visible.reduce((max, r) => Math.max(max, r.length), 0);
       const arr = Array(n).fill(0);
       for (const r of visible) {
         for (let i = 0; i < n; i++) {

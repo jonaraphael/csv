@@ -283,30 +283,50 @@ const showContextMenu = (x, y, row, col) => {
   contextMenu.style.display = 'block';
 };
 
+const getElementTarget = target => {
+  if (target instanceof Element) return target;
+  if (target instanceof Node) return target.parentElement;
+  return null;
+};
+const getLinkTarget = target => {
+  const el = getElementTarget(target);
+  return el ? el.closest('.csv-link[data-href]') : null;
+};
+const getCellTarget = target => {
+  const el = getElementTarget(target);
+  return el ? el.closest('td, th') : null;
+};
+const postOpenLink = link => {
+  const url = link.getAttribute('data-href') || link.getAttribute('href');
+  if (url) {
+    vscode.postMessage({ type: 'openLink', url });
+  }
+};
+
 document.addEventListener('click', (e) => {
   contextMenu.style.display = 'none';
-  
-  // Handle clicks on CSV links
-  if (e.target.classList.contains('csv-link')) {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    // Ctrl/Cmd+click to open link
-    if (e.ctrlKey || e.metaKey) {
-      const url = e.target.getAttribute('href');
-      if (url) {
-        vscode.postMessage({ type: 'openLink', url: url });
-      }
-    }
-    // Regular click just selects the cell (don't start editing)
+
+  const link = getLinkTarget(e.target);
+  if (!link) {
     return;
+  }
+  // Never navigate inside the webview.
+  e.preventDefault();
+  if (!(e.ctrlKey || e.metaKey)) {
+    return;
+  }
+  // Ctrl/Cmd+click should open externally once, while regular clicks
+  // still behave like normal cell interactions.
+  if (e.detail === 1) {
+    e.stopPropagation();
+    postOpenLink(link);
   }
 });
 
 /* ──────── UPDATED contextmenu listener ──────── */
 table.addEventListener('contextmenu', e => {
-  const target = e.target;
-  if(target.tagName !== 'TH' && target.tagName !== 'TD') return;
+  const target = getCellTarget(e.target);
+  if (!target) return;
   const colAttr = target.getAttribute('data-col');
   const rowAttr = target.getAttribute('data-row');
   const col = parseInt(colAttr);
@@ -318,12 +338,14 @@ table.addEventListener('contextmenu', e => {
 });
 
 table.addEventListener('mousedown', e => {
-  // Don't interfere with link clicks
-  if (e.target.classList.contains('csv-link')) {
+  const link = getLinkTarget(e.target);
+  // Ctrl/Cmd+click on a link opens externally on click; keep existing selection unchanged.
+  if (link && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
     return;
   }
-  if(e.target.tagName !== 'TD' && e.target.tagName !== 'TH') return;
-  const target = e.target;
+  const target = getCellTarget(e.target);
+  if (!target) return;
 
   // Preserve selection on right-click; select target if outside current selection
   if (e.button === 2) { // right mouse button
@@ -909,21 +931,17 @@ const editCell = (cell, event, mode = 'detail') => {
 };
 
 table.addEventListener('dblclick', e => {
-  const target = e.target;
-  // Don't enter edit mode when double-clicking a link
-  if (target.classList.contains('csv-link')) {
+  const link = getLinkTarget(e.target);
+  if (link) {
     e.preventDefault();
-    e.stopPropagation();
-    // Ctrl/Cmd+double-click opens the link
+    // Ctrl/Cmd+click is handled by the click listener; do not enter edit mode here.
     if (e.ctrlKey || e.metaKey) {
-      const url = target.getAttribute('href');
-      if (url) {
-        vscode.postMessage({ type: 'openLink', url: url });
-      }
+      e.stopPropagation();
+      return;
     }
-    return;
   }
-  if(target.tagName !== 'TD' && target.tagName !== 'TH') return;
+  const target = getCellTarget(e.target);
+  if (!target) return;
   clearSelection();
   editCell(target, e);
 });
@@ -961,9 +979,15 @@ window.addEventListener('message', event => {
     }
   } else if(message.type === 'updateCell'){
     isUpdating = true;
-    const { row, col, value } = message;
-    const cell = table.querySelector('td[data-row="'+row+'"][data-col="'+col+'"]');
-    if (cell) { cell.textContent = value; }
+    const { row, col, value, rendered } = message;
+    const cell = table.querySelector('td[data-row="'+row+'"][data-col="'+col+'"], th[data-row="'+row+'"][data-col="'+col+'"]');
+    if (cell) {
+      if (typeof rendered === 'string') {
+        cell.innerHTML = rendered;
+      } else {
+        cell.textContent = value;
+      }
+    }
     isUpdating = false;
   }
 });
