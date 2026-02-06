@@ -93,6 +93,12 @@ class CsvEditorController {
         case 'deleteRows':
           await this.deleteRows(e.indices);
           break;
+        case 'reorderColumns':
+          await this.reorderColumns(e.indices, e.beforeIndex);
+          break;
+        case 'reorderRows':
+          await this.reorderRows(e.indices, e.beforeIndex);
+          break;
         case 'sortColumn':
           await this.sortColumn(e.index, e.ascending);
           break;
@@ -539,6 +545,114 @@ class CsvEditorController {
     await vscode.workspace.applyEdit(edit);
     this.isUpdatingDocument = false;
     this.updateWebviewContent();
+  }
+
+  private normalizeIndices(indices: unknown, maxExclusive: number): number[] {
+    if (!Array.isArray(indices) || maxExclusive <= 0) return [];
+    const seen = new Set<number>();
+    const out: number[] = [];
+    for (const raw of indices) {
+      const num = Number(raw);
+      if (!Number.isFinite(num)) continue;
+      const idx = Math.trunc(num);
+      if (idx < 0 || idx >= maxExclusive || seen.has(idx)) continue;
+      seen.add(idx);
+      out.push(idx);
+    }
+    out.sort((a, b) => a - b);
+    return out;
+  }
+
+  private reorderByIndices<T>(items: T[], indices: unknown, beforeIndex: unknown): { reordered: T[]; changed: boolean } {
+    const selected = this.normalizeIndices(indices, items.length);
+    if (!selected.length) {
+      return { reordered: [...items], changed: false };
+    }
+
+    const before = Number(beforeIndex);
+    const safeBefore = Number.isFinite(before) ? Math.trunc(before) : items.length;
+    const clampedBefore = Math.min(Math.max(safeBefore, 0), items.length);
+
+    const selectedSet = new Set(selected);
+    const moving = selected.map(i => items[i]);
+    const remaining = items.filter((_, i) => !selectedSet.has(i));
+    const removedBefore = selected.filter(i => i < clampedBefore).length;
+    const insertAt = Math.min(Math.max(clampedBefore - removedBefore, 0), remaining.length);
+    const reordered = [...remaining.slice(0, insertAt), ...moving, ...remaining.slice(insertAt)];
+
+    let changed = false;
+    for (let i = 0; i < items.length; i++) {
+      if (reordered[i] !== items[i]) {
+        changed = true;
+        break;
+      }
+    }
+    return { reordered, changed };
+  }
+
+  private async reorderColumns(indices: unknown, beforeIndex: unknown) {
+    this.isUpdatingDocument = true;
+    try {
+      const separator = this.getSeparator();
+      const text = this.document.getText();
+      const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
+      const data = result.data as string[][];
+      const numColumns = data.reduce((max, row) => Math.max(max, row.length), 0);
+      if (numColumns <= 0) return;
+
+      const sourceOrder = Array.from({ length: numColumns }, (_, i) => i);
+      const { reordered: columnOrder, changed } = this.reorderByIndices(sourceOrder, indices, beforeIndex);
+      if (!changed) return;
+
+      const reorderedData = data.map(row => {
+        const normalized = Array.from({ length: numColumns }, (_, i) => row[i] ?? '');
+        const next = columnOrder.map(colIdx => normalized[colIdx] ?? '');
+        while (next.length > 0 && next[next.length - 1] === '') {
+          next.pop();
+        }
+        return next;
+      });
+
+      const newText = Papa.unparse(reorderedData, { delimiter: separator });
+      const fullRange = new vscode.Range(
+        0, 0,
+        this.document.lineCount,
+        this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0
+      );
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(this.document.uri, fullRange, newText);
+      await vscode.workspace.applyEdit(edit);
+      this.updateWebviewContent();
+    } finally {
+      this.isUpdatingDocument = false;
+    }
+  }
+
+  private async reorderRows(indices: unknown, beforeIndex: unknown) {
+    this.isUpdatingDocument = true;
+    try {
+      const separator = this.getSeparator();
+      const text = this.document.getText();
+      const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
+      const data = result.data as string[][];
+      if (!data.length) return;
+
+      const { reordered, changed } = this.reorderByIndices(data, indices, beforeIndex);
+      if (!changed) return;
+
+      const newText = Papa.unparse(reordered, { delimiter: separator });
+      const fullRange = new vscode.Range(
+        0, 0,
+        this.document.lineCount,
+        this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0
+      );
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(this.document.uri, fullRange, newText);
+      await vscode.workspace.applyEdit(edit);
+      this.updateWebviewContent();
+    } finally {
+      this.isUpdatingDocument = false;
+    }
   }
 
   // ───────────── Webview Rendering ─────────────
@@ -1215,6 +1329,32 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     computeColumnWidths(data: string[][]): number[] {
       const c: any = new (CsvEditorController as any)({} as any);
       return c.computeColumnWidths(data);
+    },
+    reorderIndexOrder(length: number, indices: number[], beforeIndex: number): number[] {
+      const c: any = new (CsvEditorController as any)({} as any);
+      const n = Number.isFinite(length) ? Math.max(0, Math.trunc(length)) : 0;
+      const base = Array.from({ length: n }, (_, i) => i);
+      const result = c.reorderByIndices(base, indices, beforeIndex);
+      return result.reordered;
+    },
+    reorderRows(rows: string[][], indices: number[], beforeIndex: number): string[][] {
+      const c: any = new (CsvEditorController as any)({} as any);
+      const result = c.reorderByIndices(rows, indices, beforeIndex);
+      return result.reordered;
+    },
+    reorderColumns(rows: string[][], indices: number[], beforeIndex: number): string[][] {
+      const c: any = new (CsvEditorController as any)({} as any);
+      const numColumns = rows.reduce((max, row) => Math.max(max, row.length), 0);
+      const sourceOrder = Array.from({ length: numColumns }, (_, i) => i);
+      const orderResult = c.reorderByIndices(sourceOrder, indices, beforeIndex);
+      return rows.map((row: string[]) => {
+        const normalized = Array.from({ length: numColumns }, (_, i) => row[i] ?? '');
+        const next = orderResult.reordered.map((colIdx: number) => normalized[colIdx] ?? '');
+        while (next.length > 0 && next[next.length - 1] === '') {
+          next.pop();
+        }
+        return next;
+      });
     },
     mutateDataForEdit(data: string[][], row: number, col: number, value: string): { data: string[][]; trimmed: boolean; createdRow: boolean; createdCol: boolean } {
       const c: any = new (CsvEditorController as any)({} as any);

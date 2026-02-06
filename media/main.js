@@ -16,9 +16,54 @@ let editingCell = null, originalCellValue = "";
 //  - 'quick': started by typing a character (not Enter)
 //  - 'detail': started by Enter or double-click
 let editMode = null; // 'quick' | 'detail' | null
+const DRAG_THRESHOLD_PX = 4;
+const RESIZE_HANDLE_PX = 6;
+let resizeState = null;
+let reorderState = null;
 
 const table = document.querySelector('#csv-root table');
 const scrollContainer = document.querySelector('.table-container');
+const dragIndicator = document.createElement('div');
+dragIndicator.style.position = 'fixed';
+dragIndicator.style.pointerEvents = 'none';
+dragIndicator.style.zIndex = '20000';
+dragIndicator.style.background = '#0a84ff';
+dragIndicator.style.display = 'none';
+document.body.appendChild(dragIndicator);
+let columnSizeState = {};
+let rowSizeState = {};
+
+const normalizeSizeState = (raw, minSize) => {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [k, v] of Object.entries(raw)) {
+    const idx = parseInt(k, 10);
+    const size = Number(v);
+    if (!Number.isFinite(idx) || idx < 0) continue;
+    if (!Number.isFinite(size) || size < minSize) continue;
+    out[String(idx)] = Math.round(size);
+  }
+  return out;
+};
+
+const applySizeStateToRenderedCells = () => {
+  for (const [col, width] of Object.entries(columnSizeState)) {
+    const px = Math.max(40, Math.round(Number(width)));
+    table.querySelectorAll(`[data-col="${col}"]`).forEach(cell => {
+      cell.style.width = `${px}px`;
+      cell.style.minWidth = `${px}px`;
+      cell.style.maxWidth = `${px}px`;
+    });
+  }
+  for (const [row, height] of Object.entries(rowSizeState)) {
+    const px = Math.max(22, Math.round(Number(height)));
+    table.querySelectorAll(`[data-row="${row}"]`).forEach(cell => {
+      cell.style.height = `${px}px`;
+      cell.style.minHeight = `${px}px`;
+    });
+  }
+};
+
 const getFirstDataRow = () => {
   const cells = Array.from(table.querySelectorAll('tbody td[data-col]:not([data-col="-1"])'));
   let min = Infinity;
@@ -39,7 +84,9 @@ const persistState = () => {
       scrollX: scrollContainer ? scrollContainer.scrollLeft : 0,
       scrollY: scrollContainer ? scrollContainer.scrollTop : (window.scrollY || window.pageYOffset || 0),
       anchorRow: anchor ? anchor.row : undefined,
-      anchorCol: anchor ? anchor.col : undefined
+      anchorCol: anchor ? anchor.col : undefined,
+      columnSizes: { ...columnSizeState },
+      rowSizes: { ...rowSizeState }
     };
     vscode.setState(nextState);
   } catch {}
@@ -48,6 +95,9 @@ const persistState = () => {
 const restoreState = () => {
   try {
     const st = vscode.getState() || {};
+    columnSizeState = normalizeSizeState(st.columnSizes, 40);
+    rowSizeState = normalizeSizeState(st.rowSizes, 22);
+    applySizeStateToRenderedCells();
     if (typeof st.scrollX === 'number' && scrollContainer) {
       scrollContainer.scrollLeft = st.scrollX;
     }
@@ -56,17 +106,18 @@ const restoreState = () => {
     if (typeof st.scrollY === 'number') {
       if (scrollContainer) {
         let guard = 100;
-        while (
-          typeof window.__csvLoadNextChunk === 'function' &&
-          csvChunks && csvChunks.length &&
-          (scrollContainer.scrollHeight - scrollContainer.clientHeight < st.scrollY) &&
-          guard-- > 0
-        ) {
-          window.__csvLoadNextChunk();
-        }
-        scrollContainer.scrollTop = st.scrollY;
-      } else {
-        window.scrollTo(0, st.scrollY);
+      while (
+        typeof window.__csvLoadNextChunk === 'function' &&
+        csvChunks && csvChunks.length &&
+        (scrollContainer.scrollHeight - scrollContainer.clientHeight < st.scrollY) &&
+        guard-- > 0
+      ) {
+        window.__csvLoadNextChunk();
+      }
+      applySizeStateToRenderedCells();
+      scrollContainer.scrollTop = st.scrollY;
+    } else {
+      window.scrollTo(0, st.scrollY);
       }
     }
     if (typeof st.anchorRow === 'number' && typeof st.anchorCol === 'number') {
@@ -80,6 +131,7 @@ const restoreState = () => {
           sel = table.querySelector(`${tag}[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"]`);
         }
       }
+      applySizeStateToRenderedCells();
       if (sel) {
         clearSelection();
         sel.classList.add('selected');
@@ -117,6 +169,7 @@ if (csvChunks.length) {
     try {
       const html = csvChunks.shift();
       tbody.insertAdjacentHTML('beforeend', html);
+      applySizeStateToRenderedCells();
     } finally {
       loading = false;
     }
@@ -296,6 +349,248 @@ const getCellTarget = target => {
   const el = getElementTarget(target);
   return el ? el.closest('td, th') : null;
 };
+const isColumnHeaderCell = cell => {
+  if (!cell || cell.tagName !== 'TH') return false;
+  const col = cell.getAttribute('data-col');
+  return col !== null && col !== '-1';
+};
+const isRowIndexCell = cell => cell && cell.getAttribute && cell.getAttribute('data-col') === '-1';
+const getSelectedColumnIds = () => {
+  const ids = currentSelection
+    .filter(el => el && el.tagName === 'TH')
+    .map(el => parseInt(el.getAttribute('data-col') || 'NaN', 10))
+    .filter(v => !Number.isNaN(v) && v >= 0);
+  return Array.from(new Set(ids)).sort((a, b) => a - b);
+};
+const getSelectedRowIds = () => {
+  const ids = currentSelection
+    .filter(el => isRowIndexCell(el))
+    .map(el => parseInt(el.getAttribute('data-row') || 'NaN', 10))
+    .filter(v => !Number.isNaN(v) && v >= 0);
+  return Array.from(new Set(ids)).sort((a, b) => a - b);
+};
+const hideDragIndicator = () => {
+  dragIndicator.style.display = 'none';
+};
+const showColumnDropIndicator = x => {
+  const rect = table.getBoundingClientRect();
+  dragIndicator.style.left = `${Math.round(x) - 1}px`;
+  dragIndicator.style.top = `${Math.round(rect.top)}px`;
+  dragIndicator.style.width = '2px';
+  dragIndicator.style.height = `${Math.max(1, Math.round(rect.height))}px`;
+  dragIndicator.style.display = 'block';
+};
+const showRowDropIndicator = y => {
+  const rect = table.getBoundingClientRect();
+  dragIndicator.style.left = `${Math.round(rect.left)}px`;
+  dragIndicator.style.top = `${Math.round(y) - 1}px`;
+  dragIndicator.style.width = `${Math.max(1, Math.round(rect.width))}px`;
+  dragIndicator.style.height = '2px';
+  dragIndicator.style.display = 'block';
+};
+const getColumnDropTarget = clientX => {
+  const headers = Array.from(table.querySelectorAll('thead th[data-col]'))
+    .map(cell => ({ cell, col: parseInt(cell.getAttribute('data-col') || 'NaN', 10) }))
+    .filter(entry => !Number.isNaN(entry.col) && entry.col >= 0)
+    .sort((a, b) => a.col - b.col);
+  if (!headers.length) return null;
+
+  let beforeIndex = headers[0].col;
+  let indicatorX = headers[0].cell.getBoundingClientRect().left;
+  for (const entry of headers) {
+    const rect = entry.cell.getBoundingClientRect();
+    if (clientX < rect.left + rect.width / 2) {
+      beforeIndex = entry.col;
+      indicatorX = rect.left;
+      return { beforeIndex, indicatorX };
+    }
+    beforeIndex = entry.col + 1;
+    indicatorX = rect.right;
+  }
+  return { beforeIndex, indicatorX };
+};
+const getRowDropTarget = clientY => {
+  const rows = Array.from(table.querySelectorAll('tbody td[data-col="-1"]'))
+    .map(cell => ({ cell, row: parseInt(cell.getAttribute('data-row') || 'NaN', 10) }))
+    .filter(entry => !Number.isNaN(entry.row) && entry.row >= 0)
+    .sort((a, b) => a.row - b.row);
+  if (!rows.length) return null;
+
+  let beforeIndex = rows[0].row;
+  let indicatorY = rows[0].cell.getBoundingClientRect().top;
+  for (const entry of rows) {
+    const rect = entry.cell.getBoundingClientRect();
+    if (clientY < rect.top + rect.height / 2) {
+      beforeIndex = entry.row;
+      indicatorY = rect.top;
+      return { beforeIndex, indicatorY };
+    }
+    beforeIndex = entry.row + 1;
+    indicatorY = rect.bottom;
+  }
+  return { beforeIndex, indicatorY };
+};
+const getResizeEdgeInfo = (target, e) => {
+  if (!target) return null;
+  if (isColumnHeaderCell(target)) {
+    const col = parseInt(target.getAttribute('data-col') || 'NaN', 10);
+    if (!Number.isNaN(col)) {
+      const rect = target.getBoundingClientRect();
+      const edgeDelta = rect.right - e.clientX;
+      if (edgeDelta >= 0 && edgeDelta <= RESIZE_HANDLE_PX) {
+        return { axis: 'column', index: col, rect };
+      }
+    }
+  }
+  if (isRowIndexCell(target)) {
+    const row = parseInt(target.getAttribute('data-row') || 'NaN', 10);
+    if (!Number.isNaN(row)) {
+      const rect = target.getBoundingClientRect();
+      const edgeDelta = rect.bottom - e.clientY;
+      if (edgeDelta >= 0 && edgeDelta <= RESIZE_HANDLE_PX) {
+        return { axis: 'row', index: row, rect };
+      }
+    }
+  }
+  return null;
+};
+const applyColumnWidth = (col, widthPx) => {
+  const width = Math.max(40, Math.round(widthPx));
+  columnSizeState[String(col)] = width;
+  table.querySelectorAll(`[data-col="${col}"]`).forEach(cell => {
+    cell.style.width = `${width}px`;
+    cell.style.minWidth = `${width}px`;
+    cell.style.maxWidth = `${width}px`;
+  });
+};
+const resetColumnWidth = col => {
+  delete columnSizeState[String(col)];
+  table.querySelectorAll(`[data-col="${col}"]`).forEach(cell => {
+    cell.style.width = '';
+    cell.style.minWidth = '';
+    cell.style.maxWidth = '';
+  });
+};
+const applyRowHeight = (row, heightPx) => {
+  const height = Math.max(22, Math.round(heightPx));
+  rowSizeState[String(row)] = height;
+  table.querySelectorAll(`[data-row="${row}"]`).forEach(cell => {
+    cell.style.height = `${height}px`;
+    cell.style.minHeight = `${height}px`;
+  });
+};
+const resetRowHeight = row => {
+  delete rowSizeState[String(row)];
+  table.querySelectorAll(`[data-row="${row}"]`).forEach(cell => {
+    cell.style.height = '';
+    cell.style.minHeight = '';
+  });
+};
+const startResizeDrag = (target, e) => {
+  if (e.button !== 0) return false;
+  const edge = getResizeEdgeInfo(target, e);
+  if (!edge) return false;
+  if (edge.axis === 'column') {
+    resizeState = { axis: 'column', index: edge.index, startPos: e.clientX, startSize: edge.rect.width };
+    table.style.cursor = 'col-resize';
+    return true;
+  }
+  const rowCells = Array.from(table.querySelectorAll(`[data-row="${edge.index}"]`));
+  const startHeight = rowCells.reduce((max, cell) => Math.max(max, cell.getBoundingClientRect().height), edge.rect.height);
+  resizeState = { axis: 'row', index: edge.index, startPos: e.clientY, startSize: startHeight };
+  table.style.cursor = 'row-resize';
+  return true;
+};
+const startReorderDrag = (target, e) => {
+  if (e.button !== 0) return false;
+  if (isColumnHeaderCell(target) && target.classList.contains('selected')) {
+    const col = parseInt(target.getAttribute('data-col') || 'NaN', 10);
+    if (Number.isNaN(col)) return false;
+    const selected = getSelectedColumnIds();
+    const indices = selected.includes(col) ? selected : [col];
+    reorderState = {
+      axis: 'column',
+      indices,
+      startX: e.clientX,
+      startY: e.clientY,
+      active: false,
+      beforeIndex: null
+    };
+    return true;
+  }
+  if (isRowIndexCell(target) && target.classList.contains('selected')) {
+    const row = parseInt(target.getAttribute('data-row') || 'NaN', 10);
+    if (Number.isNaN(row)) return false;
+    const selected = getSelectedRowIds();
+    const indices = selected.includes(row) ? selected : [row];
+    reorderState = {
+      axis: 'row',
+      indices,
+      startX: e.clientX,
+      startY: e.clientY,
+      active: false,
+      beforeIndex: null
+    };
+    return true;
+  }
+  return false;
+};
+const onGlobalDragMove = e => {
+  if (resizeState) {
+    e.preventDefault();
+    if (resizeState.axis === 'column') {
+      const delta = e.clientX - resizeState.startPos;
+      applyColumnWidth(resizeState.index, resizeState.startSize + delta);
+    } else if (resizeState.axis === 'row') {
+      const delta = e.clientY - resizeState.startPos;
+      applyRowHeight(resizeState.index, resizeState.startSize + delta);
+    }
+    return;
+  }
+  if (!reorderState) return;
+
+  const movedX = Math.abs(e.clientX - reorderState.startX);
+  const movedY = Math.abs(e.clientY - reorderState.startY);
+  if (!reorderState.active && movedX < DRAG_THRESHOLD_PX && movedY < DRAG_THRESHOLD_PX) {
+    return;
+  }
+  reorderState.active = true;
+  e.preventDefault();
+
+  if (reorderState.axis === 'column') {
+    const target = getColumnDropTarget(e.clientX);
+    if (!target) return;
+    reorderState.beforeIndex = target.beforeIndex;
+    showColumnDropIndicator(target.indicatorX);
+  } else {
+    const target = getRowDropTarget(e.clientY);
+    if (!target) return;
+    reorderState.beforeIndex = target.beforeIndex;
+    showRowDropIndicator(target.indicatorY);
+  }
+};
+const onGlobalDragEnd = () => {
+  if (resizeState) {
+    resizeState = null;
+    table.style.cursor = '';
+    persistState();
+  }
+  if (!reorderState) return;
+
+  const { axis, indices, active, beforeIndex } = reorderState;
+  reorderState = null;
+  hideDragIndicator();
+  table.style.cursor = '';
+
+  if (!active || !Number.isFinite(beforeIndex)) return;
+  if (axis === 'column') {
+    vscode.postMessage({ type: 'reorderColumns', indices, beforeIndex });
+  } else {
+    vscode.postMessage({ type: 'reorderRows', indices, beforeIndex });
+  }
+};
+document.addEventListener('mousemove', onGlobalDragMove);
+document.addEventListener('mouseup', onGlobalDragEnd);
 const postOpenLink = link => {
   const url = link.getAttribute('data-href') || link.getAttribute('href');
   if (url) {
@@ -361,6 +656,15 @@ table.addEventListener('mousedown', e => {
       }
     }
     return; // do not start drag selection on right-click
+  }
+  if (e.button !== 0) return;
+  if (!editingCell && startResizeDrag(target, e)) {
+    e.preventDefault();
+    return;
+  }
+  if (!editingCell && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && startReorderDrag(target, e)) {
+    e.preventDefault();
+    return;
   }
 
   // ──────── NEW: Shift+Click range selection ────────
@@ -430,13 +734,12 @@ table.addEventListener('mousedown', e => {
 
 table.addEventListener('mousemove', e => {
   if(!isSelecting) return;
-  let target = e.target;
+  let target = getCellTarget(e.target);
+  if (!target) return;
   if(selectionMode === "cell"){
-    if(target.tagName === 'TD' || target.tagName === 'TH'){
-      endCell = target;
-      rangeEndCell = target;
-      selectRange(getCellCoords(startCell), getCellCoords(endCell));
-    }
+    endCell = target;
+    rangeEndCell = target;
+    selectRange(getCellCoords(startCell), getCellCoords(endCell));
   } else if(selectionMode === "column"){
     if(target.tagName !== 'TH'){
       const col = target.getAttribute('data-col');
@@ -457,6 +760,29 @@ table.addEventListener('mousemove', e => {
     const startRow = parseInt(startCell.getAttribute('data-row'));
     const endRow = parseInt(endCell.getAttribute('data-row'));
     selectFullRowRange(startRow, endRow);
+  }
+});
+
+table.addEventListener('mousemove', e => {
+  if (isSelecting || resizeState || (reorderState && reorderState.active)) {
+    return;
+  }
+  const target = getCellTarget(e.target);
+  if (!target) {
+    table.style.cursor = '';
+    return;
+  }
+  const edge = getResizeEdgeInfo(target, e);
+  if (edge) {
+    table.style.cursor = edge.axis === 'column' ? 'col-resize' : 'row-resize';
+    return;
+  }
+  table.style.cursor = '';
+});
+
+table.addEventListener('mouseleave', () => {
+  if (!resizeState) {
+    table.style.cursor = '';
   }
 });
 
@@ -931,6 +1257,19 @@ const editCell = (cell, event, mode = 'detail') => {
 };
 
 table.addEventListener('dblclick', e => {
+  const edgeTarget = getCellTarget(e.target);
+  const edge = getResizeEdgeInfo(edgeTarget, e);
+  if (edge) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (edge.axis === 'column') {
+      resetColumnWidth(edge.index);
+    } else {
+      resetRowHeight(edge.index);
+    }
+    persistState();
+    return;
+  }
   const link = getLinkTarget(e.target);
   if (link) {
     e.preventDefault();
