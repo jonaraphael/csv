@@ -67,6 +67,9 @@ class CsvEditorController {
         case 'editCell':
           this.updateDocument(e.row, e.col, e.value);
           break;
+        case 'replaceCells':
+          await this.replaceCells(e.replacements);
+          break;
         case 'save':
           await this.handleSave();
           break;
@@ -289,6 +292,61 @@ class CsvEditorController {
     // Trigger a full re-render if structure may have changed (new row/col created)
     if (trimmed || createdRow || createdCol || row >= hadRows || col >= hadColsAtRow) {
       try { this.updateWebviewContent(); } catch (e) { console.error('CSV: refresh failed after structural edit', e); }
+    }
+  }
+
+  private async replaceCells(replacements: unknown): Promise<void> {
+    if (!Array.isArray(replacements) || replacements.length === 0) {
+      return;
+    }
+    this.isUpdatingDocument = true;
+    try {
+      const separator = this.getSeparator();
+      const oldText = this.document.getText();
+      const result = Papa.parse(oldText, { dynamicTyping: false, delimiter: separator });
+      const data = result.data as string[][];
+
+      let changed = false;
+      for (const replacement of replacements) {
+        if (!replacement || typeof replacement !== 'object') {
+          continue;
+        }
+        const row = Number((replacement as any).row);
+        const col = Number((replacement as any).col);
+        if (!Number.isInteger(row) || row < 0 || !Number.isInteger(col) || col < 0) {
+          continue;
+        }
+        if (row >= data.length) {
+          continue;
+        }
+        if (col >= (data[row]?.length ?? 0)) {
+          continue;
+        }
+        const raw = (replacement as any).value;
+        const nextValue = raw === undefined || raw === null ? '' : String(raw);
+        if ((data[row][col] ?? '') === nextValue) {
+          continue;
+        }
+        data[row][col] = nextValue;
+        changed = true;
+      }
+      if (!changed) {
+        return;
+      }
+
+      const newCsvText = Papa.unparse(data, { delimiter: separator });
+      const fullRange = new vscode.Range(
+        0, 0,
+        this.document.lineCount,
+        this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0
+      );
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(this.document.uri, fullRange, newCsvText);
+      await vscode.workspace.applyEdit(edit);
+
+      this.updateWebviewContent();
+    } finally {
+      this.isUpdatingDocument = false;
     }
   }
 
@@ -1006,42 +1064,181 @@ class CsvEditorController {
       th { position: sticky; top: 0; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; }
       td.selected, th.selected { background-color: ${isDark ? '#333333' : '#cce0ff'} !important; }
       td.editing, th.editing { overflow: visible !important; white-space: normal !important; max-width: none !important; }
-      .highlight { background-color: ${isDark ? '#222222' : '#fefefe'} !important; }
+      .highlight { background-color: ${isDark ? '#2a2a2a' : '#fefefe'} !important; }
       .active-match { background-color: ${isDark ? '#444444' : '#ffffcc'} !important; }
       .csv-link { color: ${isDark ? '#6cb6ff' : '#0066cc'}; text-decoration: underline; cursor: pointer; }
       .csv-link:hover { color: ${isDark ? '#8ecfff' : '#0044aa'}; }
-      #findWidget {
+      #findReplaceWidget {
         position: fixed;
-        top: 20px;
+        top: 12px;
         right: 20px;
-        background: #f9f9f9;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        padding: 8px 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-        z-index: 1000;
+        width: 592px;
+        min-width: 592px;
+        max-width: 592px;
+        background: #171717;
+        border: 1px solid #2a2a2a;
+        border-radius: 8px;
+        padding: 10px;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+        z-index: 1200;
         display: none;
+        align-items: stretch;
+        color: #d4d4d4;
         font-family: ${this.escapeCss(fontFamily)};
       }
-      #findWidget input {
-        border: 1px solid #ccc;
-        border-radius: 3px;
-        padding: 4px 8px;
-        font-size: 14px;
-        width: 250px;
+      #findReplaceWidget.open { display: flex; }
+      #findReplaceWidget .fr-gutter {
+        width: 24px;
+        min-width: 24px;
+        border-radius: 6px;
+        background: #2a2b2b;
+        border-right: 1px solid #1f1f1f;
+        margin-right: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
       }
-      #findWidget span { margin-left: 8px; font-size: 14px; color: #666; }
-      #findWidget button {
-        background: #007acc;
-        border: none;
-        color: white;
-        padding: 4px 8px;
-        margin-left: 8px;
-        border-radius: 3px;
+      #findReplaceWidget .fr-content {
+        flex: 1 1 auto;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      #findReplaceWidget.replace-collapsed .fr-row-replace { display: none; }
+      #findReplaceWidget .fr-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #findReplaceWidget .fr-row-find .fr-input-wrap {
+        flex: 0 0 calc(25ch + 118px);
+        width: calc(25ch + 118px);
+      }
+      #findReplaceWidget .fr-row-replace .fr-input-wrap {
+        flex: 0 0 calc(25ch + 54px);
+        width: calc(25ch + 54px);
+      }
+      #findReplaceWidget .fr-input-wrap {
+        position: relative;
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      #findReplaceWidget .fr-input {
+        width: 100%;
+        height: 36px;
+        box-sizing: border-box;
+        border: 1px solid #2a2a2a;
+        border-radius: 6px;
+        background: #1c1c1c;
+        color: #d4d4d4;
+        padding-left: 10px;
         font-size: 14px;
+        outline: none;
+      }
+      #findReplaceWidget .fr-input::placeholder { color: #6a6a6a; }
+      #findReplaceWidget .fr-input:focus {
+        border-color: #3a3a3a;
+        box-shadow: 0 0 0 2px rgba(255,255,255,0.06);
+      }
+      #findInput { padding-right: 118px; }
+      #replaceInput { padding-right: 54px; }
+      #findReplaceWidget .fr-inline-toggles {
+        position: absolute;
+        right: 6px;
+        top: 50%;
+        transform: translateY(-50%);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding-left: 6px;
+        border-left: 1px solid rgba(42,42,42,0.75);
+      }
+      #findReplaceWidget .fr-toggle-btn {
+        min-width: 24px;
+        height: 24px;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+        color: rgba(189,189,189,0.8);
+        font-size: 12px;
         cursor: pointer;
+        padding: 0 4px;
       }
-      #findWidget button:hover { background: #005f9e; }
+      #findReplaceWidget .fr-toggle-btn:hover { background: rgba(255,255,255,0.04); color: #e6e6e6; }
+      #findReplaceWidget .fr-toggle-btn[aria-pressed="true"] {
+        color: #e6e6e6;
+        box-shadow: inset 0 -2px 0 #e6e6e6;
+      }
+      #findReplaceWidget .fr-status {
+        min-width: 84px;
+        text-align: right;
+        color: #d0d0d0;
+        font-size: 14px;
+      }
+      #findReplaceWidget .fr-divider {
+        width: 1px;
+        height: 22px;
+        background: #2a2a2a;
+      }
+      #findReplaceWidget .fr-icon-btn,
+      #findReplaceWidget .fr-action-btn,
+      #findReplaceWidget .fr-caret-btn {
+        width: 28px;
+        height: 28px;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        background: transparent;
+        color: #bdbdbd;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+      }
+      #findReplaceWidget .fr-icon-btn:hover,
+      #findReplaceWidget .fr-action-btn:hover,
+      #findReplaceWidget .fr-caret-btn:hover {
+        background: rgba(255,255,255,0.05);
+        color: #e6e6e6;
+      }
+      #findReplaceWidget .fr-icon-btn[disabled],
+      #findReplaceWidget .fr-action-btn[disabled] {
+        color: #6a6a6a;
+        cursor: default;
+        pointer-events: none;
+      }
+      #findReplaceWidget .fr-close-btn:hover { background: rgba(255,255,255,0.08); color: #ffffff; }
+      #findReplaceWidget .fr-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #findReplaceWidget .fr-overflow-menu {
+        position: absolute;
+        top: 48px;
+        right: 44px;
+        min-width: 200px;
+        background: #202020;
+        border: 1px solid #2f2f2f;
+        border-radius: 6px;
+        box-shadow: 0 10px 24px rgba(0,0,0,0.45);
+        padding: 4px;
+        display: none;
+      }
+      #findReplaceWidget .fr-overflow-menu.open { display: block; }
+      #findReplaceWidget .fr-overflow-item {
+        width: 100%;
+        border: 0;
+        background: transparent;
+        color: #d4d4d4;
+        border-radius: 4px;
+        text-align: left;
+        padding: 6px 8px;
+        cursor: pointer;
+        font-size: 13px;
+      }
+      #findReplaceWidget .fr-overflow-item:hover { background: rgba(255,255,255,0.05); }
       #contextMenu { position: absolute; display: none; background: ${isDark ? '#2d2d2d' : '#ffffff'}; border: 1px solid ${isDark ? '#555' : '#ccc'}; z-index: 10000; font-family: ${this.escapeCss(fontFamily)}; }
       #contextMenu div { padding: 4px 12px; cursor: pointer; }
       #contextMenu div:hover { background: ${isDark ? '#3d3d3d' : '#eeeeee'}; }
@@ -1057,10 +1254,45 @@ class CsvEditorController {
 
     <script id="__csvChunks" type="application/json" nonce="${nonce}">${chunksJson}</script>
 
-    <div id="findWidget">
-      <input id="findInput" type="text" placeholder="Find...">
-      <span id="findStatus"></span>
-      <button id="findClose">✕</button>
+    <div id="findReplaceWidget" class="replace-collapsed" role="group" aria-label="Find and Replace">
+      <div id="replaceToggleGutter" class="fr-gutter">
+        <button id="replaceToggle" class="fr-caret-btn" type="button" aria-label="Toggle Replace" aria-expanded="false">›</button>
+      </div>
+      <div class="fr-content">
+        <div class="fr-row fr-row-find">
+          <div class="fr-input-wrap">
+            <input id="findInput" class="fr-input" type="text" placeholder="Find" aria-label="Find">
+            <div class="fr-inline-toggles">
+              <button id="findCaseToggle" class="fr-toggle-btn" type="button" aria-label="Match Case" aria-pressed="false" title="Match Case">Aa</button>
+              <button id="findWordToggle" class="fr-toggle-btn" type="button" aria-label="Match Whole Word" aria-pressed="false" title="Match Whole Word">ab</button>
+              <button id="findRegexToggle" class="fr-toggle-btn" type="button" aria-label="Use Regular Expression" aria-pressed="false" title="Use Regular Expression">.*</button>
+            </div>
+          </div>
+          <div id="findStatus" class="fr-status">No results</div>
+          <div class="fr-divider" aria-hidden="true"></div>
+          <button id="findPrev" class="fr-icon-btn" type="button" aria-label="Previous Match" title="Previous Match" disabled>↑</button>
+          <button id="findNext" class="fr-icon-btn" type="button" aria-label="Next Match" title="Next Match" disabled>↓</button>
+          <button id="findMenuButton" class="fr-icon-btn" type="button" aria-label="More Find Options" title="More Find Options">☰</button>
+          <button id="findClose" class="fr-icon-btn fr-close-btn" type="button" aria-label="Close Find and Replace" title="Close">✕</button>
+        </div>
+        <div class="fr-row fr-row-replace">
+          <div class="fr-input-wrap">
+            <input id="replaceInput" class="fr-input" type="text" placeholder="Replace" aria-label="Replace">
+            <div class="fr-inline-toggles">
+              <button id="replaceCaseToggle" class="fr-toggle-btn" type="button" aria-label="Preserve Case" aria-pressed="false" title="Preserve Case">AB</button>
+            </div>
+          </div>
+          <div class="fr-actions">
+            <button id="replaceOne" class="fr-action-btn" type="button" aria-label="Replace" title="Replace" disabled>↵</button>
+            <button id="replaceAll" class="fr-action-btn" type="button" aria-label="Replace All" title="Replace All" disabled>⇅</button>
+          </div>
+        </div>
+        <div id="findOverflowMenu" class="fr-overflow-menu" role="menu" aria-label="Find Options">
+          <button id="findOverflowSelection" class="fr-overflow-item" type="button" role="menuitem">Find in selection</button>
+          <button id="findOverflowDiacritics" class="fr-overflow-item" type="button" role="menuitem">Match diacritics</button>
+          <button id="findOverflowPreserveCase" class="fr-overflow-item" type="button" role="menuitem">Toggle preserve case</button>
+        </div>
+      </div>
     </div>
     <div id="contextMenu"></div>
 

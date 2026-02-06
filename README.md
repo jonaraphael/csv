@@ -37,7 +37,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Edit Empty CSVs:** Create or open an empty CSV file and start typing immediately.
 - **Column Sorting:** Right-click a header and choose A–Z or Z–A.
 - **Custom Font Selection:** Choose a font from a dropdown or inherit VS Code's default.
-- **Find & Highlight:** Built-in find widget helps you search for text within your CSV with real-time highlighting and navigation through matches.
+- **Find & Replace Overlay:** Built-in find/replace bar with match options (case, whole-word, regex), keyboard navigation, and single/all replace actions.
 - **Clickable Links:** URLs in cells are automatically detected and displayed as clickable links. Ctrl/Cmd+click to open them in your browser.
 - **Preserved CSV Integrity:** All modifications respect CSV formatting—no unwanted extra characters or formatting issues.
 - **Optimized for Performance:** Designed for medium-sized datasets, ensuring a smooth editing experience without compromising on functionality.
@@ -71,7 +71,7 @@ Cursor (built on VS Code 1.99) and the latest VS Code releases (1.102).
   - Detail edit: press `Enter` on a selected cell or double‑click to enter a focused edit. Arrow Left/Right move the text caret; Arrow Up goes to start; Arrow Down goes to end. Click outside the cell (or blur) to save.
 - **Keyboard Navigation:** Use Arrow keys to move between cells when not editing. Use `Tab`/`Shift+Tab` to move horizontally (wrapping across rows as needed).
 - **Multi-Cell Selection:** Click and drag or use `Shift + Click` to select multiple cells, then copy them as CSV using `Ctrl/Cmd + C`.
-- **Find & Highlight:** Press `Ctrl/Cmd + F` to activate the find widget and quickly locate data within your CSV.
+- **Find & Replace:** Press `Ctrl/Cmd + F` to open Find, or `Ctrl/Cmd + H` to open Find + Replace.
 
 ---
 
@@ -120,7 +120,8 @@ Per-file (stored by the extension; set via commands):
   - Exit/save: click outside the cell or move focus to commit changes.
 - Global:
   - Copy selection: `Ctrl/Cmd + C`
-  - Find: `Ctrl/Cmd + F`
+- Find: `Ctrl/Cmd + F`
+- Replace: `Ctrl/Cmd + H`
   - Select all: `Ctrl/Cmd + A`
 
 ---

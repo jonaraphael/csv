@@ -848,57 +848,365 @@ const selectFullRowRange = (row1, row2) => {
   });
 };
 
-const findWidget = document.getElementById('findWidget');
+const findReplaceWidget = document.getElementById('findReplaceWidget');
+const replaceToggleGutter = document.getElementById('replaceToggleGutter');
+const replaceToggle = document.getElementById('replaceToggle');
 const findInput = document.getElementById('findInput');
+const replaceInput = document.getElementById('replaceInput');
 const findStatus = document.getElementById('findStatus');
+const findPrev = document.getElementById('findPrev');
+const findNext = document.getElementById('findNext');
+const findMenuButton = document.getElementById('findMenuButton');
+const findOverflowMenu = document.getElementById('findOverflowMenu');
 const findClose = document.getElementById('findClose');
+const findCaseToggle = document.getElementById('findCaseToggle');
+const findWordToggle = document.getElementById('findWordToggle');
+const findRegexToggle = document.getElementById('findRegexToggle');
+const replaceCaseToggle = document.getElementById('replaceCaseToggle');
+const replaceOne = document.getElementById('replaceOne');
+const replaceAll = document.getElementById('replaceAll');
+const findOverflowPreserveCase = document.getElementById('findOverflowPreserveCase');
+
+const findReplaceState = {
+  open: false,
+  replaceExpanded: false,
+  matchCase: false,
+  wholeWord: false,
+  regex: false,
+  preserveCase: false,
+  invalidRegex: false
+};
 let findMatches = [];
 let currentMatchIndex = -1;
+let findDebounce = null;
+let findFocusBeforeOpen = null;
 
-const updateFindStatus = () => {
-  findStatus.innerText = findMatches.length > 0 ? (currentMatchIndex+1) + " of " + findMatches.length + " (Cmd+G to advance)" : "";
+const escapeRegexLiteral = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const isFindWidgetTarget = target => {
+  const el = getElementTarget(target);
+  return !!(el && el.closest('#findReplaceWidget'));
 };
-const updateFindMatches = () => {
-  const query = findInput.value.toLowerCase();
-  document.querySelectorAll('.highlight, .active-match').forEach(el => { el.classList.remove('highlight'); el.classList.remove('active-match'); });
-  findMatches = [];
-  if(query === ""){ updateFindStatus(); return; }
-  document.querySelectorAll('td, th').forEach(cell => {
-    if(cell.innerText.toLowerCase().includes(query)){
-      findMatches.push(cell); cell.classList.add('highlight');
-    }
+const clearFindHighlights = () => {
+  document.querySelectorAll('.highlight, .active-match').forEach(el => {
+    el.classList.remove('highlight');
+    el.classList.remove('active-match');
   });
-  if(findMatches.length > 0){
-    currentMatchIndex = 0;
-    findMatches[currentMatchIndex].classList.add('active-match');
-    findMatches[currentMatchIndex].scrollIntoView({block:'center', inline:'center', behavior:'smooth'});
+};
+const hideFindOverflowMenu = () => {
+  findOverflowMenu.classList.remove('open');
+};
+const setReplaceExpanded = expanded => {
+  findReplaceState.replaceExpanded = expanded;
+  findReplaceWidget.classList.toggle('replace-collapsed', !expanded);
+  findReplaceWidget.classList.toggle('replace-expanded', expanded);
+  replaceToggle.setAttribute('aria-expanded', String(expanded));
+  replaceToggle.innerText = expanded ? '⌄' : '›';
+};
+const syncFindToggleUi = () => {
+  findCaseToggle.setAttribute('aria-pressed', String(findReplaceState.matchCase));
+  findWordToggle.setAttribute('aria-pressed', String(findReplaceState.wholeWord));
+  findRegexToggle.setAttribute('aria-pressed', String(findReplaceState.regex));
+  replaceCaseToggle.setAttribute('aria-pressed', String(findReplaceState.preserveCase));
+};
+const updateFindStatus = () => {
+  const query = findInput.value;
+  if (!query || query.length === 0 || findMatches.length === 0) {
+    findStatus.innerText = findReplaceState.invalidRegex ? 'Invalid regex' : 'No results';
+    return;
+  }
+  findStatus.innerText = `${currentMatchIndex + 1} of ${findMatches.length}`;
+};
+const updateFindControls = () => {
+  const hasQuery = findInput.value.length > 0;
+  const hasMatches = findMatches.length > 0 && !findReplaceState.invalidRegex;
+  findPrev.disabled = !hasMatches;
+  findNext.disabled = !hasMatches;
+  replaceOne.disabled = !hasQuery || !hasMatches;
+  replaceAll.disabled = !hasQuery || !hasMatches;
+};
+const loadAllChunksForFind = () => {
+  if (typeof window.__csvLoadNextChunk !== 'function' || !csvChunks || csvChunks.length === 0) {
+    return;
+  }
+  let guard = 50000;
+  while (csvChunks.length > 0 && guard-- > 0) {
+    window.__csvLoadNextChunk();
+  }
+};
+const getFindPattern = () => {
+  const query = findInput.value;
+  if (!query) return null;
+  let source = findReplaceState.regex ? query : escapeRegexLiteral(query);
+  if (findReplaceState.wholeWord) {
+    source = `\\b(?:${source})\\b`;
+  }
+  return source;
+};
+const buildFindRegex = global => {
+  const source = getFindPattern();
+  if (!source) return null;
+  const flags = `${global ? 'g' : ''}${findReplaceState.matchCase ? '' : 'i'}`;
+  try {
+    return new RegExp(source, flags);
+  } catch {
+    return null;
+  }
+};
+const getFindableCells = () => {
+  return Array.from(table.querySelectorAll('td[data-col], th[data-col]')).filter(cell => {
+    const col = parseInt(cell.getAttribute('data-col') || 'NaN', 10);
+    return !Number.isNaN(col) && col >= 0;
+  });
+};
+const setActiveFindMatch = (index, shouldScroll = true) => {
+  document.querySelectorAll('.active-match').forEach(el => el.classList.remove('active-match'));
+  if (!findMatches.length) {
+    currentMatchIndex = -1;
+    updateFindStatus();
+    updateFindControls();
+    return;
+  }
+  const normalized = ((index % findMatches.length) + findMatches.length) % findMatches.length;
+  currentMatchIndex = normalized;
+  const cell = findMatches[currentMatchIndex];
+  if (cell) {
+    cell.classList.add('active-match');
+    if (shouldScroll) {
+      cell.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+    }
   }
   updateFindStatus();
+  updateFindControls();
 };
-findInput.addEventListener('input', updateFindMatches);
-findInput.addEventListener('keydown', e => {
-  if(e.key === 'Escape'){
-    findWidget.style.display = 'none'; findInput.value = "";
-    document.querySelectorAll('.highlight, .active-match').forEach(el => { el.classList.remove('highlight'); el.classList.remove('active-match'); });
-    findStatus.innerText = ""; findInput.blur();
-  }
-  if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g'){
-    e.preventDefault();
-    if(findMatches.length === 0) return;
-    findMatches[currentMatchIndex].classList.remove('active-match');
-    currentMatchIndex = e.shiftKey ? (currentMatchIndex - 1 + findMatches.length) % findMatches.length : (currentMatchIndex + 1) % findMatches.length;
-    findMatches[currentMatchIndex].classList.add('active-match');
-    findMatches[currentMatchIndex].scrollIntoView({block:'center', inline:'center', behavior:'smooth'});
+const runFind = (preserveIndex = false) => {
+  const query = findInput.value;
+  const priorIndex = currentMatchIndex;
+  clearFindHighlights();
+  findMatches = [];
+  currentMatchIndex = -1;
+  findReplaceState.invalidRegex = false;
+  if (!query) {
     updateFindStatus();
+    updateFindControls();
+    return;
+  }
+
+  loadAllChunksForFind();
+  const regex = buildFindRegex(false);
+  if (!regex) {
+    findReplaceState.invalidRegex = true;
+    updateFindStatus();
+    updateFindControls();
+    return;
+  }
+
+  getFindableCells().forEach(cell => {
+    regex.lastIndex = 0;
+    if (regex.test(cell.innerText || '')) {
+      findMatches.push(cell);
+      cell.classList.add('highlight');
+    }
+  });
+
+  if (findMatches.length > 0) {
+    const nextIndex = preserveIndex && priorIndex >= 0
+      ? Math.min(priorIndex, findMatches.length - 1)
+      : 0;
+    setActiveFindMatch(nextIndex);
+  } else {
+    updateFindStatus();
+    updateFindControls();
+  }
+};
+const scheduleFind = (preserveIndex = false) => {
+  if (findDebounce) clearTimeout(findDebounce);
+  findDebounce = setTimeout(() => {
+    runFind(preserveIndex);
+  }, 150);
+};
+const navigateFind = reverse => {
+  if (!findMatches.length) return;
+  const delta = reverse ? -1 : 1;
+  setActiveFindMatch(currentMatchIndex + delta);
+};
+const preserveReplacementCase = (replacement, matched) => {
+  if (!replacement || !matched) return replacement;
+  if (matched === matched.toUpperCase()) return replacement.toUpperCase();
+  if (matched === matched.toLowerCase()) return replacement.toLowerCase();
+  const first = matched.charAt(0);
+  const rest = matched.slice(1);
+  if (first === first.toUpperCase() && rest === rest.toLowerCase()) {
+    return replacement.charAt(0).toUpperCase() + replacement.slice(1).toLowerCase();
+  }
+  return replacement;
+};
+const replaceInText = (text, replaceAllMatches) => {
+  const regex = buildFindRegex(replaceAllMatches);
+  if (!regex) return text;
+  const replacementText = replaceInput.value;
+  if (!findReplaceState.preserveCase) {
+    return text.replace(regex, replacementText);
+  }
+  return text.replace(regex, matched => preserveReplacementCase(replacementText, matched));
+};
+const commitCellReplacement = (cell, value) => {
+  cell.textContent = value;
+  const { row, col } = getCellCoords(cell);
+  vscode.postMessage({ type: 'editCell', row, col, value });
+};
+const replaceCurrentMatch = () => {
+  if (!findMatches.length || findReplaceState.invalidRegex) return;
+  const cell = findMatches[currentMatchIndex];
+  if (!cell || !cell.isConnected) {
+    runFind(true);
+    return;
+  }
+  const original = cell.innerText || '';
+  const next = replaceInText(original, false);
+  if (next === original) {
+    navigateFind(false);
+    return;
+  }
+  commitCellReplacement(cell, next);
+  runFind(true);
+};
+const replaceAllMatches = () => {
+  if (findReplaceState.invalidRegex || !findInput.value) return;
+  runFind(false);
+  if (!findMatches.length) return;
+  const unique = [...new Set(findMatches)];
+  const replacements = [];
+  unique.forEach(cell => {
+    if (!cell || !cell.isConnected) return;
+    const original = cell.innerText || '';
+    const next = replaceInText(original, true);
+    if (next !== original) {
+      cell.textContent = next;
+      const { row, col } = getCellCoords(cell);
+      replacements.push({ row, col, value: next });
+    }
+  });
+  if (replacements.length > 0) {
+    vscode.postMessage({ type: 'replaceCells', replacements });
+  }
+  runFind(false);
+};
+const openFindReplace = expandReplace => {
+  findFocusBeforeOpen = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  findReplaceState.open = true;
+  findReplaceWidget.classList.add('open');
+  setReplaceExpanded(expandReplace);
+  syncFindToggleUi();
+  hideFindOverflowMenu();
+  try { findInput.focus({ preventScroll: true }); } catch { try { findInput.focus(); } catch {} }
+  findInput.select();
+  runFind(true);
+};
+const closeFindReplace = () => {
+  if (findDebounce) {
+    clearTimeout(findDebounce);
+    findDebounce = null;
+  }
+  findReplaceState.open = false;
+  findReplaceWidget.classList.remove('open');
+  hideFindOverflowMenu();
+  clearFindHighlights();
+  findMatches = [];
+  currentMatchIndex = -1;
+  findReplaceState.invalidRegex = false;
+  updateFindStatus();
+  updateFindControls();
+  const focusTarget = (findFocusBeforeOpen && findFocusBeforeOpen.isConnected)
+    ? findFocusBeforeOpen
+    : (anchorCell || document.body);
+  try { focusTarget.focus({ preventScroll: true }); } catch { try { focusTarget.focus(); } catch {} }
+};
+
+findInput.addEventListener('input', () => scheduleFind(false));
+findInput.addEventListener('keydown', e => {
+  e.stopPropagation();
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeFindReplace();
+    return;
+  }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    navigateFind(e.shiftKey);
+    return;
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') {
+    e.preventDefault();
+    navigateFind(e.shiftKey);
   }
 });
-findClose.addEventListener('click', () => { findWidget.style.display = 'none'; findInput.value = "";
-  document.querySelectorAll('.highlight, .active-match').forEach(el => { el.classList.remove('highlight'); el.classList.remove('active-match'); });
-  findStatus.innerText = ""; findInput.blur();
+replaceInput.addEventListener('keydown', e => {
+  e.stopPropagation();
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeFindReplace();
+    return;
+  }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    replaceCurrentMatch();
+  }
 });
+replaceToggleGutter.addEventListener('click', () => {
+  setReplaceExpanded(!findReplaceState.replaceExpanded);
+});
+findCaseToggle.addEventListener('click', () => {
+  findReplaceState.matchCase = !findReplaceState.matchCase;
+  syncFindToggleUi();
+  runFind(true);
+});
+findWordToggle.addEventListener('click', () => {
+  findReplaceState.wholeWord = !findReplaceState.wholeWord;
+  syncFindToggleUi();
+  runFind(true);
+});
+findRegexToggle.addEventListener('click', () => {
+  findReplaceState.regex = !findReplaceState.regex;
+  syncFindToggleUi();
+  runFind(true);
+});
+replaceCaseToggle.addEventListener('click', () => {
+  findReplaceState.preserveCase = !findReplaceState.preserveCase;
+  syncFindToggleUi();
+});
+findPrev.addEventListener('click', () => navigateFind(true));
+findNext.addEventListener('click', () => navigateFind(false));
+findClose.addEventListener('click', closeFindReplace);
+findMenuButton.addEventListener('click', e => {
+  e.stopPropagation();
+  findOverflowMenu.classList.toggle('open');
+});
+replaceOne.addEventListener('click', replaceCurrentMatch);
+replaceAll.addEventListener('click', replaceAllMatches);
+findOverflowPreserveCase.addEventListener('click', () => {
+  findReplaceState.preserveCase = !findReplaceState.preserveCase;
+  syncFindToggleUi();
+  hideFindOverflowMenu();
+});
+document.addEventListener('mousedown', e => {
+  if (!isFindWidgetTarget(e.target)) {
+    hideFindOverflowMenu();
+    return;
+  }
+  const el = getElementTarget(e.target);
+  if (el && !el.closest('#findMenuButton') && !el.closest('#findOverflowMenu')) {
+    hideFindOverflowMenu();
+  }
+});
+syncFindToggleUi();
+updateFindStatus();
+updateFindControls();
 
 // Capture-phase handler to intercept Cmd/Ctrl + Arrow and move to extremes
 document.addEventListener('keydown', e => {
+  if (isFindWidgetTarget(e.target)) {
+    return;
+  }
   const isArrowKey = (k) => ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Up','Down','Left','Right','Home','End','PageUp','PageDown'].includes(k);
   if (!editingCell && (e.ctrlKey || e.metaKey) && isArrowKey(e.key)) {
     e.preventDefault();
@@ -973,8 +1281,29 @@ document.addEventListener('keydown', e => {
 }, true);
 
 document.addEventListener('keydown', e => {
-  if((e.ctrlKey || e.metaKey) && e.key === 'f'){
-    e.preventDefault(); findWidget.style.display = 'block'; findInput.focus(); return;
+  const key = typeof e.key === 'string' ? e.key.toLowerCase() : '';
+  if ((e.ctrlKey || e.metaKey) && key === 'f') {
+    e.preventDefault();
+    openFindReplace(false);
+    return;
+  }
+  if ((e.ctrlKey || e.metaKey) && key === 'h') {
+    e.preventDefault();
+    openFindReplace(true);
+    return;
+  }
+  if (findReplaceState.open && (e.ctrlKey || e.metaKey) && key === 'g') {
+    e.preventDefault();
+    navigateFind(e.shiftKey);
+    return;
+  }
+  if (findReplaceState.open && e.key === 'Escape') {
+    e.preventDefault();
+    closeFindReplace();
+    return;
+  }
+  if (isFindWidgetTarget(e.target)) {
+    return;
   }
   if ((e.ctrlKey || e.metaKey) && e.key === 'a' && !editingCell) {
     e.preventDefault(); selectAllCells(); return;
@@ -1328,6 +1657,9 @@ window.addEventListener('message', event => {
       }
     }
     isUpdating = false;
+    if (findReplaceState.open && findInput.value) {
+      scheduleFind(true);
+    }
   }
 });
 
@@ -1355,6 +1687,9 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 window.addEventListener('focus', () => { setTimeout(maybeResumePendingEdit, 0); }, { passive: true });
 
 document.addEventListener('keydown', e => {
+  if (findReplaceState.open) {
+    return;
+  }
   if(!editingCell && e.key === 'Escape'){
     clearSelection();
   }
