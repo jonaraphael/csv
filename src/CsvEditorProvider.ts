@@ -70,6 +70,9 @@ class CsvEditorController {
         case 'replaceCells':
           await this.replaceCells(e.replacements);
           break;
+        case 'findMatches':
+          await this.findMatches(e.requestId, e.query, e.options);
+          break;
         case 'save':
           await this.handleSave();
           break;
@@ -348,6 +351,81 @@ class CsvEditorController {
     } finally {
       this.isUpdatingDocument = false;
     }
+  }
+
+  private escapeFindRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  private buildFindRegex(query: string, options: { regex: boolean; wholeWord: boolean; matchCase: boolean }): RegExp | undefined {
+    if (!query) return undefined;
+    const useRegex = !!options.regex;
+    const wholeWord = !!options.wholeWord;
+    const matchCase = !!options.matchCase;
+    let source = useRegex ? query : this.escapeFindRegex(query);
+    if (wholeWord) {
+      source = `\\b(?:${source})\\b`;
+    }
+    const flags = matchCase ? 'g' : 'gi';
+    try {
+      return new RegExp(source, flags);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async findMatches(requestId: unknown, query: unknown, options: unknown): Promise<void> {
+    if (!this.currentWebviewPanel) {
+      return;
+    }
+
+    const requestQuery = typeof query === 'string' ? query : '';
+    const optsRaw = (options && typeof options === 'object') ? options as any : {};
+    const opts = {
+      regex: !!optsRaw.regex,
+      wholeWord: !!optsRaw.wholeWord,
+      matchCase: !!optsRaw.matchCase
+    };
+
+    const postResult = (payload: { matches: Array<{ row: number; col: number; value: string }>; invalidRegex: boolean }) => {
+      this.currentWebviewPanel?.webview.postMessage({
+        type: 'findMatchesResult',
+        requestId,
+        matches: payload.matches,
+        invalidRegex: payload.invalidRegex
+      });
+    };
+
+    if (!requestQuery) {
+      postResult({ matches: [], invalidRegex: false });
+      return;
+    }
+
+    const regex = this.buildFindRegex(requestQuery, opts);
+    if (!regex) {
+      postResult({ matches: [], invalidRegex: true });
+      return;
+    }
+
+    const separator = this.getSeparator();
+    const parsed = Papa.parse(this.document.getText(), { dynamicTyping: false, delimiter: separator });
+    const data = this.trimTrailingEmptyRows((parsed.data || []) as string[][]);
+    const hiddenRows = this.getHiddenRows();
+    const offset = Math.min(Math.max(0, hiddenRows), data.length);
+    const matches: Array<{ row: number; col: number; value: string }> = [];
+
+    for (let row = offset; row < data.length; row++) {
+      const current = data[row] || [];
+      for (let col = 0; col < current.length; col++) {
+        const value = String(current[col] ?? '');
+        regex.lastIndex = 0;
+        if (regex.test(value)) {
+          matches.push({ row, col, value });
+        }
+      }
+    }
+
+    postResult({ matches, invalidRegex: false });
   }
 
   // Apply an edit to a 2D data array, enforcing virtual row/cell invariants.
@@ -890,6 +968,7 @@ class CsvEditorController {
     const CHUNK_SIZE = 1000;
     const allRows = headerFlag ? bodyData : data.slice(offset);
     const allRowsCount = allRows.length; // preserve total before any truncation
+    const serialIndexWidthCh = Math.max(4, String(Math.max(1, allRowsCount + 1)).length + 1);
     const chunks: string[] = [];
     const chunked = allRowsCount > CHUNK_SIZE;
 
@@ -906,7 +985,7 @@ class CsvEditorController {
           }
 
           return `<tr>${
-            addSerialIndex ? `<td tabindex="0" style="min-width:4ch;max-width:4ch;border:1px solid ${isDark?'#555':'#ccc'};color:#888;" data-row="${absRow}" data-col="-1">${displayIdx}</td>` : ''
+            addSerialIndex ? `<td tabindex="0" style="min-width:${serialIndexWidthCh}ch;max-width:${serialIndexWidthCh}ch;border:1px solid ${isDark?'#555':'#ccc'};color:#888;" data-row="${absRow}" data-col="-1">${displayIdx}</td>` : ''
           }${cells}</tr>`;
         }).join('');
 
@@ -933,7 +1012,7 @@ class CsvEditorController {
     if (headerFlag) {
       tableHtml += `<thead><tr>${
         addSerialIndex
-          ? `<th tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: #888;"></th>`
+          ? `<th tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: #888;"></th>`
           : ''
       }`;
       for (let i = 0; i < numColumns; i++) {
@@ -944,7 +1023,7 @@ class CsvEditorController {
       bodyData.forEach((row, r) => {
         tableHtml += `<tr>${
           addSerialIndex
-            ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${offset + 1 + r}" data-col="-1">${r + 1}</td>`
+            ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${offset + 1 + r}" data-col="-1">${r + 1}</td>`
             : ''
         }`;
         for (let i = 0; i < numColumns; i++) {
@@ -955,7 +1034,7 @@ class CsvEditorController {
       });
       if (!chunked) {
         const virtualAbs = offset + 1 + bodyData.length;
-        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${bodyData.length + 1}</td>` : '';
+        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${bodyData.length + 1}</td>` : '';
         const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
         tableHtml += `<tr>${idxCell}${dataCells}</tr>`;
       }
@@ -967,7 +1046,7 @@ class CsvEditorController {
       nonHeaderRows.forEach((row, r) => {
         tableHtml += `<tr>${
           addSerialIndex
-            ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${offset + r}" data-col="-1">${r + 1}</td>`
+            ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${offset + r}" data-col="-1">${r + 1}</td>`
             : ''
         }`;
         for (let i = 0; i < numColumns; i++) {
@@ -979,7 +1058,7 @@ class CsvEditorController {
       if (!chunked) {
         const virtualAbs = offset + nonHeaderRows.length;
         const displayIdx = nonHeaderRows.length + 1;
-        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
+        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
         const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
         tableHtml += `<tr>${idxCell}${dataCells}</tr>`;
       }
@@ -991,7 +1070,7 @@ class CsvEditorController {
       const startAbs = headerFlag ? offset + 1 : offset;
       const virtualAbs = startAbs + allRowsCount;
       const displayIdx = allRowsCount + 1;
-      const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: 4ch; max-width: 4ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
+      const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
       const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
       const vrow = `<tr>${idxCell}${dataCells}</tr>`;
       chunks.push(vrow);

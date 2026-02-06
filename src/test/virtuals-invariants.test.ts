@@ -53,6 +53,15 @@ describe('Virtual row and cell invariants', () => {
     }
   });
 
+  it('sizes serial index column from total row count for chunked data', () => {
+    const rows: string[][] = Array.from({ length: 12345 }, (_, i) => [String(i + 1), 'x']);
+    const { tableHtml, chunks } = CsvEditorProvider.__test.generateTableAndChunksRaw(rows, /*treatHeader*/ false, /*addSerialIndex*/ true, /*hiddenRows*/ 0);
+
+    // Width should be based on total rows + virtual row (12346 -> 5 digits) plus 1ch padding => 6ch.
+    assert.ok(tableHtml.includes('min-width: 6ch; max-width: 6ch;'));
+    assert.ok(chunks.some(chunk => chunk.includes('min-width:6ch;max-width:6ch;') || chunk.includes('min-width: 6ch; max-width: 6ch;')));
+  });
+
   it('link rendering respects clickableLinks toggle', () => {
     const rows = [['www.example.com/path?q=1']];
     const enabled = CsvEditorProvider.__test.generateTableAndChunksRaw(rows, /*treatHeader*/ false, /*addSerialIndex*/ false, /*hiddenRows*/ 0, /*clickableLinks*/ true);

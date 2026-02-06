@@ -42,4 +42,9 @@ describe('Webview find/replace widget', () => {
   it('sends replace-all changes in a single batch message', () => {
     assert.ok(webviewSource.includes("type: 'replaceCells'"));
   });
+
+  it('requests global match coordinates from the extension and handles async results', () => {
+    assert.ok(webviewSource.includes("type: 'findMatches'"));
+    assert.ok(webviewSource.includes("message.type === 'findMatchesResult'"));
+  });
 });

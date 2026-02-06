@@ -37,7 +37,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Edit Empty CSVs:** Create or open an empty CSV file and start typing immediately.
 - **Column Sorting:** Right-click a header and choose A–Z or Z–A.
 - **Custom Font Selection:** Choose a font from a dropdown or inherit VS Code's default.
-- **Find & Replace Overlay:** Built-in find/replace bar with match options (case, whole-word, regex), keyboard navigation, and single/all replace actions.
+- **Find & Replace Overlay:** Built-in find/replace bar with match options (case, whole-word, regex), keyboard navigation, and single/all replace actions across the full file (including chunked rows).
 - **Clickable Links:** URLs in cells are automatically detected and displayed as clickable links. Ctrl/Cmd+click to open them in your browser.
 - **Preserved CSV Integrity:** All modifications respect CSV formatting—no unwanted extra characters or formatting issues.
 - **Optimized for Performance:** Designed for medium-sized datasets, ensuring a smooth editing experience without compromising on functionality.

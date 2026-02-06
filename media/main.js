@@ -170,6 +170,7 @@ if (csvChunks.length) {
       const html = csvChunks.shift();
       tbody.insertAdjacentHTML('beforeend', html);
       applySizeStateToRenderedCells();
+      window.dispatchEvent(new Event('csvChunkLoaded'));
     } finally {
       loading = false;
     }
@@ -880,8 +881,13 @@ let findMatches = [];
 let currentMatchIndex = -1;
 let findDebounce = null;
 let findFocusBeforeOpen = null;
+let findRequestSeq = 0;
+let latestFindRequestId = 0;
+const pendingFindRequests = new Map();
+let findMatchKeySet = new Set();
 
 const escapeRegexLiteral = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const getFindMatchKey = (row, col) => `${row}:${col}`;
 const isFindWidgetTarget = target => {
   const el = getElementTarget(target);
   return !!(el && el.closest('#findReplaceWidget'));
@@ -924,15 +930,6 @@ const updateFindControls = () => {
   replaceOne.disabled = !hasQuery || !hasMatches;
   replaceAll.disabled = !hasQuery || !hasMatches;
 };
-const loadAllChunksForFind = () => {
-  if (typeof window.__csvLoadNextChunk !== 'function' || !csvChunks || csvChunks.length === 0) {
-    return;
-  }
-  let guard = 50000;
-  while (csvChunks.length > 0 && guard-- > 0) {
-    window.__csvLoadNextChunk();
-  }
-};
 const getFindPattern = () => {
   const query = findInput.value;
   if (!query) return null;
@@ -952,10 +949,40 @@ const buildFindRegex = global => {
     return null;
   }
 };
-const getFindableCells = () => {
-  return Array.from(table.querySelectorAll('td[data-col], th[data-col]')).filter(cell => {
+const getRenderedFindCells = () => {
+  return Array.from(table.querySelectorAll('td[data-col], th[data-col]'));
+};
+const getRenderedCellByCoords = (row, col) => {
+  return table.querySelector(`td[data-row="${row}"][data-col="${col}"], th[data-row="${row}"][data-col="${col}"]`);
+};
+const ensureRenderedCellByCoords = (row, col) => {
+  let cell = getRenderedCellByCoords(row, col);
+  if (cell) {
+    return cell;
+  }
+  if (typeof window.__csvLoadNextChunk !== 'function') {
+    return null;
+  }
+  let guard = 50000;
+  while (!cell && csvChunks && csvChunks.length > 0 && guard-- > 0) {
+    window.__csvLoadNextChunk();
+    cell = getRenderedCellByCoords(row, col);
+  }
+  return cell;
+};
+const applyFindHighlightsToRendered = () => {
+  if (!findMatchKeySet.size) {
+    return;
+  }
+  getRenderedFindCells().forEach(cell => {
+    const row = parseInt(cell.getAttribute('data-row') || 'NaN', 10);
     const col = parseInt(cell.getAttribute('data-col') || 'NaN', 10);
-    return !Number.isNaN(col) && col >= 0;
+    if (Number.isNaN(row) || Number.isNaN(col) || col < 0) {
+      return;
+    }
+    if (findMatchKeySet.has(getFindMatchKey(row, col))) {
+      cell.classList.add('highlight');
+    }
   });
 };
 const setActiveFindMatch = (index, shouldScroll = true) => {
@@ -968,8 +995,10 @@ const setActiveFindMatch = (index, shouldScroll = true) => {
   }
   const normalized = ((index % findMatches.length) + findMatches.length) % findMatches.length;
   currentMatchIndex = normalized;
-  const cell = findMatches[currentMatchIndex];
+  const match = findMatches[currentMatchIndex];
+  const cell = match ? ensureRenderedCellByCoords(match.row, match.col) : null;
   if (cell) {
+    cell.classList.add('highlight');
     cell.classList.add('active-match');
     if (shouldScroll) {
       cell.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
@@ -981,8 +1010,13 @@ const setActiveFindMatch = (index, shouldScroll = true) => {
 const runFind = (preserveIndex = false) => {
   const query = findInput.value;
   const priorIndex = currentMatchIndex;
+  const requestId = ++findRequestSeq;
+  latestFindRequestId = requestId;
+  pendingFindRequests.set(requestId, { preserveIndex, priorIndex });
+
   clearFindHighlights();
   findMatches = [];
+  findMatchKeySet = new Set();
   currentMatchIndex = -1;
   findReplaceState.invalidRegex = false;
   if (!query) {
@@ -991,32 +1025,18 @@ const runFind = (preserveIndex = false) => {
     return;
   }
 
-  loadAllChunksForFind();
-  const regex = buildFindRegex(false);
-  if (!regex) {
-    findReplaceState.invalidRegex = true;
-    updateFindStatus();
-    updateFindControls();
-    return;
-  }
-
-  getFindableCells().forEach(cell => {
-    regex.lastIndex = 0;
-    if (regex.test(cell.innerText || '')) {
-      findMatches.push(cell);
-      cell.classList.add('highlight');
+  vscode.postMessage({
+    type: 'findMatches',
+    requestId,
+    query,
+    options: {
+      matchCase: findReplaceState.matchCase,
+      wholeWord: findReplaceState.wholeWord,
+      regex: findReplaceState.regex
     }
   });
-
-  if (findMatches.length > 0) {
-    const nextIndex = preserveIndex && priorIndex >= 0
-      ? Math.min(priorIndex, findMatches.length - 1)
-      : 0;
-    setActiveFindMatch(nextIndex);
-  } else {
-    updateFindStatus();
-    updateFindControls();
-  }
+  updateFindStatus();
+  updateFindControls();
 };
 const scheduleFind = (preserveIndex = false) => {
   if (findDebounce) clearTimeout(findDebounce);
@@ -1049,41 +1069,44 @@ const replaceInText = (text, replaceAllMatches) => {
   }
   return text.replace(regex, matched => preserveReplacementCase(replacementText, matched));
 };
-const commitCellReplacement = (cell, value) => {
-  cell.textContent = value;
-  const { row, col } = getCellCoords(cell);
-  vscode.postMessage({ type: 'editCell', row, col, value });
-};
 const replaceCurrentMatch = () => {
   if (!findMatches.length || findReplaceState.invalidRegex) return;
-  const cell = findMatches[currentMatchIndex];
-  if (!cell || !cell.isConnected) {
+  const match = findMatches[currentMatchIndex];
+  if (!match) {
     runFind(true);
     return;
   }
-  const original = cell.innerText || '';
+  const original = String(match.value ?? '');
   const next = replaceInText(original, false);
   if (next === original) {
     navigateFind(false);
     return;
   }
-  commitCellReplacement(cell, next);
+  const cell = ensureRenderedCellByCoords(match.row, match.col);
+  if (cell) {
+    cell.textContent = next;
+  }
+  vscode.postMessage({ type: 'editCell', row: match.row, col: match.col, value: next });
   runFind(true);
 };
 const replaceAllMatches = () => {
-  if (findReplaceState.invalidRegex || !findInput.value) return;
-  runFind(false);
+  if (findReplaceState.invalidRegex || !findInput.value || !findMatches.length) return;
+  const seen = new Set();
   if (!findMatches.length) return;
-  const unique = [...new Set(findMatches)];
   const replacements = [];
-  unique.forEach(cell => {
-    if (!cell || !cell.isConnected) return;
-    const original = cell.innerText || '';
+  findMatches.forEach(match => {
+    if (!match) return;
+    const key = getFindMatchKey(match.row, match.col);
+    if (seen.has(key)) return;
+    seen.add(key);
+    const original = String(match.value ?? '');
     const next = replaceInText(original, true);
     if (next !== original) {
-      cell.textContent = next;
-      const { row, col } = getCellCoords(cell);
-      replacements.push({ row, col, value: next });
+      const cell = getRenderedCellByCoords(match.row, match.col);
+      if (cell) {
+        cell.textContent = next;
+      }
+      replacements.push({ row: match.row, col: match.col, value: next });
     }
   });
   if (replacements.length > 0) {
@@ -1107,6 +1130,8 @@ const closeFindReplace = () => {
     clearTimeout(findDebounce);
     findDebounce = null;
   }
+  pendingFindRequests.clear();
+  latestFindRequestId = 0;
   findReplaceState.open = false;
   findReplaceWidget.classList.remove('open');
   hideFindOverflowMenu();
@@ -1201,6 +1226,19 @@ document.addEventListener('mousedown', e => {
 syncFindToggleUi();
 updateFindStatus();
 updateFindControls();
+window.addEventListener('csvChunkLoaded', () => {
+  if (!findReplaceState.open || findMatches.length === 0) {
+    return;
+  }
+  applyFindHighlightsToRendered();
+  if (currentMatchIndex >= 0 && currentMatchIndex < findMatches.length) {
+    const active = findMatches[currentMatchIndex];
+    const cell = getRenderedCellByCoords(active.row, active.col);
+    if (cell) {
+      cell.classList.add('active-match');
+    }
+  }
+});
 
 // Capture-phase handler to intercept Cmd/Ctrl + Arrow and move to extremes
 document.addEventListener('keydown', e => {
@@ -1659,6 +1697,46 @@ window.addEventListener('message', event => {
     isUpdating = false;
     if (findReplaceState.open && findInput.value) {
       scheduleFind(true);
+    }
+  } else if (message.type === 'findMatchesResult') {
+    if (!findReplaceState.open) {
+      return;
+    }
+    const requestId = Number(message.requestId);
+    const requestState = pendingFindRequests.get(requestId);
+    pendingFindRequests.delete(requestId);
+    if (!Number.isInteger(requestId) || requestId !== latestFindRequestId) {
+      return;
+    }
+
+    findReplaceState.invalidRegex = !!message.invalidRegex;
+    findMatches = Array.isArray(message.matches)
+      ? message.matches
+        .map(raw => {
+          const row = Number(raw?.row);
+          const col = Number(raw?.col);
+          if (!Number.isInteger(row) || row < 0 || !Number.isInteger(col) || col < 0) {
+            return null;
+          }
+          return { row, col, value: String(raw?.value ?? '') };
+        })
+        .filter(Boolean)
+      : [];
+    findMatchKeySet = new Set(findMatches.map(match => getFindMatchKey(match.row, match.col)));
+
+    clearFindHighlights();
+    applyFindHighlightsToRendered();
+    if (findMatches.length > 0) {
+      const preserveIndex = !!requestState?.preserveIndex;
+      const priorIndex = Number.isInteger(requestState?.priorIndex) ? requestState.priorIndex : -1;
+      const nextIndex = preserveIndex && priorIndex >= 0
+        ? Math.min(priorIndex, findMatches.length - 1)
+        : 0;
+      setActiveFindMatch(nextIndex);
+    } else {
+      currentMatchIndex = -1;
+      updateFindStatus();
+      updateFindControls();
     }
   }
 });

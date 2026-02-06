@@ -17,6 +17,8 @@ describe('Webview custom find integration', () => {
     assert.ok(providerSource.includes('id="findInput"'));
     assert.ok(providerSource.includes('id="replaceInput"'));
     assert.ok(providerSource.includes('id="findNext"'));
+    assert.ok(providerSource.includes("case 'findMatches':"));
+    assert.ok(providerSource.includes("type: 'findMatchesResult'"));
   });
 
   it('handles Ctrl/Cmd+F and Ctrl/Cmd+H in the webview script', () => {
