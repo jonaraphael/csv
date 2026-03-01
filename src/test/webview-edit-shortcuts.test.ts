@@ -48,6 +48,14 @@ describe('Webview edit shortcuts', () => {
     assert.ok(webviewSource.includes('setSingleSelection(nextCell);'));
   });
 
+  it('commits blur before save when using Ctrl/Cmd+S during edit', () => {
+    assert.ok(webviewSource.includes("if (editingCell && ((e.ctrlKey || e.metaKey) && e.key === 's')) {"));
+    assert.ok(webviewSource.includes("const cellRef = editingCell;"));
+    assert.ok(webviewSource.includes("cellRef && cellRef.blur();"));
+    assert.ok(webviewSource.includes("setTimeout(() => {"));
+    assert.ok(webviewSource.includes("vscode.postMessage({ type: 'save' });"));
+  });
+
   it('handles selection-mode paste as a grid operation', () => {
     assert.ok(webviewSource.includes("document.addEventListener('paste', e => {"));
     assert.ok(webviewSource.includes("type: 'pasteCells'"));

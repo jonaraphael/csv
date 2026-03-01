@@ -1760,8 +1760,12 @@ document.addEventListener('keydown', e => {
 
   if (editingCell && ((e.ctrlKey || e.metaKey) && e.key === 's')) {
     e.preventDefault();
-    editingCell.blur();
-    vscode.postMessage({ type: 'save' });
+    const cellRef = editingCell;
+    cellRef && cellRef.blur();
+    // Let blur's edit commit message flush first, then save.
+    setTimeout(() => {
+      vscode.postMessage({ type: 'save' });
+    }, 0);
   }
   if (editingCell && e.key === 'Enter') {
     e.preventDefault();
