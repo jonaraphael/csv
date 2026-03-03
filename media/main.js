@@ -48,6 +48,7 @@ dragIndicator.style.display = 'none';
 document.body.appendChild(dragIndicator);
 let columnSizeState = {};
 let rowSizeState = {};
+let frozenColumns = [];
 
 const normalizeSizeState = (raw, minSize) => {
   const out = {};
@@ -60,6 +61,102 @@ const normalizeSizeState = (raw, minSize) => {
     out[String(idx)] = Math.round(size);
   }
   return out;
+};
+
+const normalizeFrozenColumns = raw => {
+  if (!Array.isArray(raw)) return [];
+  const unique = new Set();
+  for (const value of raw) {
+    const col = Number.parseInt(String(value), 10);
+    if (!Number.isInteger(col) || col < 0) continue;
+    unique.add(col);
+  }
+  return Array.from(unique).sort((a, b) => a - b);
+};
+
+const getOpaqueBackgroundColor = (color, fallback) => {
+  if (typeof color !== 'string' || color.trim() === '') {
+    return fallback;
+  }
+  const normalized = color.trim().toLowerCase();
+  if (normalized === 'transparent') {
+    return fallback;
+  }
+  const rgbaMatch = normalized.match(/^rgba\((.+)\)$/);
+  if (rgbaMatch) {
+    const parts = rgbaMatch[1].split(',').map(part => part.trim());
+    if (parts.length === 4) {
+      const alpha = Number.parseFloat(parts[3]);
+      if (!Number.isFinite(alpha) || alpha < 1) {
+        return fallback;
+      }
+    }
+  }
+  const rgbSlashMatch = normalized.match(/^rgb\((.+)\/\s*([0-9.]+)\s*\)$/);
+  if (rgbSlashMatch) {
+    const alpha = Number.parseFloat(rgbSlashMatch[2]);
+    if (!Number.isFinite(alpha) || alpha < 1) {
+      return fallback;
+    }
+  }
+  return color;
+};
+
+const getFrozenFallbackBackground = () => {
+  const themeBackground = window.getComputedStyle(document.documentElement).getPropertyValue('--vscode-editor-background').trim();
+  if (themeBackground) {
+    return themeBackground;
+  }
+  const bodyBackground = window.getComputedStyle(document.body).backgroundColor;
+  return getOpaqueBackgroundColor(bodyBackground, '#1e1e1e');
+};
+
+const clearFrozenColumnStyles = () => {
+  table.querySelectorAll('[data-frozen-column="1"]').forEach(cell => {
+    cell.style.position = '';
+    cell.style.left = '';
+    cell.style.zIndex = '';
+    cell.style.backgroundColor = '';
+    cell.removeAttribute('data-frozen-column');
+  });
+};
+
+const getFrozenColumnWidth = col => {
+  const cell = table.querySelector(`thead th[data-col="${col}"]`) || table.querySelector(`tbody td[data-col="${col}"]`);
+  if (!cell) return 0;
+  const rectWidth = cell.getBoundingClientRect().width;
+  if (Number.isFinite(rectWidth) && rectWidth > 0) {
+    return rectWidth;
+  }
+  return Math.max(0, cell.offsetWidth || cell.clientWidth || 0);
+};
+
+const applyFrozenColumns = () => {
+  frozenColumns = normalizeFrozenColumns(frozenColumns);
+  clearFrozenColumnStyles();
+  if (frozenColumns.length === 0) {
+    return;
+  }
+  const fallbackBackground = getFrozenFallbackBackground();
+  const headerProbe = table.querySelector('thead th[data-col]:not(.selected):not(.highlight):not(.active-match)');
+  const rawHeaderBackground = headerProbe ? window.getComputedStyle(headerProbe).backgroundColor : fallbackBackground;
+  const headerBackground = getOpaqueBackgroundColor(rawHeaderBackground, fallbackBackground);
+  let leftOffset = 0;
+  for (const col of frozenColumns) {
+    const cells = Array.from(table.querySelectorAll(`thead th[data-col="${col}"], tbody td[data-col="${col}"]`));
+    if (!cells.length) {
+      continue;
+    }
+    const leftPx = `${Math.round(leftOffset)}px`;
+    for (const cell of cells) {
+      cell.style.position = 'sticky';
+      cell.style.left = leftPx;
+      cell.style.zIndex = cell.tagName === 'TH' ? '15' : '10';
+      cell.style.backgroundColor = cell.tagName === 'TH' ? headerBackground : fallbackBackground;
+      cell.setAttribute('data-frozen-column', '1');
+    }
+    leftOffset += getFrozenColumnWidth(col);
+  }
 };
 
 const applySizeStateToRenderedCells = () => {
@@ -143,7 +240,8 @@ const persistState = () => {
       anchorCol: anchor ? anchor.col : undefined,
       columnSizes: { ...columnSizeState },
       rowSizes: { ...rowSizeState },
-      zoomScale
+      zoomScale,
+      frozenColumns: [...frozenColumns]
     };
     vscode.setState(nextState);
   } catch {}
@@ -152,6 +250,7 @@ const persistState = () => {
 const restoreState = () => {
   try {
     const st = vscode.getState() || {};
+    frozenColumns = normalizeFrozenColumns(st.frozenColumns);
     const restoredZoom = parsePositiveNumber(st.zoomScale);
     setZoomScale(restoredZoom ?? 1, false);
     columnSizeState = normalizeSizeState(st.columnSizes, 40);
@@ -202,6 +301,7 @@ const restoreState = () => {
     if (typeof st.scrollY === 'number' && scrollContainer) {
       scrollContainer.scrollTop = st.scrollY;
     }
+    applyFrozenColumns();
   } catch {}
 };
 
@@ -256,6 +356,7 @@ if (csvChunks.length || remoteHasMoreChunks) {
       if (html) {
         tbody.insertAdjacentHTML('beforeend', html);
         applySizeStateToRenderedCells();
+        applyFrozenColumns();
         window.dispatchEvent(new Event('csvChunkLoaded'));
       }
       if (!csvChunks.length) {
@@ -323,10 +424,12 @@ const ensureTargetStep = () => {
   }
 };
 window.addEventListener('csvChunkLoaded', ensureTargetStep);
+window.addEventListener('csvChunkLoaded', applyFrozenColumns);
 /* ───────── END VIRTUAL-SCROLL LOADER ───────── */
 
 // Restore state after initial DOM is ready
 restoreState();
+applyFrozenColumns();
 setTimeout(() => { try { restoreState(); } catch {} }, 0);
 requestAnimationFrame(() => { try { restoreState(); } catch {} });
 
@@ -455,6 +558,29 @@ const showContextMenu = (x, y, row, col) => {
         vscode.postMessage({ type: 'deleteColumn', index: col });
       }
     });
+    frozenColumns = normalizeFrozenColumns(frozenColumns);
+    const freezeTargetCols = (colCountSel > 1 && selectedColIds.includes(col)) ? selectedColIds : [col];
+    const allFreezeTargetsAreFrozen = freezeTargetCols.every(targetCol => frozenColumns.includes(targetCol));
+    if (allFreezeTargetsAreFrozen) {
+      item('Unfreeze COLUMN', () => {
+        frozenColumns = normalizeFrozenColumns(frozenColumns.filter(c => !freezeTargetCols.includes(c)));
+        applyFrozenColumns();
+        persistState();
+      });
+    } else {
+      item('Freeze COLUMN', () => {
+        frozenColumns = normalizeFrozenColumns([...frozenColumns, ...freezeTargetCols]);
+        applyFrozenColumns();
+        persistState();
+      });
+    }
+    if (frozenColumns.length > 0) {
+      item('Clear Frozen COLUMNS', () => {
+        frozenColumns = [];
+        applyFrozenColumns();
+        persistState();
+      });
+    }
   }
 
   contextMenu.style.left = x + 'px';
@@ -588,6 +714,7 @@ const applyColumnWidth = (col, widthPx) => {
     cell.style.minWidth = `${width}px`;
     cell.style.maxWidth = `${width}px`;
   });
+  applyFrozenColumns();
 };
 const resetColumnWidth = col => {
   delete columnSizeState[String(col)];
@@ -596,6 +723,7 @@ const resetColumnWidth = col => {
     cell.style.minWidth = '';
     cell.style.maxWidth = '';
   });
+  applyFrozenColumns();
 };
 const applyRowHeight = (row, heightPx) => {
   const height = Math.max(getMinRowHeight(), Math.round(heightPx));
@@ -2090,6 +2218,7 @@ window.addEventListener('message', event => {
         cell.textContent = value;
       }
     }
+    applyFrozenColumns();
     isUpdating = false;
     if (findReplaceState.open && findInput.value) {
       scheduleFind(true);
