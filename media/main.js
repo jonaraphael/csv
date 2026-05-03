@@ -556,16 +556,19 @@ const getRowDropTarget = clientY => {
   }
   return { beforeIndex, indicatorY };
 };
+const getColumnCell = cell => {
+  if (!cell || !cell.getAttribute) return null;
+  const col = parseInt(cell.getAttribute('data-col') || 'NaN', 10);
+  if (Number.isNaN(col) || col < 0) return null;
+  return { col, rect: cell.getBoundingClientRect() };
+};
 const getResizeEdgeInfo = (target, e) => {
   if (!target) return null;
-  if (isColumnHeaderCell(target)) {
-    const col = parseInt(target.getAttribute('data-col') || 'NaN', 10);
-    if (!Number.isNaN(col)) {
-      const rect = target.getBoundingClientRect();
-      const edgeDelta = rect.right - e.clientX;
-      if (edgeDelta >= 0 && edgeDelta <= RESIZE_HANDLE_PX) {
-        return { axis: 'column', index: col, rect };
-      }
+  const columnCell = getColumnCell(target);
+  if (columnCell) {
+    const rightEdgeDelta = columnCell.rect.right - e.clientX;
+    if (rightEdgeDelta >= 0 && rightEdgeDelta <= RESIZE_HANDLE_PX) {
+      return { axis: 'column', index: columnCell.col, rect: columnCell.rect };
     }
   }
   if (isRowIndexCell(target)) {
@@ -617,7 +620,9 @@ const startResizeDrag = (target, e) => {
   const edge = getResizeEdgeInfo(target, e);
   if (!edge) return false;
   if (edge.axis === 'column') {
-    resizeState = { axis: 'column', index: edge.index, startPos: e.clientX, startSize: edge.rect.width };
+    const startCell = table.querySelector(`[data-col="${edge.index}"]`);
+    const startRect = startCell ? startCell.getBoundingClientRect() : edge.rect;
+    resizeState = { axis: 'column', index: edge.index, startPos: e.clientX, startSize: startRect.width };
     table.style.cursor = 'col-resize';
     return true;
   }
