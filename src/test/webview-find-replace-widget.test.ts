@@ -23,6 +23,13 @@ describe('Webview find/replace widget', () => {
     assert.ok(providerSource.includes('id="replaceAll"'));
   });
 
+  it('keeps find/replace inputs text-selectable so clipboard paste works under body user-select:none', () => {
+    const frInputCss = providerSource.slice(providerSource.indexOf('#findReplaceWidget .fr-input {'));
+    assert.ok(providerSource.includes('user-select: none'), 'body still disables selection for the grid');
+    assert.ok(frInputCss.includes('user-select: text'), 'inputs re-enable user-select');
+    assert.ok(frInputCss.includes('-webkit-user-select: text'), 'inputs re-enable -webkit-user-select for macOS webview');
+  });
+
   it('supports find and replace keyboard shortcuts', () => {
     assert.ok(webviewSource.includes("key === 'f'"));
     assert.ok(webviewSource.includes("key === 'h'"));

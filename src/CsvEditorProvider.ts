@@ -1781,6 +1781,10 @@ class CsvEditorController {
         padding-left: 10px;
         font-size: inherit;
         outline: none;
+        /* body sets user-select:none to stop grid text-selection; re-enable it here so
+           the text inputs stay selectable and macOS clipboard shortcuts (Cmd+C/V/X) work. */
+        -webkit-user-select: text;
+        user-select: text;
       }
       #findReplaceWidget .fr-input::placeholder { color: #6a6a6a; }
       #findReplaceWidget .fr-input:focus {
