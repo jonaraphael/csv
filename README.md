@@ -34,9 +34,10 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Enhanced Keyboard Navigation:** Navigate cells with arrows and Tab/Shift+Tab; quick edits can commit with arrow keys; `Ctrl/Cmd + A` selects all; `Ctrl/Cmd + C` copies selection.
 - **Advanced Multi-Cell Selection:** Easily select and copy blocks of data, then paste them elsewhere as properly formatted CSV.
 - **Add/Delete Columns:** Right-click any cell to add a column left or right, or remove the selected column.
+- **Drag to Reorder Columns:** Drag a column header to move it; an insertion line previews where the column will be placed.
 - **Add/Delete Rows:** Insert above/below or remove the selected row via context menu.
 - **Edit Empty CSVs:** Create or open an empty CSV file and start typing immediately.
-- **Column Sorting:** Right-click a header and choose A–Z or Z–A.
+- **Column Sorting:** Click a header to cycle through ascending, descending, and no sort indicator. The single arrow beside the header shows the active direction; double-click still edits the column name. You can also choose A–Z or Z–A from the header context menu.
 - **Custom Font Controls:** Choose a font family and optional font-size override, or inherit VS Code defaults.
 - **In-View Zoom:** Use `Ctrl/Cmd + Mouse Wheel` or `Ctrl/Cmd + +/-/0` to zoom the CSV view without changing global editor zoom.
 - **Find & Replace Overlay:** Built-in find/replace bar with match options (case, whole-word, regex), keyboard navigation, and single/all replace actions across the full file (including chunked rows).

@@ -1706,6 +1706,9 @@ class CsvEditorController {
       table { border-collapse: collapse; width: max-content; }
       th, td { padding: ${cellPadding}px 8px; border: 1px solid ${isDark ? '#555' : '#ccc'}; font-size: inherit; }
       th { position: sticky; top: 0; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+      thead th[data-col] { cursor: grab; }
+      thead th[aria-sort="ascending"]::after { content: " ↑"; font-weight: 700; }
+      thead th[aria-sort="descending"]::after { content: " ↓"; font-weight: 700; }
       td { overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
       td.selected, th.selected { background-color: ${isDark ? '#333333' : '#cce0ff'} !important; }
       td.editing, th.editing { overflow: visible !important; white-space: pre-wrap !important; overflow-wrap: anywhere !important; max-width: none !important; }
