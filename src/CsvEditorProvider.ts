@@ -69,6 +69,7 @@ class CsvEditorController {
   private separatorCache: { version: number; configKey: string; separator: string } | undefined;
   private isDiffContext = false;
   private chunkRenderState: ChunkRenderState | undefined;
+  private sortBaselineText: string | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -122,6 +123,14 @@ class CsvEditorController {
     });
 
     webviewPanel.webview.onDidReceiveMessage(async e => {
+      if ([
+        'editCell', 'replaceCells', 'pasteCells',
+        'insertColumn', 'insertColumns', 'deleteColumn', 'deleteColumns',
+        'insertRow', 'insertRows', 'deleteRow', 'deleteRows',
+        'reorderColumns', 'reorderRows'
+      ].includes(e.type)) {
+        this.sortBaselineText = undefined;
+      }
       switch (e.type) {
         case 'editCell':
           this.updateDocument(e.row, e.col, e.value);
@@ -178,6 +187,9 @@ class CsvEditorController {
         case 'sortColumn':
           await this.sortColumn(e.index, e.ascending);
           break;
+        case 'sortColumns':
+          await this.sortColumns(e.sorts);
+          break;
         case 'openLink':
           await this.openLinkExternally(e.url);
           break;
@@ -190,6 +202,7 @@ class CsvEditorController {
         !this.isUpdatingDocument &&
         !this.isSaving
       ) {
+        this.sortBaselineText = undefined;
         setTimeout(() => this.updateWebviewContent(), 250);
       }
     });
@@ -1063,87 +1076,138 @@ class CsvEditorController {
     this.updateWebviewContent();
   }
 
-  private async sortColumn(index: number, ascending: boolean) {
-    this.isUpdatingDocument = true;
-
-    const config       = vscode.workspace.getConfiguration('csv', this.document.uri);
-    const separator    = this.getSeparator();
-    const hidden       = this.getHiddenRows();
-
-    const text   = this.document.getText();
-    const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    // Exclude virtual/trailing empty rows from sort input
-    const rows   = this.trimTrailingEmptyRows(result.data as string[][]);
-    const treatHeader  = this.getEffectiveHeader(rows, this.getHiddenRows());
-
-    const offset = Math.min(Math.max(0, hidden), rows.length);
-    let header: string[] = [];
-    let body:   string[][] = [];
-
-    if (treatHeader && offset < rows.length) {
-      header = rows[offset];
-      body   = rows.slice(offset + 1);
-    } else {
-      body   = rows.slice(offset);
+  private compareSortValues(a: string, b: string, ascending: boolean): number {
+    const sa = (a ?? '').trim();
+    const sb = (b ?? '').trim();
+    const aEmpty = sa === '';
+    const bEmpty = sb === '';
+    if (aEmpty && bEmpty) {
+      return 0;
+    }
+    if (aEmpty) {
+      return 1;
+    }
+    if (bEmpty) {
+      return -1;
     }
 
-    const cmp = (a: string, b: string) => {
-      const sa = (a ?? '').trim();
-      const sb = (b ?? '').trim();
-      const aEmpty = sa === '';
-      const bEmpty = sb === '';
-      if (aEmpty && bEmpty) return 0;
-      if (aEmpty) return 1; // empty sorts last
-      if (bEmpty) return -1;
-
-      // Dates take precedence over numeric compare (avoid parseFloat on ISO)
-      const aIsDate = this.isDate(sa);
-      const bIsDate = this.isDate(sb);
-      if (aIsDate && bIsDate) {
-        const da = Date.parse(sa);
-        const db = Date.parse(sb);
-        if (!isNaN(da) && !isNaN(db)) return da - db;
+    if (this.isDate(sa) && this.isDate(sb)) {
+      const da = Date.parse(sa);
+      const db = Date.parse(sb);
+      if (!isNaN(da) && !isNaN(db)) {
+        return ascending ? da - db : db - da;
       }
+    }
 
-      const na = parseFloat(sa), nb = parseFloat(sb);
-      if (!isNaN(na) && !isNaN(nb)) return na - nb;
-      return sa.localeCompare(sb, undefined, { sensitivity: 'base' });
-    };
+    const na = parseFloat(sa), nb = parseFloat(sb);
+    if (!isNaN(na) && !isNaN(nb)) {
+      return ascending ? na - nb : nb - na;
+    }
+    const diff = sa.localeCompare(sb, undefined, { sensitivity: 'base' });
+    return ascending ? diff : -diff;
+  }
+
+  private sortDataByColumns(
+    inputRows: string[][],
+    sorts: Array<{ index: number; ascending: boolean }>,
+    treatHeader: boolean,
+    hiddenRows: number
+  ): string[][] {
+    const rows = this.trimTrailingEmptyRows(inputRows);
+    const offset = Math.min(Math.max(0, hiddenRows), rows.length);
+    const header = treatHeader && offset < rows.length ? rows[offset] : [];
+    const body = rows.slice(treatHeader && offset < rows.length ? offset + 1 : offset);
 
     body.sort((r1, r2) => {
-      const diff = cmp(r1[index] ?? '', r2[index] ?? '');
-      return ascending ? diff : -diff;
+      for (const sort of sorts) {
+        const diff = this.compareSortValues(r1[sort.index] ?? '', r2[sort.index] ?? '', sort.ascending);
+        if (diff !== 0) {
+          return diff;
+        }
+      }
+      return 0;
     });
 
     const prefix = rows.slice(0, offset);
     const combined = treatHeader ? [...prefix, header, ...body] : [...prefix, ...body];
-
-    // Sanitize before unparse: ensure undefined/null/NaN become empty strings
-    const sanitized: string[][] = combined.map(r => r.map((v: any) => {
-      if (v === undefined || v === null) return '';
-      const t = typeof v;
-      if (t === 'number') {
-        return Number.isNaN(v) ? '' : String(v);
+    return combined.map(row => row.map((value: any) => {
+      if (value === undefined || value === null) {
+        return '';
       }
-      const s = String(v);
-      return s.toLowerCase() === 'nan' ? '' : s;
+      if (typeof value === 'number') {
+        return Number.isNaN(value) ? '' : String(value);
+      }
+      const text = String(value);
+      return text.toLowerCase() === 'nan' ? '' : text;
     }));
+  }
 
-    const newCsv = Papa.unparse(sanitized, { delimiter: separator });
+  private async sortColumn(index: number, ascending: boolean) {
+    await this.sortColumns([{ index, ascending }]);
+  }
 
-    const fullRange = new vscode.Range(
-      0, 0,
-      this.document.lineCount,
-      this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0
-    );
+  private async sortColumns(rawSorts: unknown) {
+    const sorts: Array<{ index: number; ascending: boolean }> = [];
+    const seen = new Set<number>();
+    if (Array.isArray(rawSorts)) {
+      for (const raw of rawSorts) {
+        const index = Number(raw?.index);
+        if (!Number.isInteger(index) || index < 0 || typeof raw?.ascending !== 'boolean' || seen.has(index)) {
+          continue;
+        }
+        seen.add(index);
+        sorts.push({ index, ascending: raw.ascending });
+      }
+    }
+    this.isUpdatingDocument = true;
+    try {
+      const separator = this.getSeparator();
+      const hiddenRows = this.getHiddenRows();
+      if (!sorts.length) {
+        if (this.sortBaselineText === undefined) {
+          return;
+        }
+        const originalText = this.sortBaselineText;
+        const fullRange = new vscode.Range(
+          0, 0,
+          this.document.lineCount,
+          this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0
+        );
+        const edit = new vscode.WorkspaceEdit();
+        edit.replace(this.document.uri, fullRange, originalText);
+        await vscode.workspace.applyEdit(edit);
+        this.sortBaselineText = undefined;
+        this.updateWebviewContent();
+        return;
+      }
 
-    const edit = new vscode.WorkspaceEdit();
-    edit.replace(this.document.uri, fullRange, newCsv);
-    await vscode.workspace.applyEdit(edit);
+      if (this.sortBaselineText === undefined) {
+        this.sortBaselineText = this.document.getText();
+      }
+      const result = Papa.parse(this.sortBaselineText, { dynamicTyping: false, delimiter: separator });
+      const rows = this.trimTrailingEmptyRows(result.data as string[][]);
+      const maxColumns = rows.reduce((max, row) => Math.max(max, row.length), 0);
+      const validSorts = sorts.filter(sort => sort.index < maxColumns);
+      if (!validSorts.length) {
+        return;
+      }
 
-    this.isUpdatingDocument = false;
-    this.updateWebviewContent();
-    console.log(`CSV: Sorted column ${index + 1} (${ascending ? 'A-Z' : 'Z-A'})`);
+      const treatHeader = this.getEffectiveHeader(rows, hiddenRows);
+      const sorted = this.sortDataByColumns(rows, validSorts, treatHeader, hiddenRows);
+      const newCsv = Papa.unparse(sorted, { delimiter: separator });
+      const fullRange = new vscode.Range(
+        0, 0,
+        this.document.lineCount,
+        this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0
+      );
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(this.document.uri, fullRange, newCsv);
+      await vscode.workspace.applyEdit(edit);
+      this.updateWebviewContent();
+      console.log(`CSV: Sorted by ${validSorts.map(sort => `${sort.index + 1} ${sort.ascending ? 'A-Z' : 'Z-A'}`).join(', ')}`);
+    } finally {
+      this.isUpdatingDocument = false;
+    }
   }
 
   private async insertRow(index: number) {
@@ -1706,6 +1770,9 @@ class CsvEditorController {
       table { border-collapse: collapse; width: max-content; }
       th, td { padding: ${cellPadding}px 8px; border: 1px solid ${isDark ? '#555' : '#ccc'}; font-size: inherit; }
       th { position: sticky; top: 0; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+      thead th[data-col] { cursor: grab; }
+      thead th[aria-sort="ascending"]::after { content: " ↑" attr(data-sort-priority); font-weight: 700; }
+      thead th[aria-sort="descending"]::after { content: " ↓" attr(data-sort-priority); font-weight: 700; }
       td { overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
       td.selected, th.selected { background-color: ${isDark ? '#333333' : '#cce0ff'} !important; }
       td.editing, th.editing { overflow: visible !important; white-space: pre-wrap !important; overflow-wrap: anywhere !important; max-width: none !important; }
@@ -2587,64 +2654,17 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   public static __test = {
     // Pure helper mirroring sort behavior; returns combined rows after sort.
     sortByColumn(rows: string[][], index: number, ascending: boolean, treatHeader: boolean, hiddenRows: number): string[][] {
-      // Trim trailing empty rows like runtime before sorting
-      const isEmpty = (r: string[] | undefined) => {
-        if (!r || r.length === 0) return true;
-        for (let i = 0; i < r.length; i++) { if ((r[i] ?? '') !== '') return false; }
-        return true;
-      };
-      let end = rows.length;
-      while (end > 0 && isEmpty(rows[end - 1])) { end--; }
-      const trimmed = rows.slice(0, end);
-
-      const offset = Math.min(Math.max(0, hiddenRows), trimmed.length);
-      let header: string[] = [];
-      let body:   string[][] = [];
-      if (treatHeader && offset < trimmed.length) {
-        header = trimmed[offset];
-        body   = trimmed.slice(offset + 1);
-      } else {
-        body   = trimmed.slice(offset);
-      }
-      const isDateStr = (v: string) => {
-        const s = (v ?? '').trim();
-        if (!s) return false;
-        const isoDate = /^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
-        const isoSlash = /^\d{4}\/\d{2}\/\d{2}$/;
-        return isoDate.test(s) || isoSlash.test(s);
-      };
-      const cmp = (a: string, b: string) => {
-        const sa = (a ?? '').trim();
-        const sb = (b ?? '').trim();
-        const aEmpty = sa === '';
-        const bEmpty = sb === '';
-        if (aEmpty && bEmpty) return 0;
-        if (aEmpty) return 1; // empty sorts last
-        if (bEmpty) return -1;
-        if (isDateStr(sa) && isDateStr(sb)) {
-          const da = Date.parse(sa);
-          const db = Date.parse(sb);
-          if (!isNaN(da) && !isNaN(db)) return da - db;
-        }
-        const na = parseFloat(sa), nb = parseFloat(sb);
-        if (!isNaN(na) && !isNaN(nb)) return na - nb;
-        return sa.localeCompare(sb, undefined, { sensitivity: 'base' });
-      };
-      body.sort((r1, r2) => {
-        const diff = cmp(r1[index] ?? '', r2[index] ?? '');
-        return ascending ? diff : -diff;
-      });
-      const prefix = trimmed.slice(0, offset);
-
-      // Apply same sanitation used before unparse in runtime path
-      const combined = (treatHeader ? [...prefix, header, ...body] : [...prefix, ...body]).map(r => r.map((v: any) => {
-        if (v === undefined || v === null) return '';
-        const t = typeof v;
-        if (t === 'number') return Number.isNaN(v) ? '' : String(v);
-        const s = String(v);
-        return s.toLowerCase() === 'nan' ? '' : s;
-      }));
-      return combined;
+      const c: any = new (CsvEditorController as any)({} as any);
+      return c.sortDataByColumns(rows, [{ index, ascending }], treatHeader, hiddenRows);
+    },
+    sortByColumns(
+      rows: string[][],
+      sorts: Array<{ index: number; ascending: boolean }>,
+      treatHeader: boolean,
+      hiddenRows: number
+    ): string[][] {
+      const c: any = new (CsvEditorController as any)({} as any);
+      return c.sortDataByColumns(rows, sorts, treatHeader, hiddenRows);
     },
     computeColumnWidths(data: string[][]): number[] {
       const c: any = new (CsvEditorController as any)({} as any);
