@@ -27,18 +27,36 @@ describe('Webview reorder and resize interactions', () => {
 
   it('cycles header clicks through no sort, ascending, and descending', () => {
     assert.ok(source.includes('scheduleHeaderSort(sourceIndex)'));
-    assert.ok(source.includes('requestColumnSort(col, true)'));
-    assert.ok(source.includes('requestColumnSort(col, false)'));
-    assert.ok(source.includes('clearColumnSortIndicator()'));
-    assert.ok(source.includes("header.setAttribute('aria-sort', st.sortAscending ? 'ascending' : 'descending')"));
+    assert.ok(source.includes('cycleColumnSortState(col)'));
+    assert.ok(source.includes('sorts.push({ index: col, ascending: true })'));
+    assert.ok(source.includes('existing.ascending = false'));
+    assert.ok(source.includes('sorts.splice(sorts.indexOf(existing), 1)'));
+    assert.ok(source.includes("header.setAttribute('aria-sort', sort.ascending ? 'ascending' : 'descending')"));
   });
 
-  it('renders one copy-safe arrow and keeps double-click available for header editing', () => {
+  it('renders copy-safe arrows with their chained sort priorities', () => {
     assert.ok(source.includes("table.querySelectorAll('.sort-indicator').forEach(indicator => indicator.remove())"));
-    assert.ok(providerSource.includes('th[aria-sort="ascending"]::after { content: " ↑"'));
-    assert.ok(providerSource.includes('th[aria-sort="descending"]::after { content: " ↓"'));
-    assert.ok(source.includes("table.addEventListener('dblclick', e => {\n  cancelPendingHeaderSort()"));
+    assert.ok(source.includes("header.setAttribute('data-sort-priority', String(priority + 1))"));
+    assert.ok(providerSource.includes('th[aria-sort="ascending"]::after { content: " ↑" attr(data-sort-priority)'));
+    assert.ok(providerSource.includes('th[aria-sort="descending"]::after { content: " ↓" attr(data-sort-priority)'));
+    assert.ok(source.includes("vscode.postMessage({ type: 'sortColumns', sorts })"));
+  });
+
+  it('reapplies every sort from a baseline and restores it when the chain is empty', () => {
+    assert.ok(providerSource.includes('this.sortBaselineText = this.document.getText()'));
+    assert.ok(providerSource.includes('const result = Papa.parse(this.sortBaselineText'));
+    assert.ok(providerSource.includes('edit.replace(this.document.uri, fullRange, originalText)'));
+  });
+
+  it('keeps double-click available for header editing', () => {
+    assert.ok(source.includes("table.addEventListener('dblclick', e => {\n  cancelPendingHeaderSort(true)"));
     assert.ok(!source.includes("indicator.textContent = st.sortAscending"));
+  });
+
+  it('retains rapid clicks on different headers in the same chain', () => {
+    assert.ok(source.includes('pendingHeaderSortColumn === col'));
+    assert.ok(source.includes('pendingHeaderSortInitial = getColumnSorts()'));
+    assert.ok(source.includes("vscode.postMessage({ type: 'sortColumns', sorts })"));
   });
 
   it('supports drag-resize for columns and rows', () => {

@@ -37,7 +37,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Drag to Reorder Columns:** Drag a column header to move it; an insertion line previews where the column will be placed.
 - **Add/Delete Rows:** Insert above/below or remove the selected row via context menu.
 - **Edit Empty CSVs:** Create or open an empty CSV file and start typing immediately.
-- **Column Sorting:** Click a header to cycle through ascending, descending, and no sort indicator. The single arrow beside the header shows the active direction; double-click still edits the column name. You can also choose A–Z or Z–A from the header context menu.
+- **Chained Column Sorting:** Click headers to build an ordered multi-column sort, like pandas `sort_values(by=[...])`. Each header cycles through ascending, descending, and removal from the chain; its arrow and number show direction and priority. Empty values remain last, and clearing the chain restores the pre-sort row order. Double-click still edits the column name.
 - **Custom Font Controls:** Choose a font family and optional font-size override, or inherit VS Code defaults.
 - **In-View Zoom:** Use `Ctrl/Cmd + Mouse Wheel` or `Ctrl/Cmd + +/-/0` to zoom the CSV view without changing global editor zoom.
 - **Find & Replace Overlay:** Built-in find/replace bar with match options (case, whole-word, regex), keyboard navigation, and single/all replace actions across the full file (including chunked rows).

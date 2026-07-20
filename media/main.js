@@ -37,6 +37,8 @@ const RESIZE_HANDLE_PX = 6;
 let resizeState = null;
 let reorderState = null;
 let pendingHeaderSortTimer = null;
+let pendingHeaderSortColumn = null;
+let pendingHeaderSortInitial = null;
 
 const table = document.querySelector('#csv-root table');
 const scrollContainer = document.querySelector('.table-container');
@@ -372,45 +374,100 @@ const hasHeader = document.querySelector('thead') !== null;
 const getCellCoords = cell => ({ row: parseInt(cell.getAttribute('data-row')), col: parseInt(cell.getAttribute('data-col')) });
 const clearSelection = () => { currentSelection.forEach(c => c.classList.remove('selected')); currentSelection = []; };
 const contextMenu = document.getElementById('contextMenu');
+const getColumnSorts = () => {
+  const st = vscode.getState() || {};
+  const raw = Array.isArray(st.columnSorts)
+    ? st.columnSorts
+    : (Number.isInteger(st.sortColumn) && typeof st.sortAscending === 'boolean'
+      ? [{ index: st.sortColumn, ascending: st.sortAscending }]
+      : []);
+  const seen = new Set();
+  return raw.filter(sort => {
+    if (!sort || !Number.isInteger(sort.index) || sort.index < 0 || typeof sort.ascending !== 'boolean' || seen.has(sort.index)) {
+      return false;
+    }
+    seen.add(sort.index);
+    return true;
+  }).map(sort => ({ index: sort.index, ascending: sort.ascending }));
+};
+const setColumnSorts = sorts => {
+  const st = vscode.getState() || {};
+  vscode.setState({ ...st, columnSorts: sorts, sortColumn: undefined, sortAscending: undefined });
+};
 const renderSortIndicator = () => {
   table.querySelectorAll('.sort-indicator').forEach(indicator => indicator.remove());
   table.querySelectorAll('thead th[data-col]').forEach(header => {
     header.removeAttribute('aria-sort');
+    header.removeAttribute('data-sort-priority');
   });
-  const st = vscode.getState() || {};
-  if (!Number.isInteger(st.sortColumn) || typeof st.sortAscending !== 'boolean') return;
-  const header = table.querySelector(`thead th[data-col="${st.sortColumn}"]`);
-  if (!header) return;
-  header.setAttribute('aria-sort', st.sortAscending ? 'ascending' : 'descending');
+  getColumnSorts().forEach((sort, priority) => {
+    const header = table.querySelector(`thead th[data-col="${sort.index}"]`);
+    if (!header) return;
+    header.setAttribute('aria-sort', sort.ascending ? 'ascending' : 'descending');
+    header.setAttribute('data-sort-priority', String(priority + 1));
+  });
+};
+const applyColumnSorts = sorts => {
+  setColumnSorts(sorts);
+  renderSortIndicator();
+  vscode.postMessage({ type: 'sortColumns', sorts });
 };
 const requestColumnSort = (col, ascending) => {
-  const st = vscode.getState() || {};
-  vscode.setState({ ...st, sortColumn: col, sortAscending: ascending });
-  renderSortIndicator();
-  vscode.postMessage({ type: 'sortColumn', index: col, ascending });
+  cancelPendingHeaderSort();
+  const sorts = getColumnSorts();
+  const existing = sorts.find(sort => sort.index === col);
+  if (existing) {
+    existing.ascending = ascending;
+  } else {
+    sorts.push({ index: col, ascending });
+  }
+  applyColumnSorts(sorts);
 };
 const clearColumnSortIndicator = () => {
-  const st = vscode.getState() || {};
-  vscode.setState({ ...st, sortColumn: undefined, sortAscending: undefined });
+  setColumnSorts([]);
   renderSortIndicator();
 };
-const cancelPendingHeaderSort = () => {
+const cancelPendingHeaderSort = (restoreInitial = false) => {
   if (pendingHeaderSortTimer === null) return;
   clearTimeout(pendingHeaderSortTimer);
+  if (restoreInitial && pendingHeaderSortInitial) {
+    setColumnSorts(pendingHeaderSortInitial);
+    renderSortIndicator();
+  }
   pendingHeaderSortTimer = null;
+  pendingHeaderSortColumn = null;
+  pendingHeaderSortInitial = null;
+};
+const cycleColumnSortState = col => {
+  const sorts = getColumnSorts();
+  const existing = sorts.find(sort => sort.index === col);
+  if (!existing) {
+    sorts.push({ index: col, ascending: true });
+  } else if (existing.ascending) {
+    existing.ascending = false;
+  } else {
+    sorts.splice(sorts.indexOf(existing), 1);
+  }
+  setColumnSorts(sorts);
+  renderSortIndicator();
 };
 const scheduleHeaderSort = col => {
-  cancelPendingHeaderSort();
-  pendingHeaderSortTimer = setTimeout(() => {
-    pendingHeaderSortTimer = null;
-    const st = vscode.getState() || {};
-    if (st.sortColumn !== col || typeof st.sortAscending !== 'boolean') {
-      requestColumnSort(col, true);
-    } else if (st.sortAscending) {
-      requestColumnSort(col, false);
-    } else {
-      clearColumnSortIndicator();
+  if (pendingHeaderSortTimer !== null && pendingHeaderSortColumn === col) {
+    clearTimeout(pendingHeaderSortTimer);
+  } else {
+    if (pendingHeaderSortTimer !== null) {
+      clearTimeout(pendingHeaderSortTimer);
     }
+    pendingHeaderSortInitial = getColumnSorts();
+    pendingHeaderSortColumn = col;
+    cycleColumnSortState(col);
+  }
+  pendingHeaderSortTimer = setTimeout(() => {
+    const sorts = getColumnSorts();
+    pendingHeaderSortTimer = null;
+    pendingHeaderSortColumn = null;
+    pendingHeaderSortInitial = null;
+    vscode.postMessage({ type: 'sortColumns', sorts });
   }, 250);
 };
 renderSortIndicator();
@@ -2049,7 +2106,7 @@ const editCell = (cell, event, mode = 'detail') => {
 };
 
 table.addEventListener('dblclick', e => {
-  cancelPendingHeaderSort();
+  cancelPendingHeaderSort(true);
   const edgeTarget = getCellTarget(e.target);
   const edge = getResizeEdgeInfo(edgeTarget, e);
   if (edge) {
