@@ -137,8 +137,7 @@ describe('Virtual row and cell invariants', () => {
       /*hiddenRows*/ 0,
       /*clickableLinks*/ true
     );
-    assert.ok(rendered.tableHtml.includes('white-space: pre-wrap;'));
-    assert.ok(rendered.tableHtml.includes('overflow-wrap: anywhere;'));
+    assert.ok(rendered.tableHtml.includes('class="cell-content"'));
     assert.ok(rendered.tableHtml.includes('Hello\nWorld'));
     assert.match(rendered.tableHtml, /title="Hello[\r\n]+World"/);
   });

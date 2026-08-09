@@ -63,6 +63,7 @@ class CsvEditorController {
   private static readonly LARGE_FILE_IGNORE_FOREVER = 'Ignore Forever';
 
   private isUpdatingDocument = false;
+  private lastInternalEditTime = 0;
   private isSaving = false;
   private currentWebviewPanel: vscode.WebviewPanel | undefined;
   private document!: vscode.TextDocument;
@@ -145,6 +146,9 @@ class CsvEditorController {
           await vscode.env.clipboard.writeText(e.text);
           console.log('CSV: Copied to clipboard');
           break;
+        case 'getCellContent':
+          this.handleGetCellContent(e.row, e.col, e.requestId);
+          break;
         case 'insertColumn':
           await this.insertColumn(e.index);
           break;
@@ -184,13 +188,22 @@ class CsvEditorController {
       }
     });
 
+    let pendingDocumentChangeTimeout: NodeJS.Timeout | undefined;
     const changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument(e => {
       if (
         e.document.uri.toString() === document.uri.toString() &&
         !this.isUpdatingDocument &&
-        !this.isSaving
+        !this.isSaving &&
+        Date.now() - this.lastInternalEditTime > 1000
       ) {
-        setTimeout(() => this.updateWebviewContent(), 250);
+        if (pendingDocumentChangeTimeout) {
+          clearTimeout(pendingDocumentChangeTimeout);
+        }
+        pendingDocumentChangeTimeout = setTimeout(() => {
+          if (!this.isUpdatingDocument && !this.isSaving && Date.now() - this.lastInternalEditTime > 1000) {
+            this.updateWebviewContent();
+          }
+        }, 250);
       }
     });
 
@@ -398,6 +411,7 @@ class CsvEditorController {
 
   private async updateDocument(row: number, col: number, value: string) {
     this.isUpdatingDocument = true;
+    this.lastInternalEditTime = Date.now();
     let structuralChange = false;
     let applied = false;
     try {
@@ -455,8 +469,8 @@ class CsvEditorController {
     console.log(`CSV: Updated row ${row + 1}, column ${col + 1} to "${value}"`);
     const config = vscode.workspace.getConfiguration('csv', this.document.uri);
     const clickableLinks = config.get<boolean>('clickableLinks', true);
-    const rendered = this.formatCellContent(value ?? '', clickableLinks);
-    this.currentWebviewPanel?.webview.postMessage({ type: 'updateCell', row, col, value, rendered });
+    const { safe: rendered, isDomTruncated } = this.formatCellForTable(value ?? '', clickableLinks);
+    this.currentWebviewPanel?.webview.postMessage({ type: 'updateCell', row, col, value, rendered, isDomTruncated });
 
     // Trigger a full re-render if structure may have changed (new row/col created)
     if (structuralChange) {
@@ -469,6 +483,7 @@ class CsvEditorController {
       return;
     }
     this.isUpdatingDocument = true;
+    this.lastInternalEditTime = Date.now();
     try {
       const separator = this.getSeparator();
       const oldText = this.document.getText();
@@ -705,6 +720,7 @@ class CsvEditorController {
     const selection = CsvEditorController.parsePasteSelectionBounds(rawSelection);
 
     this.isUpdatingDocument = true;
+    this.lastInternalEditTime = Date.now();
     try {
       const separator = this.getSeparator();
       const oldText = this.document.getText();
@@ -762,9 +778,10 @@ class CsvEditorController {
         let cells = '';
         for (let cIdx = 0; cIdx < state.numColumns; cIdx++) {
           const rawValue = row[cIdx] || '';
-          const safe = this.formatCellContent(rawValue, state.clickableLinks);
+          const { safe, isDomTruncated } = this.formatCellForTable(rawValue, state.clickableLinks);
+          const truncAttr = isDomTruncated ? ' data-domtruncated="1"' : '';
           const titleAttr = this.getMultilineCellTitleAttr(rawValue);
-          cells += `<td tabindex="0" style="min-width:${Math.min(state.columnWidths[cIdx] || 0, 100)}ch;max-width:100ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:${state.columnColors[cIdx]};overflow:visible;white-space: pre-wrap;overflow-wrap:anywhere;"${titleAttr} data-row="${absRow}" data-col="${cIdx}">${safe}</td>`;
+          cells += `<td tabindex="0"${truncAttr} style="min-width:${Math.min(state.columnWidths[cIdx] || 0, 100)}ch;max-width:100ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:${state.columnColors[cIdx]};"${titleAttr} data-row="${absRow}" data-col="${cIdx}"><div class="cell-content">${safe}</div></td>`;
         }
         const idxCell = state.addSerialIndex
           ? `<td tabindex="0" style="min-width:${state.serialIndexWidthCh}ch;max-width:${state.serialIndexWidthCh}ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:#888;" data-row="${absRow}" data-col="-1">${displayIdx}</td>`
@@ -787,7 +804,7 @@ class CsvEditorController {
       const idxCell = state.addSerialIndex
         ? `<td tabindex="0" style="min-width:${state.serialIndexWidthCh}ch;max-width:${state.serialIndexWidthCh}ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:#888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>`
         : '';
-      const dataCells = Array.from({ length: state.numColumns }, (_, i) => `<td tabindex="0" style="min-width:${Math.min(state.columnWidths[i] || 0, 100)}ch;max-width:100ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:${state.columnColors[i]};overflow:visible;white-space: pre-wrap;overflow-wrap:anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+      const dataCells = Array.from({ length: state.numColumns }, (_, i) => `<td tabindex="0" style="min-width:${Math.min(state.columnWidths[i] || 0, 100)}ch;max-width:100ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:${state.columnColors[i]};" data-row="${virtualAbs}" data-col="${i}"><div class="cell-content"></div></td>`).join('');
       return { html: `<tr>${idxCell}${dataCells}</tr>`, nextStart: -1, done: true };
     }
 
@@ -1384,6 +1401,7 @@ class CsvEditorController {
     );
 
     const cellPadding = config.get<number>('cellPadding', 4);
+    const maxCellHeightLines = config.get<number>('maxCellHeightLines', 3);
     const data = this.trimTrailingEmptyRows((parsed.data || []) as string[][]);
     const treatHeader = this.getEffectiveHeader(data, hiddenRows);
     const clickableLinks = config.get<boolean>('clickableLinks', true);
@@ -1428,7 +1446,8 @@ class CsvEditorController {
       nextChunkStart,
       hasRemoteChunks,
       mouseWheelZoomEnabled,
-      mouseWheelZoomInvert
+      mouseWheelZoomInvert,
+      maxCellHeightLines
     });
   }
 
@@ -1516,9 +1535,10 @@ class CsvEditorController {
           let cells = '';
           for (let cIdx = 0; cIdx < numColumns; cIdx++) {
             const rawValue = row[cIdx] || '';
-            const safe = this.formatCellContent(rawValue, clickableLinks);
+            const { safe, isDomTruncated } = this.formatCellForTable(rawValue, clickableLinks);
+            const truncAttr = isDomTruncated ? ' data-domtruncated="1"' : '';
             const titleAttr = this.getMultilineCellTitleAttr(rawValue);
-            cells += `<td tabindex="0" style="min-width:${Math.min(columnWidths[cIdx]||0,100)}ch;max-width:100ch;border:1px solid ${isDark?'#555':'#ccc'};color:${columnColors[cIdx]};overflow:visible;white-space: pre-wrap;overflow-wrap:anywhere;"${titleAttr} data-row="${absRow}" data-col="${cIdx}">${safe}</td>`;
+            cells += `<td tabindex="0"${truncAttr} style="min-width:${Math.min(columnWidths[cIdx]||0,100)}ch;max-width:100ch;border:1px solid ${isDark?'#555':'#ccc'};color:${columnColors[cIdx]};"${titleAttr} data-row="${absRow}" data-col="${cIdx}"><div class="cell-content">${safe}</div></td>`;
           }
 
           return `<tr>${
@@ -1556,16 +1576,17 @@ class CsvEditorController {
         }`;
         for (let i = 0; i < numColumns; i++) {
           const rawValue = row[i] || '';
-          const safe = this.formatCellContent(rawValue, clickableLinks);
+          const { safe, isDomTruncated } = this.formatCellForTable(rawValue, clickableLinks);
+          const truncAttr = isDomTruncated ? ' data-domtruncated="1"' : '';
           const titleAttr = this.getMultilineCellTitleAttr(rawValue);
-          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;"${titleAttr} data-row="${offset + 1 + r}" data-col="${i}">${safe}</td>`;
+          tableHtml += `<td tabindex="0"${truncAttr} style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]};"${titleAttr} data-row="${offset + 1 + r}" data-col="${i}"><div class="cell-content">${safe}</div></td>`;
         }
         tableHtml += `</tr>`;
       });
       if (!chunked && includeTrailingEmptyRow) {
         const virtualAbs = offset + 1 + initialBodyRows.length;
         const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${initialBodyRows.length + 1}</td>` : '';
-        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]};" data-row="${virtualAbs}" data-col="${i}"><div class="cell-content"></div></td>`).join('');
         tableHtml += `<tr>${idxCell}${dataCells}</tr>`;
       }
       tableHtml += `</tbody>`;
@@ -1580,9 +1601,10 @@ class CsvEditorController {
         }`;
         for (let i = 0; i < numColumns; i++) {
           const rawValue = row[i] || '';
-          const safe = this.formatCellContent(rawValue, clickableLinks);
+          const { safe, isDomTruncated } = this.formatCellForTable(rawValue, clickableLinks);
+          const truncAttr = isDomTruncated ? ' data-domtruncated="1"' : '';
           const titleAttr = this.getMultilineCellTitleAttr(rawValue);
-          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;"${titleAttr} data-row="${offset + r}" data-col="${i}">${safe}</td>`;
+          tableHtml += `<td tabindex="0"${truncAttr} style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]};"${titleAttr} data-row="${offset + r}" data-col="${i}"><div class="cell-content">${safe}</div></td>`;
         }
         tableHtml += `</tr>`;
       });
@@ -1590,7 +1612,7 @@ class CsvEditorController {
         const virtualAbs = offset + nonHeaderRows.length;
         const displayIdx = nonHeaderRows.length + 1;
         const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
-        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]};" data-row="${virtualAbs}" data-col="${i}"><div class="cell-content"></div></td>`).join('');
         tableHtml += `<tr>${idxCell}${dataCells}</tr>`;
       }
       tableHtml += `</tbody>`;
@@ -1603,7 +1625,7 @@ class CsvEditorController {
         const virtualAbs = startAbs + allRowsCount;
         const displayIdx = allRowsCount + 1;
         const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
-        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]};" data-row="${virtualAbs}" data-col="${i}"><div class="cell-content"></div></td>`).join('');
         const vrow = `<tr>${idxCell}${dataCells}</tr>`;
         chunks.push(vrow);
       } else if (nextChunkStart === -1) {
@@ -1681,8 +1703,9 @@ class CsvEditorController {
     hasRemoteChunks: boolean;
     mouseWheelZoomEnabled: boolean;
     mouseWheelZoomInvert: boolean;
+    maxCellHeightLines: number;
   }): string {
-    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, mouseWheelZoomEnabled, mouseWheelZoomInvert } = args;
+    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, mouseWheelZoomEnabled, mouseWheelZoomInvert, maxCellHeightLines } = args;
     const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
     // Build script URI using file path for compatibility (older APIs may lack Uri.joinPath)
     const scriptUri = webview.asWebviewUri(
@@ -1691,6 +1714,10 @@ class CsvEditorController {
 
     // Safe separator transport (assumes single character; see assumptions)
     const sepCode = (separator && separator.length > 0) ? separator.codePointAt(0)! : ','.codePointAt(0)!;
+
+    const maxLinesCss = maxCellHeightLines > 0
+      ? `max-height: ${(maxCellHeightLines * 1.5).toFixed(1)}em;\n        overflow: hidden;\n        display: -webkit-box;\n        -webkit-line-clamp: ${maxCellHeightLines};\n        -webkit-box-orient: vertical;`
+      : `max-height: none;\n        overflow: visible;\n        display: block;\n        -webkit-line-clamp: none;`;
 
     return `<!DOCTYPE html>
 <html>
@@ -1706,13 +1733,160 @@ class CsvEditorController {
       table { border-collapse: collapse; width: max-content; }
       th, td { padding: ${cellPadding}px 8px; border: 1px solid ${isDark ? '#555' : '#ccc'}; font-size: inherit; }
       th { position: sticky; top: 0; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-      td { overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
+      td { overflow: hidden; position: relative; }
+      .cell-content {
+        ${maxLinesCss}
+        word-break: break-all;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+      }
       td.selected, th.selected { background-color: ${isDark ? '#333333' : '#cce0ff'} !important; }
-      td.editing, th.editing { overflow: visible !important; white-space: pre-wrap !important; overflow-wrap: anywhere !important; max-width: none !important; }
+      td.editing, th.editing { overflow: visible !important; white-space: pre-wrap !important; overflow-wrap: anywhere !important; max-width: none !important; max-height: none !important; }
+      td.editing .cell-content {
+        max-height: none !important;
+        overflow: visible !important;
+        display: block !important;
+        -webkit-line-clamp: none !important;
+      }
       .highlight { background-color: ${isDark ? '#2a2a2a' : '#fefefe'} !important; }
       .active-match { background-color: ${isDark ? '#444444' : '#ffffcc'} !important; }
       .csv-link { color: ${isDark ? '#6cb6ff' : '#0066cc'}; text-decoration: underline; cursor: pointer; }
       .csv-link:hover { color: ${isDark ? '#8ecfff' : '#0044aa'}; }
+
+      /* Cell Expand Button & Modal Overlay */
+      #cellExpandBtn {
+        position: fixed;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: ${isDark ? '#252526' : '#ffffff'};
+        border: 1px solid ${isDark ? '#454545' : '#007acc'};
+        color: ${isDark ? '#cccccc' : '#007acc'};
+        border-radius: 3px;
+        padding: 2px 5px;
+        font-size: 11px;
+        font-family: inherit;
+        cursor: pointer;
+        z-index: 1000;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        user-select: none;
+      }
+      #cellExpandBtn:hover {
+        background: ${isDark ? '#007acc' : '#005fb8'};
+        color: #ffffff;
+        border-color: ${isDark ? '#007acc' : '#005fb8'};
+      }
+
+      #cellModalOverlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: rgba(0, 0, 0, 0.55);
+        z-index: 20000;
+        display: none;
+        align-items: center;
+        justify-content: center;
+      }
+      #cellModalOverlay.open { display: flex; }
+      #cellModal {
+        width: 620px;
+        max-width: 85vw;
+        max-height: 80vh;
+        background: ${isDark ? '#1e1e1e' : '#ffffff'};
+        border: 1px solid ${isDark ? '#454545' : '#cccccc'};
+        border-radius: 6px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        display: flex;
+        flex-direction: column;
+        color: ${isDark ? '#d4d4d4' : '#333333'};
+        font-family: ${this.escapeCss(fontFamily)};
+        font-size: inherit;
+        overflow: hidden;
+      }
+      #cellModalHeader {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        border-bottom: 1px solid ${isDark ? '#333333' : '#e5e5e5'};
+        background: ${isDark ? '#252526' : '#f8f8f8'};
+        font-weight: 600;
+      }
+      #cellModalHeaderTitle {
+        font-size: 0.95em;
+        color: ${isDark ? '#cccccc' : '#333333'};
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #cellModalHeaderActions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .cm-btn {
+        background: ${isDark ? '#3c3c3c' : '#e1e1e1'};
+        border: 1px solid ${isDark ? '#555555' : '#cccccc'};
+        color: ${isDark ? '#cccccc' : '#333333'};
+        border-radius: 4px;
+        padding: 4px 10px;
+        font-size: 0.85em;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .cm-btn:hover {
+        background: ${isDark ? '#007acc' : '#005fb8'};
+        color: #ffffff;
+        border-color: ${isDark ? '#007acc' : '#005fb8'};
+      }
+      .cm-close-btn {
+        background: transparent;
+        border: none;
+        font-size: 1.2em;
+        padding: 2px 6px;
+        cursor: pointer;
+        color: ${isDark ? '#aaaaaa' : '#666666'};
+      }
+      .cm-close-btn:hover { color: ${isDark ? '#ffffff' : '#000000'}; }
+      #cellModalBody {
+        padding: 14px;
+        overflow-y: auto;
+        flex: 1 1 auto;
+        display: flex;
+        flex-direction: column;
+      }
+      #cellModalTextArea {
+        width: 100%;
+        height: 280px;
+        min-height: 180px;
+        max-height: 55vh;
+        box-sizing: border-box;
+        border: 1px solid ${isDark ? '#333333' : '#cccccc'};
+        border-radius: 4px;
+        background: ${isDark ? '#141414' : '#fafafa'};
+        color: inherit;
+        font-family: inherit;
+        font-size: inherit;
+        padding: 8px 10px;
+        resize: vertical;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .cm-btn-primary {
+        background: ${isDark ? '#0e639c' : '#007acc'};
+        border-color: ${isDark ? '#1177bb' : '#005fb8'};
+        color: #ffffff;
+        font-weight: 500;
+      }
+      .cm-btn-primary:hover {
+        background: ${isDark ? '#1177bb' : '#005fb8'};
+        border-color: ${isDark ? '#0e639c' : '#007acc'};
+        color: #ffffff;
+      }
       #findReplaceWidget {
         position: fixed;
         top: 12px;
@@ -1894,11 +2068,38 @@ class CsvEditorController {
     </style>
   </head>
   <body>
-    <div id="csv-root" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
+    <div id="csv-root" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-maxcelllines="${maxCellHeightLines}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
       ${tableHtml}
     </div>
 
     <script id="__csvChunks" type="application/json" nonce="${nonce}">${chunksJson}</script>
+
+    <button id="cellExpandBtn" type="button" title="View full cell content" aria-label="View full cell content">
+      <span>Expand</span>
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="margin-left:3px;"><path d="M1.5 1a.5.5 0 0 0-.5.5v4a.5.5 0 0 0 1 0V2.707l3.146 3.147a.5.5 0 0 0 .708-.708L2.707 2H5.5a.5.5 0 0 0 0-1h-4zm13 0a.5.5 0 0 0-.5.5v2.793l-3.146 3.147a.5.5 0 0 0 .708.708L14.707 2.5V5.5a.5.5 0 0 0 1 0v-4a.5.5 0 0 0-.5-.5h-4zM2.707 14.5 5.854 11.354a.5.5 0 1 0-.708-.708L2 13.793V11a.5.5 0 0 0-1 0v4a.5.5 0 0 0 .5.5h4a.5.5 0 0 0 0-1H2.707zm11.793 0H11.707a.5.5 0 0 0 0 1h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 0-1 0v2.793l-3.146-3.147a.5.5 0 0 0-.708.708l3.147 3.146z"/></svg>
+    </button>
+
+    <div id="cellModalOverlay" role="dialog" aria-modal="true" aria-label="View full cell content">
+      <div id="cellModal">
+        <div id="cellModalHeader">
+          <span id="cellModalHeaderTitle">Cell Content</span>
+          <div id="cellModalHeaderActions">
+            <button id="cellModalSaveBtn" class="cm-btn cm-btn-primary" type="button" title="Save changes (Ctrl+Enter)">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0z"/></svg>
+              <span>Save</span>
+            </button>
+            <button id="cellModalCopyBtn" class="cm-btn" type="button" title="Copy full cell content">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4 4v9h9V4H4zm1 1h7v7H5V5z"/><path d="M2 2h9v1H3v9H2V2z"/></svg>
+              <span id="cellModalCopyLabel">Copy</span>
+            </button>
+            <button id="cellModalCloseBtn" class="cm-close-btn" type="button" aria-label="Close" title="Close without saving (Esc)">✕</button>
+          </div>
+        </div>
+        <div id="cellModalBody">
+          <textarea id="cellModalTextArea" placeholder="Enter cell content..."></textarea>
+        </div>
+      </div>
+    </div>
 
     <div id="findReplaceWidget" class="replace-collapsed" role="group" aria-label="Find and Replace">
       <div id="replaceToggleGutter" class="fr-gutter">
@@ -2059,6 +2260,38 @@ class CsvEditorController {
   private formatCellContent(text: string, linkify: boolean): string {
     const escaped = this.escapeHtml(text);
     return linkify ? this.linkifyUrls(escaped) : escaped;
+  }
+
+  private formatCellForTable(rawValue: string, clickableLinks: boolean): { safe: string; isDomTruncated: boolean } {
+    const MAX_DOM_CELL_CHARS = 1000;
+    let textToFormat = rawValue || '';
+    let isDomTruncated = false;
+    if (textToFormat.length > MAX_DOM_CELL_CHARS) {
+      textToFormat = textToFormat.slice(0, MAX_DOM_CELL_CHARS) + '...';
+      isDomTruncated = true;
+    }
+    const safe = this.formatCellContent(textToFormat, clickableLinks);
+    return { safe, isDomTruncated };
+  }
+
+  private handleGetCellContent(row: number, col: number, requestId?: string) {
+    let value = '';
+    try {
+      const separator = this.getSeparator();
+      const text = this.document.getText();
+      const parsed = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
+      const data = (parsed.data || []) as string[][];
+      if (row >= 0 && row < data.length) {
+        value = data[row]?.[col] ?? '';
+      }
+    } catch {}
+    this.currentWebviewPanel?.webview.postMessage({
+      type: 'fullCellContent',
+      row,
+      col,
+      requestId,
+      value
+    });
   }
 
   private getMultilineCellTitleAttr(text: string): string {

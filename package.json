@@ -140,6 +140,12 @@
           "default": 4,
           "description": "Vertical padding in pixels for table cells."
         },
+        "csv.maxCellHeightLines": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "description": "Maximum number of text lines displayed per cell. Set to 0 to disable line height limits (up to 1,000 characters per cell)."
+        },
         "csv.columnColorMode": {
           "type": "string",
           "enum": [
@@ -236,7 +242,7 @@
     "vscode:prepublish": "npm run compile",
     "lint": "eslint '**/*.ts'",
     "package": "vsce package",
-    "test": "npm run compile && node --test out/test"
+    "test": "npm run compile && node --test \"out/test/**/*.test.js\""
   },
   "dependencies": {
     "font-list": "^1.5.1",

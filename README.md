@@ -103,6 +103,7 @@ Global (Settings UI or `settings.json`):
 - `csv.mouseWheelZoom` (boolean, default `true`): Enable `Ctrl/Cmd + Mouse Wheel` zooming in the CSV editor.
 - `csv.mouseWheelZoomInvert` (boolean, default `false`): Invert the `Ctrl/Cmd + Mouse Wheel` zoom direction.
 - `csv.cellPadding` (number, default `4`): Vertical cell padding in pixels.
+- `csv.maxCellHeightLines` (number, default `3`): Maximum number of text lines displayed per cell. Set to `0` to disable line height limits (up to 1,000 characters per cell).
 - `csv.columnColorMode` (string, default `type`): `type` keeps CSV’s type-based column colors; `theme` uses your theme foreground color for all columns.
 - `csv.columnColorPalette` (string, default `default`): Type-color palette when `csv.columnColorMode` is `type`. `cool` biases colors toward greens/blues; `warm` biases colors toward oranges/reds.
 - `csv.diffUseThemeForeground` (boolean, default `true`): In compare/diff views, use theme foreground color so diff highlighting remains readable.

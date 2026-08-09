@@ -18,6 +18,7 @@ const computedFontSizePx = parsePositiveNumber(window.getComputedStyle(document.
 const BASE_FONT_SIZE_PX = configuredFontSizePx ?? computedFontSizePx ?? 14;
 const MOUSE_WHEEL_ZOOM_ENABLED = root?.dataset?.wheelzoomenabled !== '0';
 const MOUSE_WHEEL_ZOOM_INVERTED = root?.dataset?.wheelzoominvert === '1';
+const MAX_CELL_HEIGHT_LINES = parseInt(root?.dataset?.maxcelllines || '3', 10);
 const ZOOM_STEP = 0.1;
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 3.0;
@@ -48,6 +49,184 @@ dragIndicator.style.display = 'none';
 document.body.appendChild(dragIndicator);
 let columnSizeState = {};
 let rowSizeState = {};
+
+// Cell content truncation modal elements
+const cellExpandBtn = document.getElementById('cellExpandBtn');
+const cellModalOverlay = document.getElementById('cellModalOverlay');
+const cellModalHeaderTitle = document.getElementById('cellModalHeaderTitle');
+const cellModalTextArea = document.getElementById('cellModalTextArea');
+const cellModalCopyBtn = document.getElementById('cellModalCopyBtn');
+const cellModalCopyLabel = document.getElementById('cellModalCopyLabel');
+const cellModalCloseBtn = document.getElementById('cellModalCloseBtn');
+const cellModalSaveBtn = document.getElementById('cellModalSaveBtn');
+
+let activeTruncatedCell = null;
+let modalTargetCoords = { row: null, col: null };
+let initialModalText = '';
+
+const isCellTruncated = cell => {
+  if (!cell || cell.tagName !== 'TD' || cell.classList.contains('editing')) return false;
+  if (cell.getAttribute('data-domtruncated') === '1') return true;
+  if (MAX_CELL_HEIGHT_LINES === 0) return false;
+  const inner = cell.querySelector('.cell-content') || cell;
+  return inner.scrollHeight > (inner.clientHeight + 2);
+};
+
+const updateExpandBtnForCell = cell => {
+  if (!cellExpandBtn) return;
+  if (cellModalOverlay && cellModalOverlay.classList.contains('open')) {
+    cellExpandBtn.style.display = 'none';
+    return;
+  }
+  const target = cell || (currentSelection.length === 1 ? currentSelection[0] : null);
+  if (isCellTruncated(target)) {
+    activeTruncatedCell = target;
+    const rect = target.getBoundingClientRect();
+    cellExpandBtn.style.top = Math.max(0, rect.top + 2) + 'px';
+    cellExpandBtn.style.left = Math.max(0, rect.right - 68) + 'px';
+    cellExpandBtn.style.display = 'inline-flex';
+  } else {
+    activeTruncatedCell = null;
+    cellExpandBtn.style.display = 'none';
+  }
+};
+
+const openCellModal = (row, col) => {
+  let targetCell = null;
+  if (typeof row === 'number' && typeof col === 'number') {
+    targetCell = table.querySelector(`td[data-row="${row}"][data-col="${col}"]`);
+  } else if (activeTruncatedCell) {
+    targetCell = activeTruncatedCell;
+  } else if (currentSelection.length > 0) {
+    targetCell = currentSelection[0];
+  }
+  if (!targetCell) return;
+
+  const coords = getCellCoords(targetCell);
+  const r = !isNaN(coords.row) ? coords.row : row;
+  const c = !isNaN(coords.col) ? coords.col : col;
+
+  let colName = '';
+  if (hasHeader && !isNaN(c) && c >= 0) {
+    const th = table.querySelector(`th[data-col="${c}"]`);
+    if (th) colName = th.innerText || th.textContent || '';
+  }
+
+  const headerTitleText = colName
+    ? `Column: ${colName} (Row ${(r !== undefined ? r : 0) + 1})`
+    : `Cell Content (Row ${(r !== undefined ? r : 0) + 1}, Col ${(c !== undefined ? c : 0) + 1})`;
+
+  if (cellModalHeaderTitle) cellModalHeaderTitle.textContent = headerTitleText;
+
+  modalTargetCoords = { row: r, col: c };
+
+  const isDomTruncated = targetCell.getAttribute('data-domtruncated') === '1';
+  if (isDomTruncated) {
+    initialModalText = 'Loading full content...';
+    if (cellModalTextArea) cellModalTextArea.value = initialModalText;
+    vscode.postMessage({ type: 'getCellContent', row: r, col: c });
+  } else {
+    initialModalText = targetCell.innerText || targetCell.textContent || '';
+    if (cellModalTextArea) cellModalTextArea.value = initialModalText;
+  }
+
+  if (cellModalOverlay) cellModalOverlay.classList.add('open');
+  if (cellExpandBtn) cellExpandBtn.style.display = 'none';
+
+  if (cellModalTextArea) cellModalTextArea.focus();
+};
+
+const saveModalContentIfChanged = () => {
+  if (!cellModalTextArea || modalTargetCoords.row === null || modalTargetCoords.col === null) return;
+  const currentText = cellModalTextArea.value;
+  if (currentText !== initialModalText && initialModalText !== 'Loading full content...') {
+    vscode.postMessage({
+      type: 'editCell',
+      row: modalTargetCoords.row,
+      col: modalTargetCoords.col,
+      value: currentText
+    });
+    initialModalText = currentText;
+  }
+};
+
+const closeCellModal = (shouldSave = false) => {
+  if (!cellModalOverlay) return;
+  if (shouldSave) {
+    try {
+      saveModalContentIfChanged();
+    } catch (e) {
+      console.error('CSV: failed saving modal content', e);
+    }
+  }
+  cellModalOverlay.classList.remove('open');
+  modalTargetCoords = { row: null, col: null };
+  initialModalText = '';
+  if (cellModalCopyLabel) cellModalCopyLabel.textContent = 'Copy';
+  if (anchorCell) {
+    try { anchorCell.focus({ preventScroll: true }); } catch { try { anchorCell.focus(); } catch {} }
+  }
+};
+
+const copyCellModalContent = () => {
+  if (!cellModalTextArea) return;
+  const text = cellModalTextArea.value;
+  vscode.postMessage({ type: 'copyToClipboard', text: text });
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).catch(() => {});
+  }
+  if (cellModalCopyLabel) {
+    cellModalCopyLabel.textContent = 'Copied!';
+    setTimeout(() => {
+      if (cellModalCopyLabel) cellModalCopyLabel.textContent = 'Copy';
+    }, 1500);
+  }
+};
+
+if (cellExpandBtn) {
+  cellExpandBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    openCellModal();
+  });
+}
+if (cellModalCopyBtn) {
+  cellModalCopyBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    copyCellModalContent();
+  });
+}
+if (cellModalSaveBtn) {
+  cellModalSaveBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    closeCellModal(true);
+  });
+}
+if (cellModalCloseBtn) {
+  cellModalCloseBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    closeCellModal(false);
+  });
+}
+if (cellModalOverlay) {
+  cellModalOverlay.addEventListener('click', e => {
+    if (e.target === cellModalOverlay) {
+      closeCellModal(false);
+    }
+  });
+}
+
+if (scrollContainer) {
+  scrollContainer.addEventListener('scroll', () => updateExpandBtnForCell(), { passive: true });
+}
+window.addEventListener('resize', () => updateExpandBtnForCell(), { passive: true });
+if (table) {
+  table.addEventListener('mouseover', e => {
+    const cell = getCellTarget(e.target);
+    if (cell && cell.tagName === 'TD') {
+      updateExpandBtnForCell(cell);
+    }
+  });
+}
 
 const normalizeSizeState = (raw, minSize) => {
   const out = {};
@@ -397,6 +576,13 @@ const showContextMenu = (x, y, row, col) => {
   const colCountSel = selectedColIds.length;
 
   let addedRowItems = false;
+
+  /* View Full Cell Content section */
+  if (!isNaN(row) && row >= 0 && !isNaN(col) && col >= 0) {
+    item('View Full Cell Content', () => {
+      openCellModal(row, col);
+    });
+  }
 
   /* Header-only: SORT functionality */
   if (lastContextIsHeader) {
@@ -836,7 +1022,15 @@ table.addEventListener('mousedown', e => {
     }
   }
 
-  if(editingCell){ if(e.target !== editingCell) editingCell.blur(); else return; } else clearSelection();
+  if (editingCell) {
+    if (!editingCell.contains(e.target)) {
+      editingCell.blur();
+    } else {
+      return;
+    }
+  } else {
+    clearSelection();
+  }
 
   /* ──────── NEW: select-all via top-left header cell ──────── */
   if (
@@ -1493,6 +1687,16 @@ document.addEventListener('keydown', e => {
 }, true);
 
 document.addEventListener('keydown', e => {
+  if (cellModalOverlay && cellModalOverlay.classList.contains('open')) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeCellModal(false);
+    } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      closeCellModal(true);
+    }
+    return;
+  }
   if (maybeHandleZoomShortcut(e)) {
     return;
   }
@@ -1892,6 +2096,7 @@ const setSingleSelection = cell => {
   currentSelection.push(cell);
   anchorCell = cell;
   rangeEndCell = cell;
+  updateExpandBtnForCell(cell);
   persistState();
   try { cell.focus({ preventScroll: true }); } catch { try { cell.focus(); } catch {} }
   cell.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
@@ -1964,6 +2169,12 @@ const insertNewlineAtCaret = cell => {
 };
 
 const editCell = (cell, event, mode = 'detail') => {
+  if (!cell || cell.tagName !== 'TD') return;
+  if (cell.getAttribute('data-domtruncated') === '1') {
+    const coords = getCellCoords(cell);
+    openCellModal(coords.row, coords.col);
+    return;
+  }
   if(editingCell === cell) return;
   if(editingCell) editingCell.blur();
   cell.classList.remove('selected');
@@ -2013,6 +2224,13 @@ table.addEventListener('dblclick', e => {
   }
   const target = getCellTarget(e.target);
   if (!target) return;
+  if (target.getAttribute('data-domtruncated') === '1') {
+    e.preventDefault();
+    e.stopPropagation();
+    const coords = getCellCoords(target);
+    openCellModal(coords.row, coords.col);
+    return;
+  }
   clearSelection();
   editCell(target, e);
 });
@@ -2079,15 +2297,33 @@ window.addEventListener('message', event => {
     } else if (csvChunks.length && nearBottom()) {
       loadNextChunk();
     }
-  } else if(message.type === 'updateCell'){
+  } else if (message.type === 'fullCellContent') {
+    const { value } = message;
+    initialModalText = value || '';
+    if (cellModalOverlay && cellModalOverlay.classList.contains('open')) {
+      if (cellModalTextArea) cellModalTextArea.value = initialModalText;
+    }
+  } else if (message.type === 'updateCell') {
     isUpdating = true;
-    const { row, col, value, rendered } = message;
+    const { row, col, value, rendered, isDomTruncated } = message;
     const cell = table.querySelector('td[data-row="'+row+'"][data-col="'+col+'"], th[data-row="'+row+'"][data-col="'+col+'"]');
     if (cell) {
+      let inner = cell.querySelector('.cell-content');
+      if (!inner) {
+        inner = document.createElement('div');
+        inner.className = 'cell-content';
+        cell.innerHTML = '';
+        cell.appendChild(inner);
+      }
       if (typeof rendered === 'string') {
-        cell.innerHTML = rendered;
+        inner.innerHTML = rendered;
       } else {
-        cell.textContent = value;
+        inner.textContent = value;
+      }
+      if (isDomTruncated) {
+        cell.setAttribute('data-domtruncated', '1');
+      } else {
+        cell.removeAttribute('data-domtruncated');
       }
     }
     isUpdating = false;
