@@ -12,7 +12,6 @@ P0 (Critical)
 P1 (High)
 - State persistence: Ensure scroll + selection restore across config changes and chunk loads; add targeted tests (including very large files and header on/off).
 - Selection semantics: Preserve selection on right‑click; Shift+Click ranges on headers and serial index; add tests for row/column/rectangular cases.
-- Copy fidelity: Confirm delimiter, quoting, and skipped serial index column for whole‑row copies; add tests.
 
 P2 (Medium)
 - CSP tightening: Replace `style-src 'unsafe-inline'` with nonce‑only styles (we already nonce the tag; remove the policy’s unsafe‑inline if feasible without regressions).

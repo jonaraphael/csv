@@ -141,10 +141,15 @@ class CsvEditorController {
         case 'save':
           await this.handleSave();
           break;
-        case 'copyToClipboard':
-          await vscode.env.clipboard.writeText(e.text);
+        case 'copyToClipboard': {
+          if (!Array.isArray(e.cells)) {
+            break;
+          }
+          const text = CsvEditorController.serializeClipboardMatrix(e.cells, this.getSeparator());
+          await vscode.env.clipboard.writeText(text);
           console.log('CSV: Copied to clipboard');
           break;
+        }
         case 'insertColumn':
           await this.insertColumn(e.index);
           break;
@@ -526,6 +531,16 @@ class CsvEditorController {
     } finally {
       this.isUpdatingDocument = false;
     }
+  }
+
+  private static serializeClipboardMatrix(matrix: string[][], delimiter: string): string {
+    if (!Array.isArray(matrix) || matrix.length === 0) {
+      return '';
+    }
+    const rows = matrix.map(row => (Array.isArray(row) ? row : [row]).map(cell => String(cell ?? '')));
+    // Papa quotes any field containing the delimiter, a quote, or a newline, so
+    // copied values survive a round trip through parseClipboardMatrix.
+    return Papa.unparse(rows, { delimiter, newline: '\n' });
   }
 
   private parseClipboardMatrix(text: string): string[][] {
@@ -2772,6 +2787,13 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
       updates: Array<{ row: number; col: number; value: string }>
     ): string | undefined {
       return CsvEditorProvider.applyFieldUpdatesPreservingFormat(text, delimiter, updates);
+    },
+    serializeClipboardMatrix(matrix: string[][], delimiter: string): string {
+      return (CsvEditorController as any).serializeClipboardMatrix(matrix, delimiter);
+    },
+    parseClipboardMatrix(text: string): string[][] {
+      const c: any = new (CsvEditorController as any)({} as any);
+      return c.parseClipboardMatrix(text);
     },
     computePastePlan(
       matrix: string[][],

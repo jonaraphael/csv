@@ -274,4 +274,32 @@ describe('CsvEditorProvider utility methods', () => {
     assert.strictEqual(meta.nextChunkStart, 80);
     assert.strictEqual(meta.hasRemoteChunks, true);
   });
+
+  it('quotes copied cells containing the delimiter so they survive a paste round trip', () => {
+    const { serializeClipboardMatrix, parseClipboardMatrix } = CsvEditorProvider.__test;
+    const cases: string[][][] = [
+      [['a,b']],
+      [['say "hi"']],
+      [['line1\nline2']],
+      [['a,b', 'c'], ['d', 'e']]
+    ];
+    for (const matrix of cases) {
+      const text = serializeClipboardMatrix(matrix, ',');
+      assert.deepStrictEqual(parseClipboardMatrix(text), matrix, `round trip failed for ${JSON.stringify(matrix)}`);
+    }
+  });
+
+  it('serializes copied cells with the active delimiter and only quotes when needed', () => {
+    const { serializeClipboardMatrix } = CsvEditorProvider.__test;
+    assert.strictEqual(serializeClipboardMatrix([['x\ty', 'z']], '\t'), '"x\ty"\tz');
+    assert.strictEqual(serializeClipboardMatrix([['a,b']], '\t'), 'a,b');
+    assert.strictEqual(serializeClipboardMatrix([['a', 'b'], ['c', 'd']], ','), 'a,b\nc,d');
+  });
+
+  it('preserves trailing empty cells and omits a trailing newline when copying', () => {
+    const { serializeClipboardMatrix } = CsvEditorProvider.__test;
+    assert.strictEqual(serializeClipboardMatrix([['a', '']], '\t'), 'a\t');
+    assert.strictEqual(serializeClipboardMatrix([['a'], ['']], ','), 'a\n');
+    assert.strictEqual(serializeClipboardMatrix([], ','), '');
+  });
 });

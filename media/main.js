@@ -6,7 +6,6 @@ try { document.body.focus({ preventScroll: true }); } catch { try { document.bod
 const vscode = acquireVsCodeApi();
 
 const root = document.getElementById('csv-root');
-const CSV_SEPARATOR = String.fromCodePoint(parseInt(root?.dataset?.sepcode || '44', 10)); // default ','
 const parsePositiveNumber = value => {
   const parsed = typeof value === 'string' ? Number.parseFloat(value) : Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
@@ -2027,17 +2026,19 @@ const copySelectionToClipboard = () => {
   if (coords.length === 0) return;
   const minRow = Math.min(...coords.map(c => c.row)), maxRow = Math.max(...coords.map(c => c.row));
   const minCol = Math.min(...coords.map(c => c.col)), maxCol = Math.max(...coords.map(c => c.col));
-  let csv = '';
+  // Send raw cell values; the host serializes them with the active delimiter
+  // and quotes values containing the delimiter, quotes, or newlines.
+  const cells = [];
   for(let r = minRow; r <= maxRow; r++){
-    let rowVals = [];
+    const rowVals = [];
     for(let c = minCol; c <= maxCol; c++){
       const selector = (hasHeader && r === 0 ? 'th' : 'td') + '[data-row="'+r+'"][data-col="'+c+'"]';
       const cell = table.querySelector(selector);
-      rowVals.push(cell ? cell.innerText : '');
+      rowVals.push(cell ? (cell.textContent || '') : '');
     }
-    csv += rowVals.join(CSV_SEPARATOR) + '\n';
+    cells.push(rowVals);
   }
-  vscode.postMessage({ type: 'copyToClipboard', text: csv.trimEnd() });
+  vscode.postMessage({ type: 'copyToClipboard', cells });
 };
 
 window.addEventListener('message', event => {

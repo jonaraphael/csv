@@ -159,7 +159,7 @@ Per-file (stored by the extension; set via commands):
 - Selection improvements: Shift+Click on headers selects column ranges; Shift+Click on the serial index selects row ranges; right‑click preserves current selection.
 - Batch actions: Context menu adapts to multi‑selection (Add/Delete X Rows/Columns) and performs exact counts in a single operation.
 - Delete to clear: Press Delete/Backspace to clear contents of selected cells (skips serial index column).
-- Copy fidelity: Copies with the active delimiter and skips the serial index column for full‑row copies.
+- Copy fidelity: Copies with the active delimiter, quotes values containing the delimiter, quotes, or newlines, and skips the serial index column for full‑row copies.
 - Encoding: New command “CSV: Change File Encoding” integrates VS Code’s encoding picker and returns to the CSV view.
 - Enable/disable UX: Toggling the extension on instantly upgrades open CSV/TSV tabs to this view; toggling off reverts immediately to the default view.
 

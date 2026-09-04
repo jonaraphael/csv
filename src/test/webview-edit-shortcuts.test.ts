@@ -55,4 +55,9 @@ describe('Webview edit shortcuts', () => {
     assert.ok(webviewSource.includes("} else if (message.type === 'pasteApplied') {"));
     assert.ok(webviewSource.includes("selectRange({ row: startRow, col: startCol }, { row: endRow, col: endCol });"));
   });
+
+  it('sends the copied selection as a cell matrix so the host can quote it', () => {
+    assert.ok(webviewSource.includes("vscode.postMessage({ type: 'copyToClipboard', cells });"));
+    assert.ok(!webviewSource.includes('rowVals.join(CSV_SEPARATOR)'));
+  });
 });
