@@ -1999,7 +1999,7 @@ class CsvEditorController {
 
   private isAllowedExternalScheme(scheme: string): boolean {
     const normalized = scheme.toLowerCase();
-    return normalized === 'http' || normalized === 'https' || normalized === 'ftp' || normalized === 'mailto';
+    return normalized === 'http' || normalized === 'https' || normalized === 'ftp' || normalized === 'mailto' || normalized === 'file';
   }
 
   private isAllowedExternalUrl(rawUrl: unknown): rawUrl is string {
@@ -2029,8 +2029,8 @@ class CsvEditorController {
 
   private linkifyUrls(escapedText: string): string {
     // Match URLs in already-escaped text (handles &amp; in query strings).
-    // Supports http, https, ftp, mailto, and www.*.* (Google Sheets-like behavior).
-    const urlPattern = /\b(?:(?:https?:\/\/|ftp:\/\/|mailto:)[^\s<>&"']+(?:&amp;[^\s<>&"']+)*|www\.[^\s<>&"']+\.[^\s<>&"']+)/gi;
+    // Supports http, https, ftp, file, mailto, and www.*.* (Google Sheets-like behavior).
+    const urlPattern = /\b(?:(?:https?:\/\/|ftp:\/\/|file:\/\/|mailto:)[^\s<>&"']+(?:&amp;[^\s<>&"']+)*|www\.[^\s<>&"']+\.[^\s<>&"']+)/gi;
     return escapedText.replace(urlPattern, (rawMatch) => {
       let matched = rawMatch;
       let trailing = '';
