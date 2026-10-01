@@ -1312,41 +1312,47 @@ const closeFindReplace = () => {
 };
 
 findInput.addEventListener('input', () => scheduleFind(false));
+// Let unhandled keys bubble to VS Code so macOS clipboard shortcuts work.
 findInput.addEventListener('keydown', e => {
-  e.stopPropagation();
   if (e.key === 'Escape') {
+    e.stopPropagation();
     e.preventDefault();
     closeFindReplace();
     return;
   }
   if (e.key === 'Enter') {
+    e.stopPropagation();
     e.preventDefault();
     navigateFind(e.shiftKey);
     return;
   }
   if (e.key === 'F3') {
+    e.stopPropagation();
     e.preventDefault();
     navigateFind(e.shiftKey);
     return;
   }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') {
+    e.stopPropagation();
     e.preventDefault();
     navigateFind(e.shiftKey);
   }
 });
 replaceInput.addEventListener('keydown', e => {
-  e.stopPropagation();
   if (e.key === 'Escape') {
+    e.stopPropagation();
     e.preventDefault();
     closeFindReplace();
     return;
   }
   if (e.key === 'F3') {
+    e.stopPropagation();
     e.preventDefault();
     navigateFind(e.shiftKey);
     return;
   }
   if (e.key === 'Enter') {
+    e.stopPropagation();
     e.preventDefault();
     replaceCurrentMatch();
   }
