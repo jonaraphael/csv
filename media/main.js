@@ -149,12 +149,17 @@ const persistState = () => {
   } catch {}
 };
 
+// Only completed manual column resizes/resets write to durable extension storage.
+const persistColumnWidths = () => {
+  vscode.postMessage({ type: 'saveColumnWidths', columnSizes: { ...columnSizeState } });
+};
+
 const restoreState = () => {
   try {
     const st = vscode.getState() || {};
     const restoredZoom = parsePositiveNumber(st.zoomScale);
     setZoomScale(restoredZoom ?? 1, false);
-    columnSizeState = normalizeSizeState(st.columnSizes, 40);
+    columnSizeState = normalizeSizeState(st.columnSizes ?? JSON.parse(root?.dataset?.columnsizes || '{}'), 40);
     rowSizeState = normalizeSizeState(st.rowSizes, getMinRowHeight());
     applySizeStateToRenderedCells();
     if (typeof st.scrollX === 'number' && scrollContainer) {
@@ -697,6 +702,9 @@ const onGlobalDragMove = e => {
 };
 const onGlobalDragEnd = () => {
   if (resizeState) {
+    if (resizeState.axis === 'column') {
+      persistColumnWidths();
+    }
     resizeState = null;
     table.style.cursor = '';
     persistState();
@@ -1996,6 +2004,7 @@ table.addEventListener('dblclick', e => {
     e.stopPropagation();
     if (edge.axis === 'column') {
       resetColumnWidth(edge.index);
+      persistColumnWidths();
     } else {
       resetRowHeight(edge.index);
     }

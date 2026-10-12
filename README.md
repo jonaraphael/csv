@@ -28,7 +28,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 ## Features
 
 - **Interactive Editing:** Two modes — type to start a quick edit, or press Enter/double‑click for detail edit. Saves on blur.
-- **Smart Resizing:** Automatic calculation of column widths for improved readability.
+- **Smart Resizing:** Automatic calculation of column widths for improved readability. Manually resized column widths are remembered per file across closing/reopening files and restarting VS Code, using extension storage without changing CSV/TSV contents. Double-click a column resize edge to reset its saved width. Widths follow column positions.
 - **Dynamic Color Coding:** Visual cues based on data type help you quickly identify numbers, dates, booleans, and more (with opt‑in cool palette and theme-foreground mode settings).
 - **Sticky Headers:** Keep column titles in view as you scroll through large datasets.
 - **Enhanced Keyboard Navigation:** Navigate cells with arrows and Tab/Shift+Tab; quick edits can commit with arrow keys; `Ctrl/Cmd + A` selects all; `Ctrl/Cmd + C` copies selection.
