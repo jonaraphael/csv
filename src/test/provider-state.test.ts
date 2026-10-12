@@ -17,9 +17,12 @@ Module.prototype.require = function (id: string) {
 import { CsvEditorProvider } from '../CsvEditorProvider';
 
 // Minimal mock for vscode.ExtensionContext.workspaceState
-function createMockContext() {
-  const store: Record<string, any> = {};
+function createMockContext(store: Record<string, any> = {}) {
   return {
+    globalState: {
+      get: (key: string, def: any) => (key in store ? store[key] : def),
+      update: async (key: string, val: any) => { store[key] = val; }
+    },
     workspaceState: {
       get: (key: string, def: any) => (key in store ? store[key] : def),
       update: async (key: string, val: any) => { store[key] = val; }
@@ -68,5 +71,42 @@ describe('Per-URI state mapping', () => {
     assert.strictEqual(CsvEditorProvider.getSeparatorForUri(ctx, u), ';');
     await CsvEditorProvider.setSeparatorForUri(ctx, u, undefined);
     assert.strictEqual(CsvEditorProvider.getSeparatorForUri(ctx, u), undefined);
+  });
+});
+
+
+describe('Durable column widths', () => {
+  it('restores CSV and TSV widths from storage in a fresh context and isolates full URIs', async () => {
+    const store: Record<string, any> = {};
+    const ctx = createMockContext(store);
+    const csv = makeUri('folder/data.csv');
+    const tsv = makeUri('folder/data.tsv');
+    const other = makeUri('other/data.csv');
+    assert.deepStrictEqual(CsvEditorProvider.getColumnWidthsForUri(ctx, csv), {});
+    await Promise.all([
+      CsvEditorProvider.setColumnWidthsForUri(ctx, csv, { 0: 125, 2: 240 }),
+      CsvEditorProvider.setColumnWidthsForUri(ctx, tsv, { 0: 180 })
+    ]);
+    const reopened = createMockContext(JSON.parse(JSON.stringify(store)));
+    assert.deepStrictEqual(CsvEditorProvider.getColumnWidthsForUri(reopened, csv), { 0: 125, 2: 240 });
+    assert.deepStrictEqual(CsvEditorProvider.getColumnWidthsForUri(reopened, tsv), { 0: 180 });
+    assert.deepStrictEqual(CsvEditorProvider.getColumnWidthsForUri(reopened, other), {});
+    await CsvEditorProvider.setColumnWidthsForUri(reopened, csv, {});
+    assert.deepStrictEqual(CsvEditorProvider.getColumnWidthsForUri(reopened, csv), {});
+    assert.deepStrictEqual(CsvEditorProvider.getColumnWidthsForUri(reopened, tsv), { 0: 180 });
+  });
+
+  it('validates stored widths and messages before passing them to HTML', async () => {
+    const ctx = createMockContext();
+    const uri = makeUri('data.csv');
+    await CsvEditorProvider.setColumnWidthsForUri(ctx, uri, {
+      0: 123.6, 1: 39, 2: Infinity, 3: NaN, 4: '100',
+      '-1': 120, '1oops': 100, '<script>': 120, '01': 100
+    });
+    assert.deepStrictEqual(CsvEditorProvider.getColumnWidthsForUri(ctx, uri), { 0: 124 });
+    for (const invalid of [null, undefined, [], 'oops']) {
+      await CsvEditorProvider.setColumnWidthsForUri(ctx, uri, invalid);
+      assert.deepStrictEqual(CsvEditorProvider.getColumnWidthsForUri(ctx, uri), {});
+    }
   });
 });

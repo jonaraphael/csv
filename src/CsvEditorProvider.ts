@@ -123,6 +123,9 @@ class CsvEditorController {
 
     webviewPanel.webview.onDidReceiveMessage(async e => {
       switch (e.type) {
+        case 'saveColumnWidths':
+          await CsvEditorProvider.setColumnWidthsForUri(this.context, document.uri, e.columnSizes);
+          break;
         case 'editCell':
           this.updateDocument(e.row, e.col, e.value);
           break;
@@ -1428,7 +1431,8 @@ class CsvEditorController {
       nextChunkStart,
       hasRemoteChunks,
       mouseWheelZoomEnabled,
-      mouseWheelZoomInvert
+      mouseWheelZoomInvert,
+      columnSizes: CsvEditorProvider.getColumnWidthsForUri(this.context, this.document.uri)
     });
   }
 
@@ -1681,6 +1685,7 @@ class CsvEditorController {
     hasRemoteChunks: boolean;
     mouseWheelZoomEnabled: boolean;
     mouseWheelZoomInvert: boolean;
+    columnSizes: Record<string, number>;
   }): string {
     const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, mouseWheelZoomEnabled, mouseWheelZoomInvert } = args;
     const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
@@ -1894,7 +1899,7 @@ class CsvEditorController {
     </style>
   </head>
   <body>
-    <div id="csv-root" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
+    <div id="csv-root" class="table-container" data-columnsizes="${this.escapeHtml(JSON.stringify(args.columnSizes))}" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
       ${tableHtml}
     </div>
 
@@ -2527,6 +2532,32 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
 
   public static getActiveProvider(): CsvEditorController | undefined {
     return CsvEditorProvider.currentActive || CsvEditorProvider.editors.find(ed => ed.isActive());
+  }
+
+  private static normalizeColumnWidths(raw: unknown): Record<string, number> {
+    const widths: Record<string, number> = {};
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return widths;
+    }
+    for (const [column, width] of Object.entries(raw)) {
+      if (!/^(0|[1-9]\d*)$/.test(column) || !Number.isSafeInteger(Number(column))) {
+        continue;
+      }
+      if (typeof width === 'number' && Number.isFinite(width) && width >= 40) {
+        widths[column] = Math.round(width);
+      }
+    }
+    return widths;
+  }
+
+  public static getColumnWidthsForUri(context: vscode.ExtensionContext, uri: vscode.Uri): Record<string, number> {
+    return CsvEditorProvider.normalizeColumnWidths(context.globalState.get(`csv.columnWidths:${uri.toString()}`));
+  }
+
+  public static async setColumnWidthsForUri(context: vscode.ExtensionContext, uri: vscode.Uri, raw: unknown): Promise<void> {
+    const widths = CsvEditorProvider.normalizeColumnWidths(raw);
+    // Separate keys avoid overwriting another file's widths during concurrent updates.
+    await context.globalState.update(`csv.columnWidths:${uri.toString()}`, Object.keys(widths).length ? widths : undefined);
   }
 
   public static getHiddenRowsForUri(context: vscode.ExtensionContext, uri: vscode.Uri): number {
