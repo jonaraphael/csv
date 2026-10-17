@@ -23,6 +23,7 @@
     "onLanguage:tsv",
     "onCommand:csv.toggleExtension",
     "onCommand:csv.openLargeFilePreview",
+    "onCommand:csv.compareFilesAsTable",
     "onCustomEditor:csv.largeFilePreview",
     "onCommand:csv.toggleEditor",
     "onCommand:csv.toggleHeader",
@@ -79,6 +80,10 @@
         "icon": "$(arrow-swap)"
       },
       {
+        "command": "csv.compareFilesAsTable",
+        "title": "CSV: Compare Files as Table"
+      },
+      {
         "command": "csv.toggleExtension",
         "title": "CSV: Toggle Extension On/Off"
       },
@@ -132,6 +137,11 @@
         }
       ],
       "explorer/context": [
+        {
+          "command": "csv.compareFilesAsTable",
+          "when": "resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i && config.csv.enabled",
+          "group": "navigation"
+        },
         {
           "command": "csv.openLargeFilePreview",
           "when": "resourceScheme == file && resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i && config.csv.enabled",
