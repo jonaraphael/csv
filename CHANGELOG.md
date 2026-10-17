@@ -19,7 +19,7 @@ Integration candidate; final contents remain subject to review. No release has b
 - Fixed: Dark high contrast uses the existing dark datatype palette; accessibility styling is limited to high-contrast themes and preserves the selected palette and color mode.
 - Fixed: Precise column resize boundaries, editable centers in narrow columns, and drag widths that follow the pointer.
 - Fixed: Context menus keep their natural width, open toward available space, and remain scrollable in small editor panes.
-- Fixed: Frozen rows cover the top border seam so scrolling text cannot peek above the pinned header.
+- Fixed: Frozen rows fill every collapsed divider seam with the divider color so scrolling text cannot peek between pinned rows or above them.
 - Fixed: Cmd/Ctrl+Shift+Arrow extends the current cell, row, or column selection while retaining its starting anchor.
 - Fixed: Held arrow navigation keeps the active cell or range endpoint visible on each display frame, including beneath frozen panes and filter controls.
 - Fixed: Clipboard actions, delimiter fidelity, and CSV quote/line-ending preservation during data mutations.
