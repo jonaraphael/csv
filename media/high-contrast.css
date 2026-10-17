@@ -1,0 +1,116 @@
+/* Accessibility chrome is limited to high-contrast themes. Cell foregrounds
+   continue to follow the selected datatype palette or explicit theme mode. */
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) {
+  color: var(--vscode-editor-foreground);
+  background-color: var(--vscode-editor-background);
+  --csv-contrast-border: var(--vscode-contrastBorder, var(--vscode-editorWidget-border, var(--vscode-panel-border, var(--vscode-editor-foreground))));
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) :is(td, th) {
+  border-color: var(--csv-contrast-border) !important;
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) th {
+  background-color: var(--vscode-editor-background) !important;
+}
+
+/* Outlines identify state without covering datatype colors with a bright fill.
+   Reset background images as well, including the opaque frozen-pane layers. */
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) :is(td, th).selected {
+  background: var(--vscode-editor-background) !important;
+  outline: 1px solid var(--vscode-focusBorder, var(--csv-contrast-border));
+  outline-offset: -1px;
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) :is(td, th).highlight {
+  background: var(--vscode-editor-background) !important;
+  outline: 1px solid var(--vscode-editor-findMatchHighlightBorder, var(--csv-contrast-border));
+  outline-offset: -1px;
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) :is(td, th).active-match {
+  background: var(--vscode-editor-background) !important;
+  outline: 2px solid var(--vscode-editor-findMatchBorder, var(--vscode-focusBorder));
+  outline-offset: -2px;
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) .csv-link {
+  color: var(--vscode-textLink-foreground, var(--vscode-editor-foreground));
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) .csv-link:hover {
+  color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) .selected .csv-link {
+  color: inherit;
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) #contextMenu {
+  color: var(--vscode-menu-foreground, var(--vscode-editor-foreground));
+  background-color: var(--vscode-menu-background, var(--vscode-editor-background));
+  border-color: var(--csv-contrast-border);
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) #contextMenu div {
+  border-color: var(--csv-contrast-border) !important;
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) #contextMenu div:hover {
+  color: var(--vscode-menu-selectionForeground, var(--vscode-editor-foreground));
+  background-color: var(--vscode-menu-selectionBackground, var(--vscode-editor-background));
+  outline: 1px solid var(--vscode-menu-selectionBorder, var(--csv-contrast-border));
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) #findReplaceWidget {
+  color: var(--vscode-editorWidget-foreground, var(--vscode-editor-foreground));
+  background-color: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border-color: var(--csv-contrast-border);
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) #findReplaceWidget :is(.fr-gutter, .fr-overflow-menu) {
+  background-color: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border-color: var(--csv-contrast-border);
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) #findReplaceWidget .fr-input {
+  color: var(--vscode-input-foreground, var(--vscode-editor-foreground));
+  background-color: var(--vscode-input-background, var(--vscode-editor-background));
+  border-color: var(--vscode-input-border, var(--csv-contrast-border));
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) #findReplaceWidget .fr-input::placeholder {
+  color: var(--vscode-input-placeholderForeground, var(--vscode-editor-foreground));
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) #findReplaceWidget :is(.fr-status, button) {
+  color: var(--vscode-editorWidget-foreground, var(--vscode-editor-foreground));
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) #findReplaceWidget button:hover {
+  color: var(--vscode-toolbar-hoverForeground, var(--vscode-editor-foreground));
+  background-color: var(--vscode-toolbar-hoverBackground, var(--vscode-editor-background));
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) #findReplaceWidget .fr-toggle-btn[aria-pressed="true"] {
+  color: var(--vscode-inputOption-activeForeground, var(--vscode-editor-foreground));
+  background-color: var(--vscode-inputOption-activeBackground, var(--vscode-editor-background));
+  box-shadow: inset 0 -2px 0 var(--vscode-inputOption-activeBorder, var(--csv-contrast-border));
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) #findReplaceWidget button[disabled] {
+  color: var(--vscode-disabledForeground, var(--vscode-editor-foreground));
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) #findReplaceWidget :is(button, input):focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, var(--csv-contrast-border));
+  outline-offset: -2px;
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) #findReplaceWidget .fr-divider {
+  background-color: var(--csv-contrast-border);
+}
+
+body:is(.vscode-high-contrast, .vscode-high-contrast-light) #findReplaceWidget .fr-inline-toggles {
+  border-color: var(--csv-contrast-border);
+}
