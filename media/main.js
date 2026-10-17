@@ -28,6 +28,8 @@ let lastContextIsHeader = false;   // remembers whether we right-clicked a <th>
 let isUpdating = false, isSelecting = false, anchorCell = null, rangeEndCell = null, currentSelection = [];
 let startCell = null, endCell = null, selectionMode = "cell";
 let editingCell = null, originalCellValue = "";
+const failedCellDrafts = new Set();
+let discardingFailedDraft = false;
 // Edit mode:
 //  - 'quick': started by typing a character (not Enter)
 //  - 'detail': started by Enter or double-click
@@ -1820,7 +1822,17 @@ document.addEventListener('keydown', e => {
     }
   }
   if (editingCell && e.key === 'Escape') {
-    e.preventDefault(); editingCell.textContent = originalCellValue; editingCell.blur();
+    e.preventDefault();
+    const { row, col } = getCellCoords(editingCell);
+    if (failedCellDrafts.has(`${row}:${col}`)) {
+      discardingFailedDraft = true;
+      editingCell.blur();
+      discardingFailedDraft = false;
+      vscode.postMessage({ type: 'discardCellDraft', row, col });
+    } else {
+      editingCell.textContent = originalCellValue;
+      editingCell.blur();
+    }
   }
   if (!editingCell && e.key === 'Escape') {
     clearSelection();
@@ -1974,7 +1986,9 @@ const editCell = (cell, event, mode = 'detail') => {
     removeNewlineSentinels(cell);
     const value = cell.textContent;
     const coords = getCellCoords(cell);
-    vscode.postMessage({ type: 'editCell', row: coords.row, col: coords.col, value: value });
+    if (!discardingFailedDraft) {
+      vscode.postMessage({ type: 'editCell', row: coords.row, col: coords.col, value: value });
+    }
     cell.removeAttribute('contenteditable');
     cell.classList.remove('editing');
     editingCell = null;
@@ -2040,9 +2054,13 @@ const copySelectionToClipboard = () => {
 window.addEventListener('message', event => {
   const message = event.data;
   if (message.type === 'prepareViewRefresh') {
-    if (editingCell) editingCell.blur();
+    if (editingCell) { editingCell.blur(); }
     persistState();
     vscode.postMessage({ type: 'viewRefreshReady', requestId: message.requestId });
+  } else if (message.type === 'editCellFailed') {
+    failedCellDrafts.add(`${message.row}:${message.col}`);
+    const cell = table.querySelector(`[data-row="${message.row}"][data-col="${message.col}"]`);
+    if (message.retry && cell && !editingCell) { editCell(cell, undefined, 'detail'); }
   } else if(message.type === 'focus'){
     if (anchorCell) {
       try { anchorCell.focus({ preventScroll: true }); } catch { try { anchorCell.focus(); } catch {} }
@@ -2083,6 +2101,7 @@ window.addEventListener('message', event => {
   } else if(message.type === 'updateCell'){
     isUpdating = true;
     const { row, col, value, rendered } = message;
+    failedCellDrafts.delete(`${row}:${col}`);
     const cell = table.querySelector('td[data-row="'+row+'"][data-col="'+col+'"], th[data-row="'+row+'"][data-col="'+col+'"]');
     if (cell && cell !== editingCell) {
       if (typeof rendered === 'string') {
@@ -2202,5 +2221,5 @@ document.addEventListener('keydown', e => {
   }
 });
 
-// The host may be waiting to commit a draft while this webview initializes.
+// Retry a host commit request that arrived before these listeners loaded.
 vscode.postMessage({ type: 'webviewReady' });

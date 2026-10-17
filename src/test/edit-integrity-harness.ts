@@ -24,7 +24,8 @@ const vscodeStub = {
     showTextDocument: async (document: any) => {
       activeHarness.sourceReveals.push(document.getText());
       return { document };
-    }
+    },
+    showErrorMessage(message: string) { activeHarness.errors.push(message); }
   },
   commands: {
     executeCommand: async (command: string) => {
@@ -79,6 +80,7 @@ export async function createEditorHarness(options: {
   const messages: any[] = [];
   const delayedEdits: Array<() => void> = [];
   let deferEdits = false;
+  let editFailure: 'false' | 'throw' | undefined;
   const uri = new TestUri(options.fileName ?? `/test/data.${separator === '\t' ? 'tsv' : 'csv'}`, options.untitled ? 'untitled' : options.remote ? 'vscode-remote' : 'file');
   const document = {
     uri,
@@ -134,6 +136,8 @@ export async function createEditorHarness(options: {
   const harness = {
     document, panel, messages, changeListeners, saveListeners,
     enabled: true,
+    errors: [] as string[],
+    async setSeparator(separator: string) { await CsvEditorProvider.setSeparatorForUri(context as any, uri as any, separator); },
     sourceReveals: [] as string[],
     nativeSaveCommands: [] as string[],
     get controllerCount() { return CsvEditorProvider.editors.length; },
@@ -157,8 +161,11 @@ export async function createEditorHarness(options: {
     get diskText() { return diskText; },
     get pendingEdits() { return delayedEdits.length; },
     deferEdits() { deferEdits = true; },
+    failEdits(mode: 'false' | 'throw' | undefined) { editFailure = mode; },
     releaseEdit() { delayedEdits.shift()?.(); },
     async applyEdit(nextText: string): Promise<boolean> {
+      if (editFailure === 'false') { return false; }
+      if (editFailure === 'throw') { throw new Error('applyEdit rejected'); }
       return new Promise(resolve => {
         const apply = () => {
           text = nextText;
