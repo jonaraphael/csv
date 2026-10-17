@@ -217,6 +217,13 @@
           "default": 10,
           "minimum": 0,
           "description": "Soft max size in MB for opening files in CSV view. 0 disables the limit. When exceeded, CSV prompts to cancel, continue this time, or disable the limit."
+        },
+        "csv.defaultIgnoreRows": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "scope": "resource",
+          "description": "Default number of initial metadata rows to hide without deleting them. Per-file Hide First N Rows values override this default; leave that command blank to inherit again."
         }
       }
     },

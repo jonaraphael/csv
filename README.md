@@ -101,6 +101,7 @@ Open the Command Palette and search for:
 Global (Settings UI or `settings.json`):
 
 - `csv.enabled` (boolean, default `true`): Enable/disable the custom editor.
+- `csv.defaultIgnoreRows` (integer, default `0`): Default number of leading metadata rows to hide. Set it globally or for a workspace/folder. `CSV: Hide First N Rows` overrides it per file; enter `0` to show all rows or leave the input blank to reset that file to the configured default. Hidden rows remain in the saved file.
 - `csv.fontFamily` (string, default empty): Override font family; falls back to `editor.fontFamily`.
 - `csv.fontSize` (number, default `0`): Override font size in px; set to `0` to inherit `editor.fontSize`.
 - `csv.mouseWheelZoom` (boolean, default `true`): Enable `Ctrl/Cmd + Mouse Wheel` zooming in the CSV editor.
@@ -122,7 +123,7 @@ Per-file (stored by the extension; set via commands):
 - First row as header (default `true`) — `CSV: Toggle First Row as Header`
 - Serial index column (default `true`) — `CSV: Toggle Serial Index Column`
 - CSV separator override — `CSV: Change CSV Separator` (or clear it with `CSV: Reset CSV Separator (Inherit)`)
-- Hide first N rows (default `0`) — `CSV: Hide First N Rows`
+- Hide first N rows (inherits `csv.defaultIgnoreRows`) — `CSV: Hide First N Rows`. An explicit `0` overrides a nonzero default; blank input clears the per-file override.
 - Frozen leading visible rows/columns — `CSV: Freeze Leading Rows` / `CSV: Freeze Leading Columns`. Enter `0` to unfreeze that axis. The default keeps the first header row frozen; with headers off, no rows freeze until requested. Hidden metadata rows do not count; the virtual append row is never frozen as a leading row.
 
 ---
