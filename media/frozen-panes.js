@@ -1,5 +1,5 @@
 // Layout uses measured dimensions so multiline cells, manual sizes and zoom agree.
-window.createFrozenPaneManager = ({ table, firstRow, realRowCount, onNeedRows }) => {
+window.createFrozenPaneManager = ({ table, firstRow, realRowCount, rowOrder, topInset, onNeedRows }) => {
   let rows = 0;
   let columns = 0;
   let scheduled = false;
@@ -42,10 +42,12 @@ window.createFrozenPaneManager = ({ table, firstRow, realRowCount, onNeedRows })
         left += cell.getBoundingClientRect().width;
       }
     }
-    let top = 0;
-    const lastFrozenRow = Math.min(firstRow + rows, realRowCount) - 1;
+    let top = topInset?.() || 0;
+    const visibleRows = rowOrder?.length ? rowOrder.filter(row => row < realRowCount) : rendered.filter(row => row.index < realRowCount).map(row => row.index);
+    const frozenRows = new Set(visibleRows.slice(0, rows));
+    const lastFrozenRow = visibleRows[Math.min(rows, visibleRows.length) - 1] ?? -1;
     for (const { element, index } of rendered) {
-      const frozenRow = index >= firstRow && index <= lastFrozenRow;
+      const frozenRow = frozenRows.has(index);
       const height = element.getBoundingClientRect().height || Math.max(0, ...Array.from(element.cells).map(cell => cell.getBoundingClientRect().height));
       for (const cell of Array.from(element.cells)) {
         const attr = cell.getAttribute('data-col');

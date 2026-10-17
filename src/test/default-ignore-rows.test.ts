@@ -47,12 +47,12 @@ describe('Default hidden rows', () => {
       view.start(cell);
       cell.textContent = 'unsaved\nmultiline draft';
       host.defaultIgnoreRows = 2;
-      CsvEditorProvider.currentActive!.refreshHiddenRows();
-      const prepare = host.messages.slice().reverse().find((message: any) => message.type === 'prepareHiddenRowsRefresh');
+      CsvEditorProvider.currentActive!.refreshViewSafely();
+      const prepare = host.messages.slice().reverse().find((message: any) => message.type === 'prepareViewRefresh');
       assert.ok(prepare);
       view.window.dispatchEvent(new view.window.MessageEvent('message', { data: prepare }));
-      const messages = view.messages.filter((message: any) => ['editCell', 'hiddenRowsRefreshReady'].includes(message.type));
-      assert.deepStrictEqual(messages.map((message: any) => message.type), ['editCell', 'hiddenRowsRefreshReady']);
+      const messages = view.messages.filter((message: any) => ['editCell', 'viewRefreshReady'].includes(message.type));
+      assert.deepStrictEqual(messages.map((message: any) => message.type), ['editCell', 'viewRefreshReady']);
       for (const message of messages) { await host.receive(message); }
       assert.strictEqual(host.rows()[2][0], 'unsaved\nmultiline draft');
       assert.deepStrictEqual(host.rows()[0], ['metadata', 'keep']);

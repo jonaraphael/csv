@@ -144,7 +144,7 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
       // Refresh only editors showing this URI
       CsvEditorProvider.editors
         .filter(ed => ed.getDocumentUri().toString() === uri.toString())
-        .forEach(ed => ed.refreshHiddenRows());
+        .forEach(ed => ed.refreshViewSafely());
       vscode.window.showInformationMessage(n === undefined ? 'CSV: Hidden rows now inherit csv.defaultIgnoreRows for this file.' : `CSV: Hiding first ${n} row(s) for this file.`);
     }),
     vscode.commands.registerCommand('csv.changeEncoding', async () => {

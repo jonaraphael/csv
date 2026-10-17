@@ -89,7 +89,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (e.affectsConfiguration('csv.defaultIgnoreRows')) {
       CsvEditorProvider.editors
         .filter(editor => !CsvEditorProvider.hasHiddenRowsOverride(context, editor.getDocumentUri()) && e.affectsConfiguration('csv.defaultIgnoreRows', editor.getDocumentUri()))
-        .forEach(editor => editor.refreshHiddenRows());
+        .forEach(editor => editor.refreshViewSafely());
     }
 
     const keys = [

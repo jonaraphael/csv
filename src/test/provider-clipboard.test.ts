@@ -66,7 +66,7 @@ describe('Provider system clipboard integration', () => {
       const delimiter = extension === 'csv' ? ',' : '\t';
       const editor = await createEditor(`old${delimiter}old\nold${delimiter}old`, extension);
       const matrix = [['literal,comma', 'line\nvalue'], ['"quote"', '']];
-      await editor.receive({ type: 'copyCells', matrix, startRow: 0, startCol: 0, cut: false });
+      await editor.receive({ type: 'copyCells', matrix, rowIds: [0, 1], startCol: 0, cut: false });
       assert.strictEqual(editor.clipboardWrites.length, 1);
       assert.deepStrictEqual(Papa.parse(editor.clipboardWrites[0], { delimiter }).data, matrix);
       assert.strictEqual(editor.text, `old${delimiter}old\nold${delimiter}old`);
@@ -87,7 +87,7 @@ describe('Provider system clipboard integration', () => {
       await pendingWrite;
       editor.events.push('write');
     };
-    const cut = editor.receive({ type: 'copyCells', matrix: [['one', 'two']], startRow: 0, startCol: 0, cut: true });
+    const cut = editor.receive({ type: 'copyCells', matrix: [['one', 'two']], rowIds: [0], startCol: 0, cut: true });
     await writeStarted;
     assert.strictEqual(editor.text, 'one,two\nthree,four');
     finishWrite();
@@ -99,7 +99,7 @@ describe('Provider system clipboard integration', () => {
   it('keeps cut data when the clipboard write fails', async () => {
     const editor = await createEditor('one,two');
     writeClipboard = async () => { throw new Error('clipboard unavailable'); };
-    await editor.receive({ type: 'copyCells', matrix: [['one']], startRow: 0, startCol: 0, cut: true });
+    await editor.receive({ type: 'copyCells', matrix: [['one']], rowIds: [0], startCol: 0, cut: true });
     assert.strictEqual(editor.text, 'one,two');
     assert.deepStrictEqual(editor.events, []);
     assert.strictEqual(errors.length, 1);
@@ -108,7 +108,7 @@ describe('Provider system clipboard integration', () => {
   it('keeps newer document contents if a cut write completes after another edit', async () => {
     const editor = await createEditor('one,two');
     writeClipboard = async () => { editor.mutate(); };
-    await editor.receive({ type: 'copyCells', matrix: [['one']], startRow: 0, startCol: 0, cut: true });
+    await editor.receive({ type: 'copyCells', matrix: [['one']], rowIds: [0], startCol: 0, cut: true });
     assert.strictEqual(editor.text, 'newer,value');
     assert.deepStrictEqual(editor.events, []);
   });
