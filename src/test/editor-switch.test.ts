@@ -14,6 +14,8 @@ class TabInputTextDiff { constructor(public original: Uri, public modified: Uri)
 const state = {
   group: { viewColumn: 2, tabs: [] as any[], activeTab: undefined as any },
   otherGroups: [] as any[],
+  activeTextEditor: undefined as any,
+  visibleTextEditors: undefined as any[] | undefined,
   enabled: true, version: '1.142.0', available: true,
   events: [] as any[][], errors: [] as string[], information: [] as string[],
   registered: new Map<string, (...args: any[]) => any>(),
@@ -25,7 +27,16 @@ const vscode = {
   Uri, TabInputText, TabInputCustom,
   get version() { return state.version; },
   window: {
-    get activeTextEditor() { return state.group.activeTab?.input instanceof TabInputText ? { document: { uri: state.group.activeTab.input.uri } } : undefined; },
+    get activeTextEditor() {
+      return state.activeTextEditor ?? (state.group.activeTab?.input instanceof TabInputText
+        ? { document: { uri: state.group.activeTab.input.uri }, viewColumn: state.group.viewColumn } : undefined);
+    },
+    get visibleTextEditors() {
+      return state.visibleTextEditors ?? [state.group, ...state.otherGroups].flatMap(group =>
+        group.activeTab?.input instanceof TabInputText
+          ? [{ document: { uri: group.activeTab.input.uri }, viewColumn: group.viewColumn }] : []
+      );
+    },
     tabGroups: {
       get activeTabGroup() { return state.group; },
       get all() { return [state.group, ...state.otherGroups]; },
@@ -78,6 +89,7 @@ async function toggle() { await state.registered.get('csv.toggleEditor')!(); }
 beforeEach(() => {
   state.group = { viewColumn: 2, tabs: [], activeTab: undefined };
   state.otherGroups = [];
+  state.activeTextEditor = undefined; state.visibleTextEditors = undefined;
   state.enabled = true; state.version = '1.142.0'; state.available = true;
   state.events = []; state.errors = []; state.information = [];
   state.registered.clear(); CsvEditorProvider.editors = []; vscode.workspace.textDocuments = [];
@@ -146,6 +158,43 @@ describe('single-view CSV table/text switching', () => {
     assert.deepStrictEqual(state.group.tabs, [target]);
     assert.strictEqual(state.group.activeTab, target);
   });
+
+  for (const extension of ['csv', 'tsv']) {
+    it(`replaces a ${extension} table when its ready text target is visible but focus remains in another group`, async () => {
+      const uri = new Uri('file', '', `/data.${extension}`);
+      activateTab(makeTab(uri, true));
+      const unrelated = makeTab(new Uri('file', '', '/other-group.csv'), false);
+      const other = { viewColumn: 3, tabs: [unrelated], activeTab: unrelated };
+      state.otherGroups = [other];
+      state.activeTextEditor = { document: { uri: unrelated.input.uri }, viewColumn: 3 };
+      await toggle();
+      assert.deepStrictEqual(state.group.tabs.map(tab => tab.input.constructor), [TabInputText]);
+      assert.strictEqual(state.group.activeTab.input.uri, uri);
+      assert.strictEqual(state.group.activeTab.isDirty, true);
+      assert.deepStrictEqual(state.events.at(-1), ['reopenActiveEditorWith', 'default']);
+      assert.deepStrictEqual(other.tabs, [unrelated]);
+      assert.strictEqual(other.activeTab, unrelated);
+      assert.strictEqual(vscode.window.activeTextEditor.document.uri, unrelated.input.uri);
+      assert.deepStrictEqual(state.errors, []);
+    });
+
+    it(`retains a ${extension} table if matching text is visible only in a different group`, async () => {
+      const uri = new Uri('file', '', `/data.${extension}`);
+      const source = makeTab(uri, true);
+      activateTab(source);
+      const otherText = makeTab(uri, false);
+      const other = { viewColumn: 3, tabs: [otherText], activeTab: otherText };
+      state.otherGroups = [other];
+      state.activeTextEditor = { document: { uri }, viewColumn: 3 };
+      state.visibleTextEditors = [state.activeTextEditor];
+      await toggle();
+      assert.ok(state.group.tabs.includes(source));
+      assert.strictEqual(state.group.activeTab, source);
+      assert.ok(!state.events.some(event => event[0] === 'reopenActiveEditorWith'));
+      assert.deepStrictEqual(other.tabs, [otherText]);
+      assert.strictEqual(other.activeTab, otherText);
+    });
+  }
 
   it('keeps the dirty source when native opening fails or is cancelled', async () => {
     const source = makeTab(new Uri('file', '', '/data.csv'), false);

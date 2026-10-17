@@ -122,7 +122,10 @@ export async function toggleCsvEditor(): Promise<void> {
       );
       targetReady = !!controller && await controller.commitPendingDraft();
     } else if (targetReady) {
-      targetReady = vscode.window.activeTextEditor?.document.uri.toString() === uri.toString();
+      // Text focus can remain in a different split group after opening the target.
+      targetReady = vscode.window.visibleTextEditors.some(editor =>
+        editor.viewColumn === group.viewColumn && editor.document.uri.toString() === uri.toString()
+      );
     }
     const afterReady = vscode.window.tabGroups.activeTabGroup;
     if (afterReady.viewColumn !== group.viewColumn ||
