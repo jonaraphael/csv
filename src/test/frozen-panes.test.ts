@@ -11,6 +11,9 @@ function measure(view: ReturnType<typeof createWebviewDom>, heights = [25, 60, 3
     const height = () => (heights[index] ?? 30) * (parseFloat(view.window.document.body.style.fontSize) / 14 || 1);
     row.getBoundingClientRect = () => ({ height: height() });
     for (const cell of Array.from(row.cells) as any[]) {
+      // JSDOM cannot resolve the color variable in border shorthand. Model the
+      // browser's fixed 1px width; specific border regressions override it below.
+      cell.style.borderTopWidth = '1px';
       const col = cell.getAttribute('data-col') === null ? -1 : Number(cell.getAttribute('data-col'));
       const width = () => parseFloat(cell.style.width) || (col === -1 ? 30 : (col === 0 ? 90 : 140));
       cell.getBoundingClientRect = () => ({ left: col === -1 ? 0 : 30 + col * 90, right: col === -1 ? 30 : 30 + col * 90 + width(), width: width(), height: height() });
