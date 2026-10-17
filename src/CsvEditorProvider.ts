@@ -61,9 +61,11 @@ class CsvEditorController {
   private static readonly DEFAULT_MAX_FILE_SIZE_MB = 10;
   private static readonly LARGE_FILE_CONTINUE_THIS_TIME = 'Continue This Time';
   private static readonly LARGE_FILE_IGNORE_FOREVER = 'Ignore Forever';
+  private static readonly encodingWarnings = new WeakSet<vscode.TextDocument>();
 
   private isUpdatingDocument = false;
   private isSaving = false;
+  private disposed = false;
   private pendingOperation: Promise<void> = Promise.resolve();
   private currentWebviewPanel: vscode.WebviewPanel | undefined;
   private document!: vscode.TextDocument;
@@ -109,6 +111,9 @@ class CsvEditorController {
     if (webviewPanel.active) {
       CsvEditorProvider.currentActive = this;
     }
+    void this.warnAboutPossibleDecoding().catch(error => {
+      console.warn('CSV: Encoding warning action failed', error);
+    });
 
     webviewPanel.webview.postMessage({ type: 'focus' });
     let wasVisible = webviewPanel.visible;
@@ -209,6 +214,7 @@ class CsvEditorController {
     });
 
     webviewPanel.onDidDispose(() => {
+      this.disposed = true;
       changeDocumentSubscription.dispose();
       saveDocumentSubscription.dispose();
       CsvEditorProvider.editors = CsvEditorProvider.editors.filter(ed => ed !== this);
@@ -223,6 +229,22 @@ class CsvEditorController {
       console.error('CSV: Editor operation failed', error);
     });
     return this.pendingOperation;
+  }
+
+  private async warnAboutPossibleDecoding(): Promise<void> {
+    if (!this.document.getText().includes('\uFFFD') || CsvEditorController.encodingWarnings.has(this.document)) {
+      return;
+    }
+    CsvEditorController.encodingWarnings.add(this.document);
+    const action = 'Change File Encoding';
+    const selected = await vscode.window.showWarningMessage(
+      'CSV: This file contains replacement characters (�), which can indicate a decoding mismatch. Check the source encoding before saving.',
+      action
+    );
+    if (selected === action && !this.disposed) {
+      // Bind the action to this document even if another tab becomes active.
+      await vscode.commands.executeCommand('csv.changeEncoding', this.document.uri);
+    }
   }
 
   private getMaxFileSizeLimitMb(config: vscode.WorkspaceConfiguration): number {

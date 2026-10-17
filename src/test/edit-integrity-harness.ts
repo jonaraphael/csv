@@ -19,7 +19,33 @@ const vscodeStub = {
     replace(_uri: unknown, _range: unknown, text: string) { this.text = text; }
   },
   ColorThemeKind: { Dark: 1 },
-  window: { activeColorTheme: { kind: 1 } },
+  window: {
+    activeColorTheme: { kind: 1 },
+    showWarningMessage: async (message: string) => {
+      activeHarness.warnings.push(message);
+      return activeHarness.warningChoice;
+    },
+    showInformationMessage() {},
+    tabGroups: {
+      get all() { return [{ tabs: [{ input: { uri: activeHarness.document.uri, viewType: 'csv.editor' } }] }]; },
+      close: async () => activeHarness.closeResult
+    }
+  },
+  commands: {
+    registerCommand: (name: string, command: (...args: any[]) => unknown) => {
+      activeHarness.commands.set(name, command);
+      return { dispose() {} };
+    },
+    executeCommand: async (name: string, ...args: unknown[]) => {
+      activeHarness.executedCommands.push({ name, args });
+      if (activeHarness.commandError) {
+        throw activeHarness.commandError;
+      }
+      if (name === 'workbench.action.editor.changeEncoding') {
+        await activeHarness.commandWait;
+      }
+    }
+  },
   workspace: {
     getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'maxFileSizeMB' ? 0 : fallback }),
     applyEdit: (edit: { text: string }) => activeHarness.applyEdit(edit.text),
@@ -45,18 +71,21 @@ const { CsvEditorProvider } = require('../CsvEditorProvider') as typeof import('
 const { JSDOM } = require('jsdom');
 
 export async function createEditorHarness(options: {
+  text?: string;
+  warningChoice?: string | Promise<string | undefined>;
   rows?: string[][];
   separator?: string;
   header?: boolean;
   remote?: boolean;
 } = {}) {
   const separator = options.separator ?? ',';
-  let text = Papa.unparse(options.rows ?? [['name', 'value'], ['one', 'two']], { delimiter: separator });
+  let text = options.text ?? Papa.unparse(options.rows ?? [['name', 'value'], ['one', 'two']], { delimiter: separator });
   let diskText = text;
   let messageListener: (message: any) => Promise<void>;
   const changeListeners: Array<(event: unknown) => void> = [];
   const viewListeners: Array<(event: unknown) => void> = [];
   const saveListeners: Array<(event: unknown) => void> = [];
+  const disposeListeners: Array<() => void> = [];
   const messages: any[] = [];
   const delayedEdits: Array<() => void> = [];
   let deferEdits = false;
@@ -76,6 +105,7 @@ export async function createEditorHarness(options: {
     }
   };
   const context = {
+    subscriptions: [] as unknown[],
     extensionPath: process.cwd(),
     workspaceState: {
       values: {} as Record<string, unknown>,
@@ -97,10 +127,22 @@ export async function createEditorHarness(options: {
       onDidReceiveMessage: (listener: typeof messageListener) => { messageListener = listener; }
     },
     onDidChangeViewState: (listener: (event: unknown) => void) => { viewListeners.push(listener); },
-    onDidDispose() {}
+    onDidDispose(listener: () => void) { disposeListeners.push(listener); }
   };
   const harness = {
     document, panel, messages, changeListeners, saveListeners,
+    warnings: [] as string[],
+    warningChoice: options.warningChoice,
+    commandError: undefined as Error | undefined,
+    commandWait: undefined as Promise<void> | undefined,
+    dispose() { disposeListeners.forEach(listener => listener()); },
+    closeResult: true,
+    commands: new Map<string, (...args: any[]) => unknown>(),
+    executedCommands: [] as Array<{ name: string; args: unknown[] }>,
+    registerCommands() {
+      const { registerCsvCommands } = require('../commands') as typeof import('../commands');
+      registerCsvCommands(context as any);
+    },
     get diskText() { return diskText; },
     get pendingEdits() { return delayedEdits.length; },
     deferEdits() { deferEdits = true; },
