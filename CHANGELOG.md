@@ -10,6 +10,7 @@ This release combines the editing, navigation, and table tools developed since t
 - Preserve existing CSV quoting and line endings during cell edits, structural paste, and row/column moves. Copy and Cut quote each value only when necessary, retain real empty fields, and exclude the extra append row.
 - Add saved-file table/text replacement with unsaved-edit preservation and explicit Save As support for untitled CSV/TSV tables that retain their native owner.
 - Keep native Find in Files destinations in text after an explicit local-file Text choice, including restart and Off/On. Restore only owned routing preferences on return to Table and preserve intervening user choices.
+- Preserve the active document through multi-file Off/On changes. Serialize native handoffs and request a fresh acknowledgment for cell or filter activity made while waiting.
 - Improve encoding guidance without guessing or silently changing the source encoding.
 
 ### Table navigation and views
