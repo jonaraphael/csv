@@ -102,4 +102,57 @@ describe('File-backed disable preserves active drafts', () => {
       assert.ok(host.panel.webview.html.includes('<table>'));
     } finally { view.close(); host.dispose(); }
   });
+  for (const activity of ['cell', 'filter'] as const) {
+    it(`requests a fresh ACK for newer ${activity} activity while another native handoff holds the queue`, async () => {
+      const host = await createEditorHarness();
+      const view = createWebviewDom(host.panel.webview.html);
+      const Controller = host.activeController!.constructor as any;
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      Controller.nativeHandoffQueue = gate;
+      try {
+        host.setEnabled(false);
+        const original = prepare(host, view);
+        const pending = Promise.all(original.outgoing.map(message => host.receive(message)));
+        await nextTurn();
+        assert.strictEqual(host.recordedCommands.length, 0);
+        const cursor = view.messages.length;
+        if (activity === 'cell') {
+          view.start(view.cell());
+          view.cell().textContent = 'new draft after queued ACK';
+        } else {
+          (view.window as any).csvColumnFilters.add(0);
+          const input = view.window.document.querySelector('[data-filter-value]') as HTMLInputElement;
+          input.value = 'one';
+          input.dispatchEvent(new view.window.Event('input', { bubbles: true }));
+        }
+        const observed = view.messages.slice(cursor).filter(message => message.type === 'cellEditStarted' || message.type === 'filterDraftChanged');
+        assert.ok(observed.length, 'the shipped webview reports new raw activity immediately');
+        const activityOperations = observed.map(message => host.receive(message));
+        let newerCommitResolved = false;
+        const newerCommit = host.commitPendingDraft().then(result => { newerCommitResolved = true; return result; });
+        release();
+        await pending;
+        await Promise.all(activityOperations);
+        assert.strictEqual(host.panel.disposed, false);
+        await nextTurn();
+        assert.strictEqual(newerCommitResolved, false, 'the old finish cannot authorize a newer commit waiter before its fresh ACK');
+        assert.strictEqual(host.recordedCommands.length, 0, 'a stale ACK never authorizes native open or disposal');
+        assert.notStrictEqual(host.pendingDraftRequestId, original.request.requestId);
+        if (activity === 'cell') { assert.strictEqual(view.cell().textContent, 'new draft after queued ACK'); }
+        else { assert.strictEqual((view.window.document.querySelector('[data-filter-value]') as HTMLInputElement).value, 'one'); }
+        await flushViewCommits(host, view);
+        assert.strictEqual(await newerCommit, false, 'native handoff disposes the controller only after the fresh ACK');
+        assert.strictEqual(host.panel.disposed, true);
+        assert.strictEqual(host.recordedCommands.length, 1);
+        if (activity === 'cell') { assert.strictEqual(host.rows()[1][0], 'new draft after queued ACK'); }
+        assert.strictEqual(host.diskText.includes('new draft after queued ACK'), false);
+      } finally {
+        release();
+        view.close(); host.dispose();
+        await Controller.nativeHandoffQueue;
+      }
+    });
+  }
+
 });

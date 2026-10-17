@@ -13,9 +13,10 @@ const originalRequire = Module.prototype.require;
 Module.prototype.require = function (id: string) {
   if (id === 'vscode') {
     return {
+      TabInputText: class {},
       ConfigurationTarget: { Global: 1, Workspace: 2 },
       commands: { registerCommand: (name: string, callback: () => Promise<void>) => { commands.set(name, callback); return { dispose() {} }; } },
-      window: { onDidChangeActiveTextEditor: () => ({ dispose() {} }), showInputBox: async (options: any) => { prompt = options; return input; }, showInformationMessage() {}, showErrorMessage: (message: string) => { routingErrors.push(message); }, registerCustomEditorProvider: () => ({ dispose() {} }) },
+      window: { tabGroups: { all: [], activeTabGroup: { viewColumn: 1, tabs: [], activeTab: undefined } }, visibleTextEditors: [], onDidChangeActiveTextEditor: () => ({ dispose() {} }), showInputBox: async (options: any) => { prompt = options; return input; }, showInformationMessage() {}, showErrorMessage: (message: string) => { routingErrors.push(message); }, registerCustomEditorProvider: () => ({ dispose() {} }) },
       workspace: { textDocuments: [], onDidOpenTextDocument: () => ({ dispose() {} }), onDidCloseTextDocument: () => ({ dispose() {} }), getConfiguration: (section: string) => ({ inspect: (key: string) => section === 'csv' && key === 'enabled' ? { defaultValue: true } : undefined, get: (key: string, fallback: any) => section === 'csv' && key === 'defaultIgnoreRows' ? 7 : fallback }), onDidChangeConfiguration: (listener: any) => { configurationListeners.push(listener); changedConfiguration = event => Promise.all(configurationListeners.map(callback => callback(event))); return { dispose() {} }; } }
     };
   }

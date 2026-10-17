@@ -104,15 +104,16 @@ export async function openUntitledCsvEditor(document: vscode.TextDocument, viewC
 
 export function registerUntitledCsvEditors(context: vscode.ExtensionContext): void {
   extensionContext = context;
-  const maybeOpen = (document: vscode.TextDocument | undefined) => {
-    if (!document || !isUntitledCsv(document) || opened.has(document.uri.toString())) {
-      return;
-    }
-    const active = vscode.window.activeTextEditor;
-    if (!active || active.document.uri.toString() !== document.uri.toString()) {
-      return;
-    }
-    void openUntitledCsvEditor(document, active.viewColumn).catch(error => {
+  const maybeOpen = (document?: vscode.TextDocument) => {
+    const group = vscode.window.tabGroups.activeTabGroup;
+    const input = group?.activeTab?.input;
+    if (!(input instanceof vscode.TabInputText)) { return; }
+    const active = vscode.window.visibleTextEditors.find(editor => editor.viewColumn === group.viewColumn &&
+      editor.document.uri.toString() === input.uri.toString());
+    const owner = active?.document;
+    if (!owner || (document && owner.uri.toString() !== document.uri.toString()) ||
+        !isUntitledCsv(owner) || opened.has(owner.uri.toString())) { return; }
+    void openUntitledCsvEditor(owner, group.viewColumn).catch(error => {
       console.error('CSV: could not open the untitled table', error);
       vscode.window.showErrorMessage('CSV: Could not open the untitled document in the table view.');
     });
@@ -165,19 +166,16 @@ export function registerUntitledCsvEditors(context: vscode.ExtensionContext): vo
             controller.revealSourceAfterCommit();
             return;
           }
-          // A panel still initializing has no active draft or controller yet.
-          if (!editor.document.isClosed) {
-            void Promise.resolve(vscode.window.showTextDocument(editor.document, {
-              viewColumn: editor.panel.viewColumn, preview: false, preserveFocus: !editor.panel.active
-            })).catch(error => console.error('CSV: could not reveal the untitled source', error));
-          }
+          // Its native owner was retained when the temporary grid opened.
+          // No controller/draft exists yet, so cancel initialization without
+          // racing committed handoffs with a second native open.
           editor.panel.dispose();
         });
         return;
       }
       opened.clear();
       editors.forEach((_editor, key) => opened.add(key));
-      maybeOpen(vscode.window.activeTextEditor?.document);
+      maybeOpen();
     }),
     { dispose: () => {
       editors.forEach(editor => editor.panel.dispose());
@@ -187,5 +185,5 @@ export function registerUntitledCsvEditors(context: vscode.ExtensionContext): vo
       extensionContext = undefined;
     } }
   );
-  maybeOpen(vscode.window.activeTextEditor?.document);
+  maybeOpen();
 }

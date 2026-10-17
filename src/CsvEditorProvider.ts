@@ -89,6 +89,7 @@ class CsvEditorController {
   private static readonly LARGE_FILE_IGNORE_FOREVER = 'Ignore Forever';
   private static readonly encodingWarnings = new WeakSet<vscode.TextDocument>();
   private static readonly DRAFT_COMMIT_TIMEOUT_MS = 5000;
+  private static nativeHandoffQueue: Promise<void> = Promise.resolve();
 
   private isUpdatingDocument = false;
   private isSaving = false;
@@ -423,12 +424,80 @@ class CsvEditorController {
     return (fileSizeBytes / CsvEditorController.BYTES_PER_MB).toFixed(1);
   }
 
-  private async openWithDefaultEditorAndClose(webviewPanel: vscode.WebviewPanel, uri: vscode.Uri): Promise<void> {
+  private captureOtherEditorOwner(uri: vscode.Uri, viewColumn: vscode.ViewColumn | undefined): (() => Promise<void>) | undefined {
+    const group = vscode.window.tabGroups.activeTabGroup;
+    if (!group) { return; }
+    const tab = group.activeTab;
+    const input: any = tab?.input;
+    const stillOpen = () => vscode.window.tabGroups.all.includes(group) && !!tab && group.tabs.includes(tab);
+    const activeController = CsvEditorProvider.editors.find(editor => editor !== this && editor.isActive() && editor.getViewColumn() === group.viewColumn);
+    const panel = activeController?.currentWebviewPanel;
+    if (panel) {
+      const document = activeController.document;
+      return async () => {
+        if (!vscode.window.tabGroups.all.includes(group)) { return; }
+        if (activeController.currentWebviewPanel === panel && panel.viewColumn === group.viewColumn && stillOpen()) {
+          panel.reveal(group.viewColumn, false);
+        } else if (!activeController.currentWebviewPanel && !document.isClosed && group.tabs.some(candidate => {
+          const native: any = candidate.input;
+          return !native?.viewType && native?.uri?.toString() === document.uri.toString();
+        })) {
+          // Another Off handoff can replace the captured grid first. Reuse
+          // its native owner only while that owner still has a live tab here.
+          await vscode.window.showTextDocument(document, { viewColumn: group.viewColumn, preview: false });
+        }
+      };
+    }
+    const activeUri: vscode.Uri | undefined = input?.uri;
+    if (!activeUri || (group.viewColumn === viewColumn && activeUri.toString() === uri.toString())) { return; }
+    if (input.viewType === CsvEditorProvider.viewType) { return; }
+    if (input.viewType) {
+      return async () => { if (stillOpen()) { await vscode.commands.executeCommand('vscode.openWith', activeUri, input.viewType, { viewColumn: group.viewColumn, preserveFocus: false }); } };
+    }
+    const editor = vscode.window.visibleTextEditors.find(candidate => candidate.viewColumn === group.viewColumn && candidate.document.uri.toString() === activeUri.toString());
+    if (editor) {
+      return async () => {
+        if (!stillOpen()) { return; }
+        // The owner may have acquired its standalone table while the saved-file
+        // handoff was pending. Reveal that live view instead of promoting text.
+        const controller = CsvEditorProvider.editors.find(candidate => candidate !== this && candidate.getViewColumn() === group.viewColumn && candidate.getDocumentUri().toString() === activeUri.toString());
+        if (controller?.currentWebviewPanel) { controller.currentWebviewPanel.reveal(group.viewColumn, false); }
+        else if (!editor.document.isClosed) { await vscode.window.showTextDocument(editor.document, { viewColumn: group.viewColumn, preview: false }); }
+      };
+    }
+  }
+
+  private async openWithDefaultEditorAndClose(webviewPanel: vscode.WebviewPanel, uri: vscode.Uri, reason?: 'disabled' | 'language'): Promise<void> {
     if (this.disposed) { return; }
     if (!this.defaultEditorHandoff) {
-      this.defaultEditorHandoff = (async () => {
+      const authorization = reason ? {
+        activity: this.draftActivityRevision, document: this.document, version: this.document.version,
+        language: this.document.languageId, session: this.filterSession, filterRevision: this.latestFilterRevision,
+        columnsRevision: this.filterColumnsRevision
+      } : undefined;
+      let reprepare = false;
+      const pending = CsvEditorController.nativeHandoffQueue.then(async () => {
+        if (this.disposed || this.document.isClosed) { return; }
+        const supported = uri.scheme !== 'untitled' || this.document.languageId === 'csv' || this.document.languageId === 'tsv';
+        if (supported && CsvEditorProvider.editors.includes(this) && vscode.workspace.getConfiguration('csv', uri).get<boolean>('enabled', true)) { return; }
+        if (authorization && (authorization.activity !== this.draftActivityRevision || authorization.document !== this.document ||
+            authorization.version !== this.document.version || authorization.language !== this.document.languageId ||
+            authorization.session !== this.filterSession || authorization.filterRevision !== this.latestFilterRevision ||
+            authorization.columnsRevision !== this.filterColumnsRevision || this.pendingDocumentReference)) {
+          // A different handoff held the native queue after this view's ACK.
+          // Release this slot and request a new ACK without blocking its own
+          // message queue, where the final cell/filter edits must be applied.
+          reprepare = true;
+          return;
+        }
+        let restoreOwner = this.captureOtherEditorOwner(uri, webviewPanel.viewColumn);
+        const focusSubscription = vscode.window.onDidChangeActiveTextEditor(() => {
+          const next = this.captureOtherEditorOwner(uri, webviewPanel.viewColumn);
+          if (next) { restoreOwner = next; }
+        });
+        const wasActive = webviewPanel.active;
         try {
-          const opts = { viewColumn: webviewPanel.viewColumn, preserveFocus: !webviewPanel.active };
+          const opts = { viewColumn: webviewPanel.viewColumn, preserveFocus: !wasActive };
           if (uri.scheme === 'untitled') {
             await vscode.window.showTextDocument(this.document, { ...opts, preview: false });
           } else {
@@ -439,9 +508,32 @@ class CsvEditorController {
             }
           }
         } finally {
-          try { webviewPanel.dispose(); } catch {}
+          focusSubscription.dispose();
+          const supported = uri.scheme !== 'untitled' || this.document.languageId === 'csv' || this.document.languageId === 'tsv';
+          const retainTable = supported && !this.disposed && CsvEditorProvider.editors.includes(this) &&
+            vscode.workspace.getConfiguration('csv', uri).get<boolean>('enabled', true);
+          const group = vscode.window.tabGroups.activeTabGroup;
+          const input: any = group?.activeTab?.input;
+          const nativeHandoffIsActive = group?.viewColumn === webviewPanel.viewColumn && !input?.viewType && input?.uri?.toString() === uri.toString();
+          if (!retainTable) { try { webviewPanel.dispose(); } catch {} }
+          // Only undo activation caused by this handoff. A later user choice in
+          // another tab/group always keeps focus and its live document owner.
+          if (nativeHandoffIsActive) {
+            if (restoreOwner) { await restoreOwner(); }
+            else if (retainTable && wasActive) { webviewPanel.reveal(webviewPanel.viewColumn, false); }
+          }
         }
-      })();
+      });
+      // Only native opens/disposal/restoration serialize; draft ACKs remain
+      // independent, so a failed edit in one file cannot block other files.
+      CsvEditorController.nativeHandoffQueue = pending.then(() => {}, () => {});
+      this.defaultEditorHandoff = pending;
+      void pending.then(() => {
+        if (this.defaultEditorHandoff === pending) { this.defaultEditorHandoff = undefined; }
+        if (reprepare && !this.disposed && reason) { this.revealSourceAfterCommit(reason); }
+      }, () => {
+        if (this.defaultEditorHandoff === pending) { this.defaultEditorHandoff = undefined; }
+      });
     }
     await this.defaultEditorHandoff;
   }
@@ -515,6 +607,7 @@ class CsvEditorController {
     if (!enabled) {
       this.revealSourceAfterCommit();
     } else {
+      if (this.defaultEditorHandoff) { return; }
       if (this.viewCommitRequested || this.failedCellEdits.size) {
         this.refreshAfterDraftCommit = true;
         return;
@@ -574,7 +667,7 @@ class CsvEditorController {
         this.updateWebviewContent();
         return;
       }
-      await this.openWithDefaultEditorAndClose(panel, this.document.uri);
+      await this.openWithDefaultEditorAndClose(panel, this.document.uri, reason);
     };
     this.requestViewCommit();
   }
@@ -664,7 +757,9 @@ class CsvEditorController {
     } else if (!hadWaiters || refreshNeeded) {
       this.updateWebviewContent();
     }
-    this.resolveDraftCommitWaiters(!!this.currentWebviewPanel && !this.failedCellEdits.size);
+    // An awaited action can leave a newer request pending. Its waiters need
+    // that request's own ACK, even when this older action just completed.
+    if (!this.viewCommitRequested) { this.resolveDraftCommitWaiters(!!this.currentWebviewPanel && !this.failedCellEdits.size); }
   }
 
   private forceReload() {

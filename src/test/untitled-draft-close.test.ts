@@ -1,6 +1,6 @@
 import assert from 'assert';
 import { describe, it } from 'node:test';
-import { createEditorHarness, createWebviewDom } from './edit-integrity-harness';
+import { createEditorHarness, createWebviewDom, flushViewCommits } from './edit-integrity-harness';
 
 describe('untitled grid closes after its final active draft commits', () => {
   for (const separator of [',', '\t']) {
@@ -34,4 +34,20 @@ describe('untitled grid closes after its final active draft commits', () => {
       }
     });
   }
+  it('closes an unsupported-language table after a fresh draft ACK while CSV remains enabled', async () => {
+    const host = await createEditorHarness({ untitled: true });
+    const view = createWebviewDom(host.panel.webview.html);
+    try {
+      view.start(view.cell());
+      view.cell().textContent = 'language change draft';
+      host.rebindDocument('plaintext');
+      host.activeController!.revealSourceAfterCommit('language');
+      await flushViewCommits(host, view);
+      assert.strictEqual(host.rows()[1][0], 'language change draft');
+      assert.strictEqual(host.panel.disposed, true);
+      assert.strictEqual(host.sourceReveals.at(-1), host.document.getText());
+      assert.strictEqual(host.diskText.includes('language change draft'), false);
+    } finally { view.close(); host.dispose(); }
+  });
+
 });

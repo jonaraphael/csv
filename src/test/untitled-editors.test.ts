@@ -21,12 +21,16 @@ const configEvent = event<any>();
 const state = {
   enabled: true,
   activeTextEditor: undefined as any,
+  groupOverride: undefined as any,
+  visibleOverride: undefined as any[] | undefined,
   documents: [] as any[],
   panels: [] as any[],
   resolutions: [] as any[],
   subscriptions: [] as any[],
   tokens: [] as any[],
   failResolve: false,
+  resolveWait: undefined as Promise<void> | undefined,
+  nativeReveals: 0,
   commitResult: true,
   commitWait: undefined as Promise<boolean> | undefined,
   commitRequests: 0,
@@ -42,6 +46,8 @@ class FakeProvider {
   static getActiveProvider() { return FakeProvider.currentActive; }
   async resolveCustomTextEditor(document: any, panel: any, token: any) {
     state.resolutions.push({ document, panel, token });
+    if (state.resolveWait) { await state.resolveWait; }
+    if (token.isCancellationRequested) { return; }
     if (state.failResolve) { throw new Error('resolve failed'); }
     const controller = {
       document,
@@ -100,13 +106,14 @@ const vscode = {
     dispose() { this.disposed = true; }
   },
   window: {
-    tabGroups: { get activeTabGroup() { return { viewColumn: state.activeTextEditor?.viewColumn ?? 2,
+    tabGroups: { get activeTabGroup() { return state.groupOverride ?? { viewColumn: state.activeTextEditor?.viewColumn ?? 2,
       activeTab: state.activeTextEditor ? { input: new TabInputText(state.activeTextEditor.document.uri) } : undefined }; } },
     get activeTextEditor() { return state.activeTextEditor; },
-    get visibleTextEditors() { return state.activeTextEditor ? [state.activeTextEditor] : []; },
+    get visibleTextEditors() { return state.visibleOverride ?? (state.activeTextEditor ? [state.activeTextEditor] : []); },
     onDidChangeActiveTextEditor: activeEvent.listen,
     createWebviewPanel: createPanel,
     showTextDocument: async (document: any, options: any) => {
+      state.nativeReveals++;
       state.panels.forEach(panel => { panel.active = false; });
       state.activeTextEditor = { document, viewColumn: options.viewColumn };
       activeEvent.fire(state.activeTextEditor);
@@ -160,13 +167,14 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 5));
 
 beforeEach(() => {
   state.enabled = true;
-  state.activeTextEditor = undefined;
+  state.activeTextEditor = undefined; state.groupOverride = undefined; state.visibleOverride = undefined;
   state.documents = [];
   state.panels = [];
   state.resolutions = [];
   state.subscriptions = [];
   state.tokens = [];
   state.failResolve = false;
+  state.resolveWait = undefined; state.nativeReveals = 0;
   state.commitResult = true;
   state.commitWait = undefined;
   state.commitRequests = 0;
@@ -293,6 +301,27 @@ describe('untitled CSV document ownership and routing', () => {
     assert.strictEqual(FakeProvider.currentActive, undefined);
   });
 
+  it('cancels an initializing grid without opening its retained native owner over a newer file', async () => {
+    let finish!: () => void;
+    state.resolveWait = new Promise<void>(resolve => { finish = resolve; });
+    const original = document('tsv');
+    activate(original);
+    await settle();
+    assert.strictEqual(FakeProvider.editors.length, 0);
+    const newer = document('plaintext', 'file', 'newer.txt');
+    state.activeTextEditor = { document: newer, viewColumn: 3 };
+    state.enabled = false;
+    configEvent.fire({ affectsConfiguration: () => true });
+    assert.strictEqual(state.panels[0].disposed, true);
+    assert.strictEqual(state.nativeReveals, 0);
+    assert.strictEqual(state.activeTextEditor.document, newer);
+    assert.strictEqual(original.isClosed, false);
+    assert.strictEqual(original.getText(), 'name,value\nalready typed,42');
+    finish();
+    await settle();
+    assert.strictEqual(FakeProvider.editors.length, 0);
+  });
+
   it('keeps an intentionally closed table closed until explicitly requested', async () => {
     const original = document();
     activate(original);
@@ -375,4 +404,17 @@ describe('untitled CSV document ownership and routing', () => {
     assert.strictEqual(activeEvent.size + openEvent.size + closeEvent.size + configEvent.size, 0);
     assert.strictEqual(FakeProvider.currentActive, undefined);
   });
+  it('reopens the invoking untitled owner rather than a stale global text editor on enable', async () => {
+    const original = document('tsv'), other = document('csv', 'file', '/old.csv');
+    state.enabled = false;
+    state.documents = [original, other]; state.activeTextEditor = { document: other, viewColumn: 1 };
+    state.groupOverride = { viewColumn: 3, activeTab: { input: new TabInputText(original.uri) } };
+    state.visibleOverride = [{ document: original, viewColumn: 3 }, state.activeTextEditor];
+    state.enabled = true; configEvent.fire({ affectsConfiguration: (key: string) => key === 'csv.enabled' });
+    await settle();
+    assert.strictEqual(getActiveUntitledCsvEditor()?.document, original);
+    assert.strictEqual(state.panels.at(-1).viewColumn, 3);
+    assert.strictEqual(original.isClosed, false);
+  });
+
 });

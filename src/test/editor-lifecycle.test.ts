@@ -13,6 +13,10 @@ class Uri {
 
 const state = {
   enabled: true,
+  activeGroup: undefined as any,
+  groups: [] as any[],
+  focusListeners: new Set<(...args: any[]) => void>(),
+  shown: [] as any[],
   visibleTextEditors: [] as any[],
   commands: [] as any[][],
   stat: async (): Promise<{ size: number }> => ({ size: 12 }),
@@ -24,7 +28,19 @@ const vscode = {
   ColorThemeKind: { Dark: 1 },
   window: {
     activeColorTheme: { kind: 1 },
-    tabGroups: { all: [] },
+    tabGroups: { get all() { return state.groups; }, get activeTabGroup() { return state.activeGroup; } },
+    onDidChangeActiveTextEditor: (callback: (...args: any[]) => void) => {
+      state.focusListeners.add(callback);
+      return { dispose: () => state.focusListeners.delete(callback) };
+    },
+    showTextDocument: async (document: any, options: any) => {
+      state.shown.push({ document, options });
+      const editor = { document, viewColumn: options.viewColumn };
+      state.visibleTextEditors = [editor];
+      state.activeGroup = { viewColumn: options.viewColumn, activeTab: { input: { uri: document.uri } } };
+      state.focusListeners.forEach(callback => callback(editor));
+      return editor;
+    },
     get visibleTextEditors() { return state.visibleTextEditors; }
   },
   workspace: {
@@ -122,6 +138,10 @@ async function resolve(document: ReturnType<typeof makeDocument>, panel: ReturnT
 
 beforeEach(() => {
   state.enabled = true;
+  state.activeGroup = undefined;
+  state.groups = [];
+  state.focusListeners.clear();
+  state.shown = [];
   state.visibleTextEditors = [];
   state.commands = [];
   state.stat = async () => ({ size: 12 });
@@ -243,6 +263,192 @@ describe('CSV editor lifecycle and native text handoff', () => {
     assert.strictEqual(state.commands.length, 1, 'a disposed controller cannot reopen the file later');
     assert.strictEqual(panel.disposed, true);
     assert.strictEqual(CsvEditorProvider.getActiveProvider(), undefined);
+  });
+
+  it('retains an initialized table when On overtakes an already-started native handoff', async () => {
+    const document = makeDocument(new Uri('file', '', '/data.csv'));
+    const { panel, messages } = makePanel(2);
+    await resolve(document, panel);
+    const controller = CsvEditorProvider.getActiveProvider()!;
+    const html = panel.webview.html;
+    let finishOpen!: () => void;
+    state.executeCommand = () => new Promise(resolveOpen => { finishOpen = resolveOpen; });
+    state.enabled = false;
+    controller.refresh();
+    const request = messages.filter(message => message.type === 'prepareViewRefresh').slice(-1)[0];
+    const metadata = JSON.parse(/<script id="__csvFilters"[^>]*>(.*?)<\/script>/s.exec(html)![1]);
+    const completing = panel.receive({ type: 'viewRefreshReady', session: metadata.session, requestId: request.requestId });
+    await new Promise(resolveTurn => setImmediate(resolveTurn));
+    state.enabled = true;
+    controller.refresh();
+    assert.strictEqual(panel.webview.html, html, 'On does not replace live DOM during a native handoff');
+    finishOpen();
+    await completing;
+    assert.strictEqual(panel.disposed, false);
+    assert.ok(CsvEditorProvider.editors.includes(controller));
+    assert.strictEqual(state.focusListeners.size, 0);
+    panel.dispose();
+  });
+
+  it('restores the current untitled owner after an inactive saved-file handoff takes its group', async () => {
+    const document = makeDocument(new Uri('file', '', '/previous.csv'));
+    const { panel, messages } = makePanel(2);
+    await resolve(document, panel);
+    const controller = CsvEditorProvider.getActiveProvider()!;
+    panel.setActive(false);
+    const owner = makeDocument(new Uri('untitled', '', '/new.tsv'), 'name\tvalue\nlatest\tdraft');
+    state.visibleTextEditors = [{ document: owner, viewColumn: 2 }];
+    const ownerTab = { input: { uri: owner.uri } };
+    const group = { viewColumn: 2, activeTab: ownerTab, tabs: [ownerTab] };
+    state.activeGroup = group; state.groups = [group];
+    state.executeCommand = async () => {
+      // Workbench publication can occur after the active owner was captured.
+      const nativeTab = { input: { uri: document.uri } };
+      group.tabs.push(nativeTab); group.activeTab = nativeTab;
+      state.focusListeners.forEach(callback => callback({ document, viewColumn: 2 }));
+    };
+    state.enabled = false;
+    controller.refresh();
+    const request = messages.filter(message => message.type === 'prepareViewRefresh').slice(-1)[0];
+    const metadata = JSON.parse(/<script id="__csvFilters"[^>]*>(.*?)<\/script>/s.exec(panel.webview.html)![1]);
+    await panel.receive({ type: 'viewRefreshReady', session: metadata.session, requestId: request.requestId });
+    assert.strictEqual(state.shown.length, 1);
+    assert.strictEqual(state.shown[0].document, owner);
+    assert.strictEqual(state.activeGroup.activeTab.input.uri, owner.uri);
+    assert.strictEqual(panel.disposed, true);
+    assert.strictEqual(state.focusListeners.size, 0);
+  });
+
+  it('restores the native untitled owner after its captured grid closes before another handoff settles', async () => {
+    const saved = makeDocument(new Uri('file', '', '/previous.csv'));
+    const previous = makePanel(2);
+    await resolve(saved, previous.panel);
+    const savedController = CsvEditorProvider.getActiveProvider()!;
+    previous.panel.setActive(false);
+    const document = { ...makeDocument(new Uri('untitled', '', '/new.tsv'), 'name\tvalue\nlatest\tdraft'), languageId: 'tsv' };
+    const current = makePanel(2);
+    await resolve(document, current.panel);
+    const nativeTab = { input: { uri: document.uri } };
+    const gridTab: any = { input: { viewType: 'mainThreadWebview-csv.untitledEditor' } };
+    const group = { viewColumn: 2, tabs: [nativeTab, gridTab], activeTab: gridTab };
+    state.activeGroup = group; state.groups = [group];
+    state.visibleTextEditors = [];
+    state.executeCommand = async () => {
+      current.panel.dispose();
+      const target = { input: { uri: saved.uri } };
+      group.tabs = [nativeTab, target]; group.activeTab = target;
+      state.focusListeners.forEach(callback => callback({ document: saved, viewColumn: 2 }));
+    };
+    state.enabled = false;
+    savedController.refresh();
+    const request = previous.messages.filter(message => message.type === 'prepareViewRefresh').slice(-1)[0];
+    const metadata = JSON.parse(/<script id="__csvFilters"[^>]*>(.*?)<\/script>/s.exec(previous.panel.webview.html)![1]);
+    await previous.panel.receive({ type: 'viewRefreshReady', session: metadata.session, requestId: request.requestId });
+    assert.strictEqual(state.shown.length, 1);
+    assert.strictEqual(state.shown[0].document, document);
+    assert.strictEqual(document.getText(), 'name\tvalue\nlatest\tdraft');
+    assert.strictEqual(previous.panel.disposed, true);
+  });
+
+  it('restores the current saved owner after its own native handoff settles before an older one', async () => {
+    const previousDocument = makeDocument(new Uri('file', '', '/previous.csv'));
+    const previous = makePanel(2);
+    await resolve(previousDocument, previous.panel);
+    const previousController = CsvEditorProvider.getActiveProvider()!;
+    previous.panel.setActive(false);
+    const owner = makeDocument(new Uri('file', '', '/current.tsv'), 'name\tvalue\ncurrent\tdraft');
+    const current = makePanel(2);
+    await resolve(owner, current.panel);
+    const gridTab: any = { input: { uri: owner.uri, viewType: 'csv.editor' } };
+    const group = { viewColumn: 2, tabs: [gridTab], activeTab: gridTab };
+    state.activeGroup = group; state.groups = [group];
+    state.executeCommand = async () => {
+      current.panel.dispose();
+      const nativeOwner = { input: { uri: owner.uri } };
+      const previousTarget = { input: { uri: previousDocument.uri } };
+      group.tabs = [nativeOwner, previousTarget]; group.activeTab = previousTarget;
+      state.focusListeners.forEach(callback => callback({ document: previousDocument, viewColumn: 2 }));
+    };
+    state.enabled = false;
+    previousController.refresh();
+    const request = previous.messages.filter(message => message.type === 'prepareViewRefresh').slice(-1)[0];
+    const metadata = JSON.parse(/<script id="__csvFilters"[^>]*>(.*?)<\/script>/s.exec(previous.panel.webview.html)![1]);
+    await previous.panel.receive({ type: 'viewRefreshReady', session: metadata.session, requestId: request.requestId });
+    assert.strictEqual(state.shown.length, 1);
+    assert.strictEqual(state.shown[0].document, owner);
+    assert.strictEqual(owner.getText(), 'name\tvalue\ncurrent\tdraft');
+  });
+
+  it('does not restore the old group after its captured live grid moves elsewhere', async () => {
+    const previousDocument = makeDocument(new Uri('file', '', '/previous.csv'));
+    const previous = makePanel(2);
+    await resolve(previousDocument, previous.panel);
+    const controller = CsvEditorProvider.getActiveProvider()!;
+    previous.panel.setActive(false);
+    const owner = makeDocument(new Uri('file', '', '/current.tsv'));
+    const current = makePanel(2);
+    await resolve(owner, current.panel);
+    const nativeTab: any = { input: { uri: owner.uri } };
+    const gridTab: any = { input: { uri: owner.uri, viewType: 'csv.editor' } };
+    const group = { viewColumn: 2, tabs: [nativeTab, gridTab], activeTab: gridTab };
+    state.activeGroup = group; state.groups = [group];
+    state.executeCommand = async () => {
+      current.panel.viewColumn = 3;
+      current.panel.setActive(false);
+      const target: any = { input: { uri: previousDocument.uri } };
+      group.tabs = [nativeTab, target]; group.activeTab = target;
+      state.groups.push({ viewColumn: 3, tabs: [gridTab], activeTab: gridTab });
+      state.focusListeners.forEach(callback => callback({ document: previousDocument, viewColumn: 2 }));
+    };
+    state.enabled = false;
+    controller.refresh();
+    const request = previous.messages.filter(message => message.type === 'prepareViewRefresh').slice(-1)[0];
+    const metadata = JSON.parse(/<script id="__csvFilters"[^>]*>(.*?)<\/script>/s.exec(previous.panel.webview.html)![1]);
+    await previous.panel.receive({ type: 'viewRefreshReady', session: metadata.session, requestId: request.requestId });
+    assert.strictEqual(state.shown.length, 0);
+    assert.strictEqual(current.panel.viewColumn, 3);
+    assert.strictEqual(current.panel.disposed, false);
+    current.panel.dispose();
+  });
+
+  it('does not recreate a captured owner tab closed while native handoff is pending', async () => {
+    const document = makeDocument(new Uri('file', '', '/previous.csv'));
+    const { panel, messages } = makePanel(2);
+    await resolve(document, panel);
+    const controller = CsvEditorProvider.getActiveProvider()!;
+    panel.setActive(false);
+    const owner = makeDocument(new Uri('untitled', '', '/still-live-elsewhere.tsv'));
+    const ownerTab = { input: { uri: owner.uri } };
+    const group = { viewColumn: 2, activeTab: ownerTab, tabs: [ownerTab] };
+    state.activeGroup = group; state.groups = [group];
+    state.visibleTextEditors = [{ document: owner, viewColumn: 2 }];
+    state.executeCommand = async () => {
+      const target = { input: { uri: document.uri } };
+      group.tabs = [target]; group.activeTab = target;
+      state.focusListeners.forEach(callback => callback({ document, viewColumn: 2 }));
+    };
+    state.enabled = false;
+    controller.refresh();
+    const request = messages.filter(message => message.type === 'prepareViewRefresh').slice(-1)[0];
+    const metadata = JSON.parse(/<script id="__csvFilters"[^>]*>(.*?)<\/script>/s.exec(panel.webview.html)![1]);
+    await panel.receive({ type: 'viewRefreshReady', session: metadata.session, requestId: request.requestId });
+    assert.strictEqual(state.shown.length, 0);
+    assert.strictEqual(panel.disposed, true);
+  });
+
+  it('disposes an uninitialized disabled fallback even if On arrives during native open', async () => {
+    state.enabled = false;
+    let finishOpen!: () => void;
+    state.executeCommand = () => new Promise(resolveOpen => { finishOpen = resolveOpen; });
+    const { panel } = makePanel(2);
+    const pending = resolve(makeDocument(new Uri('file', '', '/data.tsv')), panel);
+    await new Promise(resolveTurn => setImmediate(resolveTurn));
+    state.enabled = true;
+    finishOpen();
+    await pending;
+    assert.strictEqual(panel.disposed, true);
+    assert.strictEqual(CsvEditorProvider.editors.length, 0);
+    assert.strictEqual(state.focusListeners.size, 0);
   });
 
   it('does not reuse a matching text editor from another group during fallback', async () => {
