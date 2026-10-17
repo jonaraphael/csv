@@ -68,6 +68,15 @@ let persistedColumnSizes = {};
 try { persistedColumnSizes = JSON.parse(root?.dataset?.columnsizes || '{}'); } catch {}
 let columnSizeState = {};
 let rowSizeState = {};
+let wordWrapEnabled = true;
+const wordWrapButton = document.getElementById('toggleWordWrap');
+const applyWordWrapMode = () => {
+  root?.classList.toggle('csv-cutoff', !wordWrapEnabled);
+  if (wordWrapButton) {
+    wordWrapButton.setAttribute('aria-pressed', String(wordWrapEnabled));
+    wordWrapButton.title = wordWrapEnabled ? 'Disable word wrap' : 'Enable word wrap';
+  }
+};
 
 const normalizeSizeState = (raw, minSize) => {
   const out = {};
@@ -176,6 +185,7 @@ const persistState = () => {
       anchorCol: anchor ? anchor.col : undefined,
       columnSizes: { ...columnSizeState },
       rowSizes: { ...rowSizeState },
+      wordWrapEnabled,
       zoomScale
     };
     vscode.setState(nextState);
@@ -248,10 +258,25 @@ const scheduleCellReveal = (cell, center = false) => {
   });
 };
 
+wordWrapButton?.addEventListener('mousedown', event => {
+  // A display-only toggle must not blur a live edit or move its text caret.
+  if (event.button === 0) event.preventDefault();
+});
+wordWrapButton?.addEventListener('click', () => {
+  const selectedCell = editingCell || rangeEndCell || anchorCell;
+  wordWrapEnabled = !wordWrapEnabled;
+  applyWordWrapMode();
+  window.csvFrozenPanes?.layout();
+  if (selectedCell) scheduleCellReveal(selectedCell);
+  persistState();
+});
+
 const restoreState = () => {
-  if (document.activeElement?.closest?.('#filterStatus')) return;
+  if (document.activeElement?.closest?.('#filterStatus, #csvViewToolbar')) return;
   try {
     const st = vscode.getState() || {};
+    wordWrapEnabled = st.wordWrapEnabled !== false;
+    applyWordWrapMode();
     const restoredZoom = parsePositiveNumber(st.zoomScale);
     setZoomScale(restoredZoom ?? 1, false);
     columnSizeState = normalizeSizeState(st.columnSizes ?? persistedColumnSizes, 40);
@@ -733,7 +758,9 @@ const getResizeEdgeInfo = (target, e) => {
     if (rect.width <= 0 || rect.height <= 0 || e.clientY < rect.top - 0.5 || e.clientY > rect.bottom + 0.5 || Math.abs(e.clientX - rect.right) > COLUMN_RESIZE_HANDLE_PX + 0.75) continue;
     const sampleY = clamp(e.clientY, rect.top + Math.min(0.5, rect.height / 4), rect.bottom - Math.min(0.5, rect.height / 4));
     // A scrolled cell can share the frozen column's x coordinate while covered.
-    if (paintedCellAt(rect.right - Math.min(0.5, rect.width / 4), sampleY) !== cell) continue;
+    // Collapsed borders can paint almost one CSS pixel into the next cell
+    // after fractional width rounding. Probe inside the content edge.
+    if (paintedCellAt(rect.right - Math.min(1.5, rect.width / 4), sampleY) !== cell) continue;
     const neighbor = paintedCellAt(rect.right + 0.5, sampleY);
     const next = neighbor && neighbor !== cell && neighbor.parentElement === cell.parentElement ? neighbor : cell.nextElementSibling;
     const nextRect = next && getDataCellCoords(next) ? next.getBoundingClientRect() : null;
@@ -1267,7 +1294,7 @@ const isFindWidgetTarget = target => {
   const el = getElementTarget(target);
   return !!(el && el.closest('#findReplaceWidget'));
 };
-const isGridControlTarget = target => isFindWidgetTarget(target) || !!getElementTarget(target)?.closest('#filterStatus');
+const isGridControlTarget = target => isFindWidgetTarget(target) || !!getElementTarget(target)?.closest('#filterStatus, #csvViewToolbar');
 const preventPendingGridAction = event => {
   if (!filterSnapshotPending || isGridControlTarget(event.target)) return;
   event.preventDefault();
@@ -2253,7 +2280,7 @@ window.addEventListener('message', event => {
     const cell = table.querySelector(`[data-row="${message.row}"][data-col="${message.col}"]`);
     if (message.retry && cell && !editingCell) { editCell(cell, undefined, 'detail'); }
   } else if(message.type === 'focus'){
-    if (document.activeElement?.closest?.('#filterStatus')) return;
+    if (document.activeElement?.closest?.('#filterStatus, #csvViewToolbar')) return;
     if (anchorCell) {
       try { anchorCell.focus({ preventScroll: true }); } catch { try { anchorCell.focus(); } catch {} }
     } else {
@@ -2377,7 +2404,7 @@ window.addEventListener('message', event => {
 
 // After initial restoreState, if there's a pending edit request, perform it
 const maybeResumePendingEdit = () => {
-  if (document.activeElement?.closest?.('#filterStatus')) return;
+  if (document.activeElement?.closest?.('#filterStatus, #csvViewToolbar')) return;
   try {
     const st = vscode.getState() || {};
     if (st && typeof st.anchorRow === 'number' && typeof st.anchorCol === 'number' && st.pendingEdit === 'detail') {

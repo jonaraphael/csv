@@ -335,11 +335,11 @@ export async function createEditorHarness(options: {
   return harness;
 }
 
-export function createWebviewDom(html: string) {
+export function createWebviewDom(html: string, initialState: unknown = {}) {
   const dom = new JSDOM(html, { runScripts: 'outside-only', pretendToBeVisual: true });
   const { window } = dom;
   const messages: any[] = [];
-  let state: unknown = {};
+  let state: unknown = initialState;
   window.acquireVsCodeApi = () => ({
     postMessage: (message: unknown) => messages.push(message),
     getState: () => state,

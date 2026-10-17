@@ -125,6 +125,28 @@ describe('Resize boundary event hit testing', () => {
     } finally { view.close(); }
   });
 
+  for (const header of [true, false]) {
+    it(`resizes a cutoff column when fractional border paint rounds into its neighbor (header ${header})`, async () => {
+      const view = await fixture(header);
+      try {
+        view.window.document.getElementById('toggleWordWrap').click();
+        const first = view.cell(0, 0), next = view.cell(0, 1);
+        view.fixed.set(first, { left: 30, right: 130.359, top: 0, bottom: 30, width: 100.359, height: 30 });
+        view.fixed.set(next, { left: 130.359, right: 147.359, top: 0, bottom: 30, width: 17, height: 30 });
+        const hit = view.window.document.elementFromPoint;
+        view.window.document.elementFromPoint = (x: number, y: number) =>
+          x >= 129.484 && x < 130.359 && y >= 0 && y <= 30 ? next : hit(x, y);
+        view.mouse(first, 'mousemove', 129.359);
+        assert.strictEqual(view.table.style.cursor, 'col-resize');
+        assert.strictEqual(view.mouse(first, 'mousedown', 129.359).defaultPrevented, true);
+        view.mouse(first, 'mousemove', 149.359);
+        view.mouse(first, 'mouseup', 149.359);
+        assert.strictEqual(first.style.width, '120px');
+        assert.strictEqual(next.style.width, '');
+      } finally { view.close(); }
+    });
+  }
+
   for (const x of [149, 151]) {
     it(`shares hover/drag/reset on either side of a partially occluded frozen seam at ${x}`, async () => {
       const view = await fixture(false);
