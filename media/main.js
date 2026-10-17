@@ -1499,6 +1499,12 @@ document.addEventListener('keydown', e => {
     return;
   }
   const key = typeof e.key === 'string' ? e.key.toLowerCase() : '';
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && key === 's') {
+    e.preventDefault();
+    if (editingCell) { editingCell.blur(); }
+    vscode.postMessage({ type: 'save' });
+    return;
+  }
   if ((e.ctrlKey || e.metaKey) && key === 'f') {
     e.preventDefault();
     openFindReplace(false);
@@ -1760,11 +1766,6 @@ document.addEventListener('keydown', e => {
     return;
   }
 
-  if (editingCell && ((e.ctrlKey || e.metaKey) && e.key === 's')) {
-    e.preventDefault();
-    editingCell.blur();
-    vscode.postMessage({ type: 'save' });
-  }
   if (editingCell && e.key === 'Enter') {
     e.preventDefault();
     if (e.shiftKey) {

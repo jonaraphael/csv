@@ -23,6 +23,7 @@
     "onLanguage:tsv",
     "onCommand:csv.toggleExtension",
     "onCommand:csv.toggleEditor",
+    "onCommand:csv.saveUntitled",
     "onCommand:csv.toggleHeader",
     "onCommand:csv.toggleSerialIndex",
     "onCommand:csv.changeSeparator",
@@ -71,6 +72,12 @@
         "icon": "$(arrow-swap)"
       },
       {
+        "command": "csv.saveUntitled",
+        "title": "CSV: Save Untitled Document As\u2026",
+        "icon": "$(save)",
+        "enablement": "activeWebviewPanelId == csv.untitledEditor"
+      },
+      {
         "command": "csv.toggleExtension",
         "title": "CSV: Toggle Extension On/Off"
       },
@@ -111,8 +118,19 @@
       "editor/title": [
         {
           "command": "csv.toggleEditor",
-          "when": "!isInDiffEditor && (activeCustomEditorId == csv.editor || (activeEditor == workbench.editors.files.textFileEditor && resourceScheme != untitled && resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i))",
+          "when": "!isInDiffEditor && (activeCustomEditorId == csv.editor || activeWebviewPanelId == csv.untitledEditor || (activeEditor == workbench.editors.files.textFileEditor && resourceScheme != untitled && resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i) || (activeEditor == workbench.editors.textResourceEditor && resourceScheme == untitled && editorLangId =~ /^(csv|tsv)$/))",
           "group": "navigation"
+        },
+        {
+          "command": "csv.saveUntitled",
+          "when": "activeWebviewPanelId == csv.untitledEditor",
+          "group": "navigation@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "csv.saveUntitled",
+          "when": "activeWebviewPanelId == csv.untitledEditor"
         }
       ]
     },
@@ -128,7 +146,7 @@
         "csv.fontFamily": {
           "type": "string",
           "default": "",
-          "description": "Font family used by the CSV custom editor. Leave empty to inherit ‘editor.fontFamily’.",
+          "description": "Font family used by the CSV custom editor. Leave empty to inherit \u2018editor.fontFamily\u2019.",
           "scope": "application"
         },
         "csv.fontSize": {

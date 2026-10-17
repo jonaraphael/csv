@@ -34,7 +34,7 @@ describe('unapplied ordinary cell drafts keep source row identities intact', () 
             assert.ok(draft.includes('failed draft'));
             assert.deepStrictEqual(host.rows(), [['name', 'value'], ['one', 'two']]);
             assert.strictEqual(host.diskText, diskText);
-            assert.deepStrictEqual(host.commands, [], 'disable must not open a different editor before recovery');
+            assert.deepStrictEqual(host.recordedCommands, [], 'disable must not open a different editor before recovery');
             assert.match(host.errors.at(-1)!, /Retry.*Escape.*before disabling/);
 
             host.failEdits(undefined);
@@ -48,7 +48,7 @@ describe('unapplied ordinary cell drafts keep source row identities intact', () 
             assert.strictEqual(host.diskText, diskText, 'recovery must not force a save');
             host.refresh();
             assert.strictEqual(host.isOpen, false, 'normal disable proceeds after the failed draft is resolved');
-            assert.deepStrictEqual(host.commands, [['vscode.openWith', host.document.uri, 'default']]);
+            assert.deepStrictEqual(host.recordedCommands, [['vscode.openWith', host.document.uri, 'default']]);
           } finally {
             view.close();
             if (host.isOpen) { host.panel.dispose(); }
