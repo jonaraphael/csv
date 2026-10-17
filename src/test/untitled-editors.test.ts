@@ -34,6 +34,7 @@ const state = {
   commands: new Map<string, (...args: any[]) => any>(),
   information: [] as string[]
 };
+class TabInputText { constructor(public uri: any) {} }
 class FakeProvider {
   static viewType = 'csv.editor';
   static editors: any[] = [];
@@ -88,6 +89,7 @@ function createPanel(viewType: string, title: string, viewColumn: number) {
   return panel;
 }
 const vscode = {
+  TabInputText,
   ViewColumn: { Active: -1 },
   CancellationTokenSource: class {
     token = { isCancellationRequested: false };
@@ -97,6 +99,8 @@ const vscode = {
     dispose() { this.disposed = true; }
   },
   window: {
+    tabGroups: { get activeTabGroup() { return { viewColumn: state.activeTextEditor?.viewColumn ?? 2,
+      activeTab: state.activeTextEditor ? { input: new TabInputText(state.activeTextEditor.document.uri) } : undefined }; } },
     get activeTextEditor() { return state.activeTextEditor; },
     onDidChangeActiveTextEditor: activeEvent.listen,
     createWebviewPanel: createPanel,
