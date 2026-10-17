@@ -428,11 +428,18 @@ class CsvEditorController {
   }
 
   public refresh() {
-    if (this.pendingDraftCommit || this.failedCellEdits.size) {
+    const config = vscode.workspace.getConfiguration('csv', this.document.uri);
+    const enabled = config.get<boolean>('enabled', true);
+    if (this.failedCellEdits.size) {
+      if (!enabled) {
+        void vscode.window.showErrorMessage('CSV: Retry the failed cell edit or press Escape to discard it before disabling the table view.');
+      }
       return;
     }
-    const config = vscode.workspace.getConfiguration('csv', this.document.uri);
-    if (!config.get<boolean>('enabled', true)) {
+    if (this.pendingDraftCommit) {
+      return;
+    }
+    if (!enabled) {
       this.currentWebviewPanel?.dispose();
       vscode.commands.executeCommand('vscode.openWith', this.document.uri, 'default');
     } else {

@@ -23,8 +23,14 @@ const vscodeStub = {
     activeColorTheme: { kind: 1 },
     showErrorMessage(message: string) { activeHarness.errors.push(message); }
   },
+  commands: {
+    executeCommand(command: string, ...args: unknown[]) {
+      activeHarness.commands.push([command, ...args]);
+      return Promise.resolve();
+    }
+  },
   workspace: {
-    getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'maxFileSizeMB' ? 0 : fallback }),
+    getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'maxFileSizeMB' ? 0 : key === 'enabled' ? (activeHarness?.enabled ?? true) : fallback }),
     applyEdit: (edit: { text: string }) => activeHarness.applyEdit(edit.text),
     onDidChangeTextDocument: (listener: (event: unknown) => void) => {
       activeHarness.changeListeners.push(listener);
@@ -109,6 +115,11 @@ export async function createEditorHarness(options: {
   const harness = {
     document, panel, messages, changeListeners, saveListeners,
     errors: [] as string[],
+    commands: [] as unknown[][],
+    enabled: true,
+    setEnabled(enabled: boolean) { this.enabled = enabled; },
+    refresh() { CsvEditorProvider.editors.find(controller => controller.getDocumentUri() === uri as any)!.refresh(); },
+    get isOpen() { return CsvEditorProvider.editors.some(controller => controller.getDocumentUri() === uri as any); },
     async setSeparator(separator: string) { await CsvEditorProvider.setSeparatorForUri(context as any, uri as any, separator); },
     commitPendingDraft() { return CsvEditorProvider.editors.find(controller => controller.getDocumentUri() === uri as any)!.commitPendingDraft(); },
     get diskText() { return diskText; },
