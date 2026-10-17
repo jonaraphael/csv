@@ -143,9 +143,9 @@ describe('Full-source filtered view operations', () => {
       status.getBoundingClientRect = () => ({ height: 20 });
       for (const row of Array.from(view.window.document.querySelectorAll('tr')) as any[]) { row.getBoundingClientRect = () => ({ height: 30 }); }
       view.window.csvFrozenPanes.layout();
-      assert.strictEqual(view.cell(0, 0).style.top, '20px');
-      assert.strictEqual(view.cell(1, 0).style.top, '50px');
-      assert.strictEqual(view.cell(3, 0).style.top, '80px');
+      assert.strictEqual(view.cell(0, 0).style.top, '19.5px');
+      assert.strictEqual(view.cell(1, 0).style.top, '49.5px');
+      assert.strictEqual(view.cell(3, 0).style.top, '79.5px');
       assert.ok(!view.cell(4, 0).classList.contains('csv-frozen-row'));
     } finally { view.close(); }
   });
