@@ -199,6 +199,12 @@ npm run compile
 
 ---
 
+## Privacy
+
+CSV processes files through VS Code and bundled libraries, with no extension-specific upload service or telemetry client. Remote workspaces, clipboard operations, links, diagnostic logs, and editor-managed backups have additional data-handling implications. See [Privacy and data handling](PRIVACY.md) for the verified behavior and scope.
+
+---
+
 ## Support
 
 Have questions, suggestions, or encountered an issue?

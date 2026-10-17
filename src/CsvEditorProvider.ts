@@ -570,7 +570,7 @@ class CsvEditorController {
       return;
     }
 
-    console.log(`CSV: Updated row ${row + 1}, column ${col + 1} to "${value}"`);
+    console.log(`CSV: Updated row ${row + 1}, column ${col + 1}`);
     const config = vscode.workspace.getConfiguration('csv', this.document.uri);
     const clickableLinks = config.get<boolean>('clickableLinks', true);
     const rendered = this.formatCellContent(value ?? '', clickableLinks);
