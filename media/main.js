@@ -417,11 +417,13 @@ const showContextMenu = (x, y, row, col) => {
     d.style.margin = '1px 0';
     contextMenu.appendChild(d);
   };
-  item(headerEnabled ? 'Treat first row as data' : 'Use first row as header', () => {
-    persistState();
-    vscode.postMessage({ type: 'setHeader', enabled: !headerEnabled });
-  });
-  divider();
+  if (row === Number(root?.dataset?.firstrow)) {
+    item(headerEnabled ? 'Treat first row as data' : 'Use first row as header', () => {
+      persistState();
+      vscode.postMessage({ type: 'setHeader', enabled: !headerEnabled });
+    });
+    divider();
+  }
   item('Cut', () => copySelectionToClipboard(true));
   item('Copy', () => copySelectionToClipboard());
   item('Paste', () => pasteFromClipboard());

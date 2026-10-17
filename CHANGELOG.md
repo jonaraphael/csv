@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 Integration candidate; final contents remain subject to review. No release has been published.
 
-- Added: A first-row header toggle in every cell’s context menu, using the existing per-file preference.
+- Added: A header toggle in the first row’s context menu, using the existing per-file preference.
 - Added: Column filters with matching-row counts, per-file persistence, and full-source saves.
 - Added: Frozen leading rows and columns, plus a configurable default for hidden metadata rows.
 - Added: Bounded, paginated read-only preview for large saved UTF-8 files.
