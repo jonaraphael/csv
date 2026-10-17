@@ -29,7 +29,9 @@
     "onCommand:csv.changeFontFamily",
     "onCommand:csv.changeIgnoreRows",
     "onCommand:csv.changeEncoding",
-    "onCommand:csv.toggleClickableLinks"
+    "onCommand:csv.toggleClickableLinks",
+    "onCommand:csv.changeFrozenRows",
+    "onCommand:csv.changeFrozenColumns"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -99,6 +101,14 @@
       {
         "command": "csv.toggleClickableLinks",
         "title": "CSV: Toggle Clickable Links"
+      },
+      {
+        "command": "csv.changeFrozenRows",
+        "title": "CSV: Freeze Leading Rows"
+      },
+      {
+        "command": "csv.changeFrozenColumns",
+        "title": "CSV: Freeze Leading Columns"
       }
     ],
     "configuration": {
@@ -113,7 +123,7 @@
         "csv.fontFamily": {
           "type": "string",
           "default": "",
-          "description": "Font family used by the CSV custom editor. Leave empty to inherit ‘editor.fontFamily’.",
+          "description": "Font family used by the CSV custom editor. Leave empty to inherit \u2018editor.fontFamily\u2019.",
           "scope": "application"
         },
         "csv.fontSize": {
