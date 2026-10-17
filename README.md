@@ -45,7 +45,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Clickable Links:** URLs in cells are automatically detected and displayed as clickable links. Ctrl/Cmd+click to open them in your browser.
 - **Preserved CSV Integrity:** Cell edits, expanding grid pastes, and row/column moves preserve existing field quoting and line endings. Appended values follow the existing column quote style when the column uses one consistently.
 - **Optimized for Performance:** Designed for medium-sized datasets, ensuring a smooth editing experience without compromising on functionality.
-- **Large File Support:** Loads big CSVs in chunks so even large datasets open quickly.
+- **Large File Support:** The editable view chunks table rendering; an optional read-only preview bounds source reading and displays one page at a time.
 - **CSV/TSV/TAB/PSV Support:** `.csv`, `.tsv`, `.tab`, and `.psv` files are recognized automatically. Defaults: comma for CSV, tab for TSV/TAB, pipe for PSV.
 
 ---
@@ -84,6 +84,7 @@ Cursor (built on VS Code 1.99) and the latest VS Code releases (1.102).
 Open the Command Palette and search for:
 
 - `CSV: Toggle Extension On/Off` (`csv.toggleExtension`)
+- `CSV: Open Large File Preview (Read-only)` (`csv.openLargeFilePreview`)
 - `CSV: Toggle First Row as Header` (`csv.toggleHeader`)
 - `CSV: Freeze Leading Rows` (`csv.changeFrozenRows`)
 - `CSV: Freeze Leading Columns` (`csv.changeFrozenColumns`)
@@ -116,6 +117,7 @@ Global (Settings UI or `settings.json`):
 - `csv.defaultSeparator` (string, default `,`): Fallback separator. Use `\\t` in `settings.json` for tabs.
 - `csv.separatorByExtension` (object): Extension-to-separator mapping (defaults include `.csv`→`,`, `.tsv`/`.tab`→tab, `.psv`→`|`).
 - `csv.maxFileSizeMB` (number, default `10`): Soft limit for opening files in CSV view. If exceeded, CSV prompts: `Cancel`, `Continue This Time`, or `Ignore Forever` (sets this setting to `0`).
+- `csv.largeFilePreviewRows` (integer, default `1000`, range `1`–`10000`): Maximum records per read-only preview page; byte and cell limits can make a page smaller.
 - Per-file encoding: `CSV: Change File Encoding` opens VS Code's encoding picker. Use **Reopen with Encoding** and select the source file's encoding to correct incorrectly displayed characters before editing or saving.
 
 Per-file (stored by the extension; set via commands):
@@ -137,6 +139,16 @@ For example, the original attachment in [issue #76](https://github.com/jonarapha
 **Save with Encoding** changes how the current text is written; it cannot restore characters already decoded incorrectly. If a corrupted version was saved, reopen the original source or a backup using the correct encoding first.
 
 ---
+
+## Large File Preview
+
+To inspect a very large saved file without creating a full VS Code text document, right-click a CSV/TSV/TAB/PSV file in Explorer and choose **CSV: Open Large File Preview (Read-only)**. The same command in the Command Palette opens a file picker. Use this direct path before opening the file in an editable tab; switching an already-open large text document to the preview does not undo memory already allocated by VS Code.
+
+The preview reads the saved bytes in bounded chunks and displays one page at a time. **Next**, **Previous**, and **Back to Start** navigate complete CSV records, including quoted multiline cells. The first record is displayed as data. It has no editing, global search, sorting, or filtering controls, and never writes to the source. Unsaved edits in another editor are not part of the saved-byte preview.
+
+`csv.largeFilePreviewRows` limits a page to 1–10,000 records (default 1,000). Independent limits cap a page at 512 KiB of source records and 20,000 cells, one record at 256 KiB, and a record at 1,000 columns. Pages may contain fewer records. Oversized or malformed records produce a visible error instead of being truncated. Only the current page and at most 32 page positions are retained; Previous reaches the retained history, and Back to Start always restarts the file. If the file changes between reads, Back to Start reloads it.
+
+This preview currently supports **valid UTF-8 and host-local `file:` URIs**. It decodes saved bytes directly in the extension host instead of requesting VS Code's decoded TextDocument. A UTF-8 BOM is accepted; other encodings must use the normal editor's encoding workflow. The extension host can be remote; arbitrary remote filesystem providers are unsupported. Separators follow the per-file override or extension/default settings. Automatic separator detection requires an explicit override or a change to `csv.separatorMode`; otherwise the preview shows an actionable error. Normal editable CSV views retain their existing full-document behavior.
 
 ## Editing Modes and Shortcuts
 
