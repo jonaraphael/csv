@@ -64,6 +64,7 @@ class CsvEditorController {
 
   private isUpdatingDocument = false;
   private isSaving = false;
+  private pendingOperation: Promise<void> = Promise.resolve();
   private currentWebviewPanel: vscode.WebviewPanel | undefined;
   private document!: vscode.TextDocument;
   private separatorCache: { version: number; configKey: string; separator: string } | undefined;
@@ -110,21 +111,26 @@ class CsvEditorController {
     }
 
     webviewPanel.webview.postMessage({ type: 'focus' });
+    let wasVisible = webviewPanel.visible;
     webviewPanel.onDidChangeViewState(e => {
+      const becameVisible = e.webviewPanel.visible && !wasVisible;
+      wasVisible = e.webviewPanel.visible;
       if (e.webviewPanel.active) {
         const diffChanged = this.refreshDiffContext(e.webviewPanel);
-        if (diffChanged) {
-          this.updateWebviewContent();
+        if (diffChanged || becameVisible) {
+          // A hidden webview can be recreated from its original HTML snapshot.
+          // Rebuild from the current (possibly unsaved) document after pending edits.
+          void this.enqueueOperation(() => this.updateWebviewContent());
         }
         e.webviewPanel.webview.postMessage({ type: 'focus' });
         CsvEditorProvider.currentActive = this;
       }
     });
 
-    webviewPanel.webview.onDidReceiveMessage(async e => {
+    webviewPanel.webview.onDidReceiveMessage(e => this.enqueueOperation(async () => {
       switch (e.type) {
         case 'editCell':
-          this.updateDocument(e.row, e.col, e.value);
+          await this.updateDocument(e.row, e.col, e.value);
           break;
         case 'replaceCells':
           await this.replaceCells(e.replacements);
@@ -182,7 +188,7 @@ class CsvEditorController {
           await this.openLinkExternally(e.url);
           break;
       }
-    });
+    }));
 
     const changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument(e => {
       if (
@@ -194,11 +200,29 @@ class CsvEditorController {
       }
     });
 
+    const saveDocumentSubscription = vscode.workspace.onWillSaveTextDocument(e => {
+      if (e.document.uri.toString() === document.uri.toString() && !this.isSaving) {
+        // Native File > Save can run while the webview's blur edit is applying.
+        // The custom save command is already in this queue and must not await itself.
+        e.waitUntil(this.pendingOperation);
+      }
+    });
+
     webviewPanel.onDidDispose(() => {
       changeDocumentSubscription.dispose();
+      saveDocumentSubscription.dispose();
       CsvEditorProvider.editors = CsvEditorProvider.editors.filter(ed => ed !== this);
       this.currentWebviewPanel = undefined;
     });
+  }
+
+  private enqueueOperation(operation: () => void | Promise<void>): Promise<void> {
+    // Event listeners are not awaited by VS Code. Serialize mutations, reads and
+    // saves so every command sees the result of the preceding document edit.
+    this.pendingOperation = this.pendingOperation.then(operation).catch(error => {
+      console.error('CSV: Editor operation failed', error);
+    });
+    return this.pendingOperation;
   }
 
   private getMaxFileSizeLimitMb(config: vscode.WorkspaceConfiguration): number {
@@ -442,8 +466,7 @@ class CsvEditorController {
       );
       const edit = new vscode.WorkspaceEdit();
       edit.replace(this.document.uri, fullRange, newCsvText);
-      await vscode.workspace.applyEdit(edit);
-      applied = true;
+      applied = await vscode.workspace.applyEdit(edit);
     } finally {
       this.isUpdatingDocument = false;
     }
