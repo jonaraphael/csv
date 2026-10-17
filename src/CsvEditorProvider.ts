@@ -791,10 +791,10 @@ class CsvEditorController {
           const rawValue = row[cIdx] || '';
           const safe = this.formatCellContent(rawValue, state.clickableLinks);
           const titleAttr = this.getMultilineCellTitleAttr(rawValue);
-          cells += `<td tabindex="0" style="min-width:${Math.min(state.columnWidths[cIdx] || 0, 100)}ch;max-width:100ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:${state.columnColors[cIdx]};overflow:visible;white-space: pre-wrap;overflow-wrap:anywhere;"${titleAttr} data-row="${absRow}" data-col="${cIdx}">${safe}</td>`;
+          cells += `<td tabindex="0" style="min-width:${Math.min(state.columnWidths[cIdx] || 0, 100)}ch;max-width:100ch;border:1px solid var(--csv-table-border, ${state.isDark ? '#555' : '#ccc'});color:${state.columnColors[cIdx]};overflow:visible;white-space: pre-wrap;overflow-wrap:anywhere;"${titleAttr} data-row="${absRow}" data-col="${cIdx}">${safe}</td>`;
         }
         const idxCell = state.addSerialIndex
-          ? `<td tabindex="0" style="min-width:${state.serialIndexWidthCh}ch;max-width:${state.serialIndexWidthCh}ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:#888;" data-row="${absRow}" data-col="-1">${displayIdx}</td>`
+          ? `<td tabindex="0" style="min-width:${state.serialIndexWidthCh}ch;max-width:${state.serialIndexWidthCh}ch;border:1px solid var(--csv-table-border, ${state.isDark ? '#555' : '#ccc'});color:#888;" data-row="${absRow}" data-col="-1">${displayIdx}</td>`
           : '';
         return `<tr>${idxCell}${cells}</tr>`;
       }).join('');
@@ -812,9 +812,9 @@ class CsvEditorController {
       const virtualAbs = state.startAbs + state.allRowsCount;
       const displayIdx = state.allRowsCount + 1;
       const idxCell = state.addSerialIndex
-        ? `<td tabindex="0" style="min-width:${state.serialIndexWidthCh}ch;max-width:${state.serialIndexWidthCh}ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:#888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>`
+        ? `<td tabindex="0" style="min-width:${state.serialIndexWidthCh}ch;max-width:${state.serialIndexWidthCh}ch;border:1px solid var(--csv-table-border, ${state.isDark ? '#555' : '#ccc'});color:#888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>`
         : '';
-      const dataCells = Array.from({ length: state.numColumns }, (_, i) => `<td tabindex="0" style="min-width:${Math.min(state.columnWidths[i] || 0, 100)}ch;max-width:100ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:${state.columnColors[i]};overflow:visible;white-space: pre-wrap;overflow-wrap:anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+      const dataCells = Array.from({ length: state.numColumns }, (_, i) => `<td tabindex="0" style="min-width:${Math.min(state.columnWidths[i] || 0, 100)}ch;max-width:100ch;border:1px solid var(--csv-table-border, ${state.isDark ? '#555' : '#ccc'});color:${state.columnColors[i]};overflow:visible;white-space: pre-wrap;overflow-wrap:anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
       return { html: `<tr>${idxCell}${dataCells}</tr>`, nextStart: -1, done: true };
     }
 
@@ -1501,14 +1501,13 @@ class CsvEditorController {
 
     const columnData = Array.from({ length: numColumns }, (_, i) => bodyData.map(row => row[i] || ''));
     const columnTypes = columnData.map(col => this.estimateColumnDataType(col));
-    const highContrast = themeKind === vscode.ColorThemeKind.HighContrast || themeKind === vscode.ColorThemeKind.HighContrastLight;
-    const useThemeForeground = columnColorMode === 'theme' || highContrast;
+    const useThemeForeground = columnColorMode === 'theme';
     const palette = columnColorPalette === 'cool'
       ? 'cool'
       : (columnColorPalette === 'warm' ? 'warm' : 'default');
     const columnColors = useThemeForeground
       ? Array.from({ length: numColumns }, () => 'var(--vscode-editor-foreground)')
-      : columnTypes.map((type, i) => this.getColumnColor(type, isDark, i, palette));
+      : columnTypes.map((type, i) => `var(--csv-column-${i}, ${this.getColumnColor(type, isDark, i, palette)})`);
     const columnWidths = this.computeColumnWidths(visibleForWidth);
 
     const BASE_CHUNK_ROWS = 1000;
@@ -1548,11 +1547,11 @@ class CsvEditorController {
             const rawValue = row[cIdx] || '';
             const safe = this.formatCellContent(rawValue, clickableLinks);
             const titleAttr = this.getMultilineCellTitleAttr(rawValue);
-            cells += `<td tabindex="0" style="min-width:${Math.min(columnWidths[cIdx]||0,100)}ch;max-width:100ch;border:1px solid ${isDark?'#555':'#ccc'};color:${columnColors[cIdx]};overflow:visible;white-space: pre-wrap;overflow-wrap:anywhere;"${titleAttr} data-row="${absRow}" data-col="${cIdx}">${safe}</td>`;
+            cells += `<td tabindex="0" style="min-width:${Math.min(columnWidths[cIdx]||0,100)}ch;max-width:100ch;border:1px solid var(--csv-table-border, ${isDark?'#555':'#ccc'});color:${columnColors[cIdx]};overflow:visible;white-space: pre-wrap;overflow-wrap:anywhere;"${titleAttr} data-row="${absRow}" data-col="${cIdx}">${safe}</td>`;
           }
 
           return `<tr>${
-            addSerialIndex ? `<td tabindex="0" style="min-width:${serialIndexWidthCh}ch;max-width:${serialIndexWidthCh}ch;border:1px solid ${isDark?'#555':'#ccc'};color:#888;" data-row="${absRow}" data-col="-1">${displayIdx}</td>` : ''
+            addSerialIndex ? `<td tabindex="0" style="min-width:${serialIndexWidthCh}ch;max-width:${serialIndexWidthCh}ch;border:1px solid var(--csv-table-border, ${isDark?'#555':'#ccc'});color:#888;" data-row="${absRow}" data-col="-1">${displayIdx}</td>` : ''
           }${cells}</tr>`;
         }).join('');
 
@@ -1561,48 +1560,44 @@ class CsvEditorController {
       }
     }
 
-    // VS Code changes these classes in place. Keep both palettes available so
-    // entering/leaving high contrast never needs to reload a live cell edit.
-    const colorCss = columnColorMode === 'theme'
+    // Body classes change in place; inherited variables update every mounted or
+    // later-loaded cell without overriding the user's mode or reloading a draft.
+    const colorCss = useThemeForeground
       ? ''
-      : columnTypes.map((type, i) => {
-        const light = this.getColumnColor(type, false, i, palette);
-        const dark = this.getColumnColor(type, true, i, palette);
-        return `body.vscode-light td[data-col="${i}"], body.vscode-light th[data-col="${i}"] { color: ${light} !important; }` +
-          `body.vscode-dark td[data-col="${i}"], body.vscode-dark th[data-col="${i}"] { color: ${dark} !important; }`;
-      }).join('');
+      : `body:is(.vscode-light, .vscode-high-contrast-light) { ${columnTypes.map((type, i) => `--csv-column-${i}: ${this.getColumnColor(type, false, i, palette)};`).join('')} }` +
+        `body:is(.vscode-dark, .vscode-high-contrast) { ${columnTypes.map((type, i) => `--csv-column-${i}: ${this.getColumnColor(type, true, i, palette)};`).join('')} }`;
 
     let tableHtml = `<table>`;
     if (headerFlag) {
       tableHtml += `<thead><tr>${
         addSerialIndex
-          ? `<th tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: #888;"></th>`
+          ? `<th tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); background-color: var(--csv-header-background, ${isDark ? '#1e1e1e' : '#ffffff'}); color: #888;"></th>`
           : ''
       }`;
       for (let i = 0; i < numColumns; i++) {
         const safe = this.formatCellContent(headerRow[i] || '', clickableLinks);
-        tableHtml += `<th tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${offset}" data-col="${i}">${safe}</th>`;
+        tableHtml += `<th tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); background-color: var(--csv-header-background, ${isDark ? '#1e1e1e' : '#ffffff'}); color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${offset}" data-col="${i}">${safe}</th>`;
       }
       tableHtml += `</tr></thead><tbody>`;
       const initialBodyRows = chunked ? allRows.slice(0, chunkRows) : allRows;
       initialBodyRows.forEach((row, r) => {
         tableHtml += `<tr>${
           addSerialIndex
-            ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${offset + 1 + r}" data-col="-1">${r + 1}</td>`
+            ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: #888;" data-row="${offset + 1 + r}" data-col="-1">${r + 1}</td>`
             : ''
         }`;
         for (let i = 0; i < numColumns; i++) {
           const rawValue = row[i] || '';
           const safe = this.formatCellContent(rawValue, clickableLinks);
           const titleAttr = this.getMultilineCellTitleAttr(rawValue);
-          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;"${titleAttr} data-row="${offset + 1 + r}" data-col="${i}">${safe}</td>`;
+          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;"${titleAttr} data-row="${offset + 1 + r}" data-col="${i}">${safe}</td>`;
         }
         tableHtml += `</tr>`;
       });
       if (!chunked && includeTrailingEmptyRow) {
         const virtualAbs = offset + 1 + initialBodyRows.length;
-        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${initialBodyRows.length + 1}</td>` : '';
-        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: #888;" data-row="${virtualAbs}" data-col="-1">${initialBodyRows.length + 1}</td>` : '';
+        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
         tableHtml += `<tr>${idxCell}${dataCells}</tr>`;
       }
       tableHtml += `</tbody>`;
@@ -1612,22 +1607,22 @@ class CsvEditorController {
       nonHeaderRows.forEach((row, r) => {
         tableHtml += `<tr>${
           addSerialIndex
-            ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${offset + r}" data-col="-1">${r + 1}</td>`
+            ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: #888;" data-row="${offset + r}" data-col="-1">${r + 1}</td>`
             : ''
         }`;
         for (let i = 0; i < numColumns; i++) {
           const rawValue = row[i] || '';
           const safe = this.formatCellContent(rawValue, clickableLinks);
           const titleAttr = this.getMultilineCellTitleAttr(rawValue);
-          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;"${titleAttr} data-row="${offset + r}" data-col="${i}">${safe}</td>`;
+          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;"${titleAttr} data-row="${offset + r}" data-col="${i}">${safe}</td>`;
         }
         tableHtml += `</tr>`;
       });
       if (!chunked && includeTrailingEmptyRow) {
         const virtualAbs = offset + nonHeaderRows.length;
         const displayIdx = nonHeaderRows.length + 1;
-        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
-        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
+        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
         tableHtml += `<tr>${idxCell}${dataCells}</tr>`;
       }
       tableHtml += `</tbody>`;
@@ -1639,8 +1634,8 @@ class CsvEditorController {
         const startAbs = headerFlag ? offset + 1 : offset;
         const virtualAbs = startAbs + allRowsCount;
         const displayIdx = allRowsCount + 1;
-        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
-        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
+        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
         const vrow = `<tr>${idxCell}${dataCells}</tr>`;
         chunks.push(vrow);
       } else if (nextChunkStart === -1) {
@@ -1744,18 +1739,41 @@ class CsvEditorController {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CSV</title>
     <style nonce="${nonce}">
+      /* Preserve the existing light/dark colors as theme classes change. */
+      body:is(.vscode-light, .vscode-high-contrast-light) {
+        --csv-table-border: #ccc;
+        --csv-header-background: #ffffff;
+        --csv-selection-background: #cce0ff;
+        --csv-find-highlight-background: #fefefe;
+        --csv-find-active-background: #ffffcc;
+        --csv-link-color: #0066cc;
+        --csv-link-hover-color: #0044aa;
+        --csv-menu-background: #ffffff;
+        --csv-menu-hover-background: #eeeeee;
+      }
+      body:is(.vscode-dark, .vscode-high-contrast) {
+        --csv-table-border: #555;
+        --csv-header-background: #1e1e1e;
+        --csv-selection-background: #333333;
+        --csv-find-highlight-background: #2a2a2a;
+        --csv-find-active-background: #444444;
+        --csv-link-color: #6cb6ff;
+        --csv-link-hover-color: #8ecfff;
+        --csv-menu-background: #2d2d2d;
+        --csv-menu-hover-background: #3d3d3d;
+      }
       body { font-family: ${this.escapeCss(fontFamily)}; font-size: ${fontSize}px; margin: 0; padding: 0; user-select: none; }
       .table-container { overflow: auto; height: 100vh; }
       table { border-collapse: collapse; width: max-content; }
-      th, td { padding: ${cellPadding}px 8px; border: 1px solid ${isDark ? '#555' : '#ccc'}; font-size: inherit; }
-      th { position: sticky; top: 0; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+      th, td { padding: ${cellPadding}px 8px; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); font-size: inherit; }
+      th { position: sticky; top: 0; background-color: var(--csv-header-background, ${isDark ? '#1e1e1e' : '#ffffff'}); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
       td { overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
-      td.selected, th.selected { background-color: ${isDark ? '#333333' : '#cce0ff'} !important; }
+      td.selected, th.selected { background-color: var(--csv-selection-background, ${isDark ? '#333333' : '#cce0ff'}) !important; }
       td.editing, th.editing { overflow: visible !important; white-space: pre-wrap !important; overflow-wrap: anywhere !important; max-width: none !important; }
-      .highlight { background-color: ${isDark ? '#2a2a2a' : '#fefefe'} !important; }
-      .active-match { background-color: ${isDark ? '#444444' : '#ffffcc'} !important; }
-      .csv-link { color: ${isDark ? '#6cb6ff' : '#0066cc'}; text-decoration: underline; cursor: pointer; }
-      .csv-link:hover { color: ${isDark ? '#8ecfff' : '#0044aa'}; }
+      .highlight { background-color: var(--csv-find-highlight-background, ${isDark ? '#2a2a2a' : '#fefefe'}) !important; }
+      .active-match { background-color: var(--csv-find-active-background, ${isDark ? '#444444' : '#ffffcc'}) !important; }
+      .csv-link { color: var(--csv-link-color, ${isDark ? '#6cb6ff' : '#0066cc'}); text-decoration: underline; cursor: pointer; }
+      .csv-link:hover { color: var(--csv-link-hover-color, ${isDark ? '#8ecfff' : '#0044aa'}); }
       #findReplaceWidget {
         position: fixed;
         top: 12px;
@@ -1928,9 +1946,9 @@ class CsvEditorController {
         font-size: inherit;
       }
       #findReplaceWidget .fr-overflow-item:hover { background: rgba(255,255,255,0.05); }
-      #contextMenu { position: absolute; display: none; background: ${isDark ? '#2d2d2d' : '#ffffff'}; border: 1px solid ${isDark ? '#555' : '#ccc'}; z-index: 10000; font-family: ${this.escapeCss(fontFamily)}; font-size: inherit; }
+      #contextMenu { position: absolute; display: none; background: var(--csv-menu-background, ${isDark ? '#2d2d2d' : '#ffffff'}); border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); z-index: 10000; font-family: ${this.escapeCss(fontFamily)}; font-size: inherit; }
       #contextMenu div { padding: 4px 12px; cursor: pointer; }
-      #contextMenu div:hover { background: ${isDark ? '#3d3d3d' : '#eeeeee'}; }
+      #contextMenu div:hover { background: var(--csv-menu-hover-background, ${isDark ? '#3d3d3d' : '#eeeeee'}); }
 
       /* Per-column computed colors */
       ${extraColumnColorCss}
