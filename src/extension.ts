@@ -104,6 +104,10 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
   context.subscriptions.push(cfgListener);
+  // Recompute type colors when entering/leaving high contrast, including open chunks.
+  context.subscriptions.push(vscode.window.onDidChangeActiveColorTheme(() => {
+    CsvEditorProvider.editors.forEach(editor => editor.refresh());
+  }));
 
   // Register the custom editor provider for CSV/TSV
   context.subscriptions.push(
