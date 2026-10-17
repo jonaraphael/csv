@@ -18,6 +18,7 @@ Integration candidate; final contents remain subject to review. No release has b
 - Fixed: Edit/save ordering and pending multiline edits across editor changes.
 - Fixed: Precise column resize boundaries, editable centers in narrow columns, and drag widths that follow the pointer.
 - Fixed: Context menus keep their natural width, open toward available space, and remain scrollable in small editor panes.
+- Fixed: Frozen rows cover the top border seam so scrolling text cannot peek above the pinned header.
 - Fixed: Cmd/Ctrl+Shift+Arrow extends the current cell, row, or column selection while retaining its starting anchor.
 - Fixed: Clipboard actions, delimiter fidelity, and CSV quote/line-ending preservation during data mutations.
 - Improved: Multiline-aware column sizing, remembered manual widths, and encoding guidance.
