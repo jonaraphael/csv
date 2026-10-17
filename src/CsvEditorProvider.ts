@@ -40,7 +40,6 @@ type PasteApplyResult = {
 type ChunkRenderState = {
   rowIds: number[];
   virtualRow: number;
-  startAbs: number;
   allRows: string[][];
   allRowsCount: number;
   chunkRows: number;
@@ -1588,7 +1587,7 @@ class CsvEditorController {
       frozenPanes: this.getCurrentFrozenPanes(),
       firstVisibleRow: hiddenRows,
       realRowCount: data.length,
-      visibleRowIds: [...visibleSourceRows(data, hiddenRows, treatHeader, filters), data.length],
+      visibleRowIds: filters.length ? [...visibleSourceRows(data, hiddenRows, treatHeader, filters), data.length] : [],
       filters,
       matchedRows: visibleSourceRows(data, hiddenRows, false, filters).filter(row => !(treatHeader && row === hiddenRows)).length,
       totalFilterRows: Math.max(0, data.length - hiddenRows - (treatHeader ? 1 : 0)),
@@ -1680,7 +1679,6 @@ class CsvEditorController {
           break;
         }
         const htmlChunk = allRows.slice(i, i + chunkRows).map((row, localR) => {
-          const startAbs = headerFlag ? offset + 1 : offset;
           const absRow = rowIds[i + localR];
           const displayIdx = i + localR + 1; // numbering relative to first visible data row
           let cells = '';
@@ -1776,7 +1774,6 @@ class CsvEditorController {
     // If chunked, append a final chunk with the virtual row so it appears at the end.
     if (chunked && includeTrailingEmptyRow) {
       if (nextChunkStart === -1 && serializedChunkCount < safeMaxSerializedChunks) {
-        const startAbs = headerFlag ? offset + 1 : offset;
         const virtualAbs = data.length;
         const displayIdx = allRowsCount + 1;
         const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
@@ -1793,7 +1790,6 @@ class CsvEditorController {
       ? {
           rowIds,
           virtualRow: data.length,
-          startAbs: headerFlag ? offset + 1 : offset,
           allRows,
           allRowsCount,
           chunkRows,
@@ -2098,8 +2094,9 @@ class CsvEditorController {
       #csv-root .csv-frozen-row.active-match, #csv-root .csv-frozen-column.active-match {
         background-image: linear-gradient(var(--vscode-editor-findMatchBackground, transparent), var(--vscode-editor-findMatchBackground, transparent));
       }
-      #filterStatus { position: sticky; top: 0; left: 0; z-index: 6; display: flex; gap: 8px; align-items: center; padding: 6px; background: var(--vscode-editorWidget-background, ${isDark ? '#252526' : '#ffffff'}); color: var(--vscode-editorWidget-foreground, inherit); border-bottom: 1px solid var(--vscode-editorWidget-border, ${isDark ? '#555' : '#ccc'}); }
+      #filterStatus { position: sticky; top: 0; left: 0; z-index: 6; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; max-height: 25vh; overflow: auto; padding: 6px; background: var(--vscode-editorWidget-background, ${isDark ? '#252526' : '#ffffff'}); color: var(--vscode-editorWidget-foreground, inherit); border-bottom: 1px solid var(--vscode-editorWidget-border, ${isDark ? '#555' : '#ccc'}); }
       #filterStatus button { color: inherit; background: transparent; border: 1px solid var(--vscode-button-border, currentColor); border-radius: 3px; cursor: pointer; }
+      #filterStatus [data-clear-filter] { max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       th[data-filter-column="active"]::after { content: " ⏷"; }
       #filterStatus button:focus-visible { outline: 2px solid var(--vscode-focusBorder); }
       /* Per-column computed colors */
@@ -2109,7 +2106,7 @@ class CsvEditorController {
   </head>
   <body>
     <div id="csv-root" data-roworder="${this.escapeHtml(JSON.stringify(visibleRowIds))}" data-filtered="${filters.length ? '1' : '0'}" data-frozenrows="${frozenPanes.rows}" data-frozencolumns="${frozenPanes.columns}" data-firstrow="${firstVisibleRow}" data-realrowcount="${realRowCount}" data-columnsizes="${this.escapeHtml(JSON.stringify(columnSizes))}" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
-      ${filters.length ? `<div id="filterStatus" role="status"><span>Filtered: ${matchedRows} of ${totalFilterRows} rows</span>${filters.map(filter => `<button type="button" data-clear-filter="${filter.column}" title="Remove this column filter">${this.escapeHtml(filterHeader?.[filter.column] || `Column ${filter.column + 1}`)}: ${this.escapeHtml(filter.operator === 'empty' ? 'is empty' : filter.operator === 'notEmpty' ? 'is not empty' : `${filter.operator} “${filter.value}”`)} ×</button>`).join('')}<button type="button" id="clearAllFilters">Clear all filters</button></div>` : ''}
+      ${filters.length ? `<div id="filterStatus" role="status" title="Sort and Replace All affect matching rows; saving keeps every source row."><span>Filtered: ${matchedRows} of ${totalFilterRows} rows</span><button type="button" id="clearAllFilters">Clear all filters</button>${filters.map(filter => `<button type="button" data-clear-filter="${filter.column}" title="Remove this column filter">${this.escapeHtml(filterHeader?.[filter.column] || `Column ${filter.column + 1}`)}: ${this.escapeHtml(filter.operator === 'empty' ? 'is empty' : filter.operator === 'notEmpty' ? 'is not empty' : `${filter.operator} “${filter.value}”`)} ×</button>`).join('')}</div>` : ''}
       ${tableHtml}
     </div>
 
@@ -2145,7 +2142,7 @@ class CsvEditorController {
           </div>
           <div class="fr-actions">
             <button id="replaceOne" class="fr-action-btn" type="button" aria-label="Replace" title="Replace" disabled>↵</button>
-            <button id="replaceAll" class="fr-action-btn" type="button" aria-label="Replace All" title="Replace All" disabled>⇅</button>
+            <button id="replaceAll" class="fr-action-btn" type="button" aria-label="Replace All" title="${filters.length ? 'Replace All in matching filtered rows' : 'Replace All'}" disabled>⇅</button>
           </div>
         </div>
         <div id="findOverflowMenu" class="fr-overflow-menu" role="menu" aria-label="Find Options">

@@ -443,9 +443,9 @@ const showContextMenu = (x, y, row, col) => {
 
   /* Header-only: SORT functionality */
   if (lastContextIsHeader) {
-    item('Sort: A-Z', () =>
+    item(root?.dataset?.filtered === '1' ? 'Sort matching rows: A-Z' : 'Sort: A-Z', () =>
       vscode.postMessage({ type: 'sortColumn', index: col, ascending: true }));
-    item('Sort: Z-A', () =>
+    item(root?.dataset?.filtered === '1' ? 'Sort matching rows: Z-A' : 'Sort: Z-A', () =>
       vscode.postMessage({ type: 'sortColumn', index: col, ascending: false }));
   }        
 
@@ -1105,6 +1105,7 @@ const isFindWidgetTarget = target => {
   const el = getElementTarget(target);
   return !!(el && el.closest('#findReplaceWidget'));
 };
+const isGridControlTarget = target => isFindWidgetTarget(target) || !!getElementTarget(target)?.closest('#filterStatus');
 const clearFindHighlights = () => {
   document.querySelectorAll('.highlight, .active-match').forEach(el => {
     el.classList.remove('highlight');
@@ -1474,7 +1475,7 @@ window.addEventListener('csvChunkLoaded', () => {
 
 // Capture-phase handler to intercept Cmd/Ctrl + Arrow and move to extremes
 document.addEventListener('keydown', e => {
-  if (isFindWidgetTarget(e.target)) {
+  if (isGridControlTarget(e.target)) {
     return;
   }
   const isArrowKey = (k) => ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Up','Down','Left','Right','Home','End'].includes(k);
@@ -1580,7 +1581,7 @@ document.addEventListener('keydown', e => {
     closeFindReplace();
     return;
   }
-  if (isFindWidgetTarget(e.target)) {
+  if (isGridControlTarget(e.target)) {
     return;
   }
   if ((e.ctrlKey || e.metaKey) && e.key === 'a' && !editingCell) {
@@ -1902,12 +1903,12 @@ const pasteFromClipboard = () => {
 };
 for (const type of ['copy', 'cut']) {
   document.addEventListener(type, e => {
-    if (editingCell || isTextInputTarget(e.target) || isFindWidgetTarget(e.target)) return;
+    if (editingCell || isTextInputTarget(e.target) || isGridControlTarget(e.target)) return;
     if (copySelectionToClipboard(type === 'cut')) e.preventDefault();
   });
 }
 document.addEventListener('paste', e => {
-  if (isTextInputTarget(e.target) || isFindWidgetTarget(e.target)) {
+  if (isTextInputTarget(e.target) || isGridControlTarget(e.target)) {
     return;
   }
   if (editingCell) {
@@ -2097,7 +2098,7 @@ table.addEventListener('dblclick', e => {
 const copySelectionToClipboard = (cut = false) => {
   const bounds = getDataSelectionBounds();
   if (!bounds) return false;
-  const { minRow, maxRow, minCol, maxCol } = bounds;
+  const { minCol, maxCol } = bounds;
   const matrix = [];
   const rowIds = [...new Set(currentSelection.map(getDataCellCoords).filter(Boolean).map(coords => coords.row))].sort((a, b) => a - b);
   for (const row of rowIds) {
