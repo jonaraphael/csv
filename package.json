@@ -19,6 +19,7 @@
     "Other"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onLanguage:csv",
     "onLanguage:tsv",
     "onCommand:csv.toggleExtension",

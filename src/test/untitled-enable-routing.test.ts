@@ -1,4 +1,5 @@
 import assert from 'assert';
+import { createTestMemento } from './test-memento';
 import Module from 'module';
 import { describe, it } from 'node:test';
 
@@ -6,14 +7,19 @@ class Uri {
   constructor(public fsPath: string, public scheme: string) {}
   toString() { return `${this.scheme}:${this.fsPath}`; }
 }
-const state = { listeners: [] as any[], tabs: [] as any[], calls: [] as any[][] };
+const state = { listeners: [] as any[], tabs: [] as any[], calls: [] as any[][], errors: [] as string[] };
 const vscode = {
   Uri,
+  ConfigurationTarget: { Global: 1, Workspace: 2 },
   workspace: {
-    getConfiguration: () => ({ get: () => true }),
+    getConfiguration: (section: string) => ({
+      get: (key: string, fallback: unknown) => section === 'csv' && key === 'enabled' ? true : fallback,
+      inspect: (key: string) => section === 'csv' && key === 'enabled' ? { defaultValue: true } : undefined
+    }),
     onDidChangeConfiguration: (callback: any) => { state.listeners.push(callback); return { dispose() {} }; }
   },
   window: {
+    showErrorMessage: (message: string) => { state.errors.push(message); },
     tabGroups: {
       get all() { return [{ viewColumn: 1, tabs: state.tabs }]; },
       close: async (tabs: any) => { state.calls.push(['close', tabs]); return true; }
@@ -40,9 +46,10 @@ describe('enabling the saved-file editor preserves untitled owners', () => {
     state.tabs = [csv, tsv];
     state.calls = [];
     state.listeners = [];
-    activate({ subscriptions: [] } as any);
-    state.listeners[0]({ affectsConfiguration: (key: string) => key === 'csv.enabled' });
+    await activate({ subscriptions: [], globalState: createTestMemento(), workspaceState: createTestMemento() } as any);
+    await state.listeners[0]({ affectsConfiguration: (key: string) => key === 'csv.enabled' });
     await new Promise(resolve => setImmediate(resolve));
+    assert.deepStrictEqual(state.errors, [], 'activation and enablement routing must complete');
     assert.deepStrictEqual(state.calls, []);
     assert.deepStrictEqual(state.tabs, [csv, tsv]);
   });

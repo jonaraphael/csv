@@ -47,8 +47,9 @@ describe('unapplied ordinary cell drafts keep source row identities intact', () 
             assert.strictEqual(host.rows()[1][0], recovery === 'retry' ? 'one failed draft' : 'one');
             assert.strictEqual(host.diskText, diskText, 'recovery must not force a save');
             host.refresh();
+            await flushViewCommits(host, view);
             assert.strictEqual(host.isOpen, false, 'normal disable proceeds after the failed draft is resolved');
-            assert.deepStrictEqual(host.recordedCommands, [['vscode.openWith', host.document.uri, 'default']]);
+            assert.deepStrictEqual(host.recordedCommands, [['vscode.openWith', host.document.uri, 'default', { viewColumn: host.panel.viewColumn, preserveFocus: false }]]);
           } finally {
             view.close();
             if (host.isOpen) { host.panel.dispose(); }

@@ -3,6 +3,7 @@ import fs from 'fs';
 import Module from 'module';
 import path from 'path';
 import { beforeEach, describe, it } from 'node:test';
+import type { EditorSwitchRouting } from '../editor-associations';
 
 class Uri {
   constructor(public scheme: string, public authority: string, public path: string) {}
@@ -19,6 +20,9 @@ const state = {
   enabled: true, version: '1.142.0', available: true,
   events: [] as any[][], errors: [] as string[], information: [] as string[],
   registered: new Map<string, (...args: any[]) => any>(),
+  prepareRouting: undefined as ((uri: Uri, target: string) => Promise<EditorSwitchRouting>) | undefined,
+  unqualifiedTable: false,
+  tabListeners: new Set<() => void>(),
   commit: async (): Promise<boolean> => true,
   replace: async (_viewType: string): Promise<void> => {},
   reveal: async (_uri: Uri, _viewType: string): Promise<void> => {}
@@ -38,6 +42,7 @@ const vscode = {
       );
     },
     tabGroups: {
+      onDidChangeTabs: (listener: () => void) => { state.tabListeners.add(listener); return { dispose: () => state.tabListeners.delete(listener) }; },
       get activeTabGroup() { return state.group; },
       get all() { return [state.group, ...state.otherGroups]; },
       close: () => { assert.fail('native replacement owns source removal; no separate close is safe'); }
@@ -51,6 +56,7 @@ const vscode = {
     executeCommand: async (command: string, ...args: any[]) => {
       state.events.push([command, ...args]);
       if (command === 'vscode.openWith') { await state.reveal(args[0], args[1]); }
+      else if (command === 'vscode.open') { await state.reveal(args[0], state.unqualifiedTable ? 'csv.editor' : 'default'); }
       else if (command === 'workbench.action.keepEditor') { state.group.activeTab.isPreview = false; }
       else if (command === 'reopenActiveEditorWith') { await state.replace(args[0]); }
       else { assert.fail(`unexpected command: ${command}`); }
@@ -93,7 +99,8 @@ beforeEach(() => {
   state.enabled = true; state.version = '1.142.0'; state.available = true;
   state.events = []; state.errors = []; state.information = [];
   state.registered.clear(); CsvEditorProvider.editors = []; vscode.workspace.textDocuments = [];
-  registerCsvCommands({ subscriptions: [] } as any);
+  state.prepareRouting = undefined; state.unqualifiedTable = false; state.tabListeners.clear();
+  registerCsvCommands({ subscriptions: [] } as any, async () => {}, (uri, target) => state.prepareRouting?.(uri, target) ?? Promise.resolve({ supported: false, commit: async () => {}, rollback: async () => {} }));
   state.commit = async () => true;
   state.reveal = async (uri, viewType) => {
     const source = state.group.activeTab;
@@ -299,4 +306,98 @@ describe('single-view CSV table/text switching', () => {
     assert.ok(!readme.includes('Both representations may remain open'));
     assert.ok(readme.includes('one representation remains'));
   });
+});
+
+
+describe('Text routing transaction around native replacement', () => {
+  function transaction(): EditorSwitchRouting {
+    return { supported: true, commit: async () => { state.events.push(['routing-commit']); }, rollback: async () => { state.events.push(['routing-rollback']); } };
+  }
+  it('proves native routing with an unqualified open and finalizes only after replacement', async () => {
+    const uri = new Uri('file', '', '/data/check.csv'); activateTab(makeTab(uri, true));
+    state.prepareRouting = async () => { state.events.push(['routing-prepare']); return transaction(); };
+    await toggle();
+    assert.ok(state.group.activeTab.input instanceof TabInputText);
+    assert.ok(state.events.some(event => event[0] === 'vscode.open'));
+    const replacement = state.events.findIndex(event => event[0] === 'reopenActiveEditorWith');
+    assert.ok(state.events.findIndex(event => event[0] === 'routing-commit') > replacement);
+    assert.ok(state.events.every(event => event[0] !== 'routing-rollback'));
+  });
+  it('rolls provisional Text routing back after a failed native replacement', async () => {
+    activateTab(makeTab(new Uri('file', '', '/data/check.csv'), true));
+    state.prepareRouting = async () => transaction(); state.replace = async () => { throw new Error('cancelled'); };
+    await toggle();
+    assert.ok(state.events.some(event => event[0] === 'routing-rollback'));
+    assert.ok(state.events.every(event => event[0] !== 'routing-commit'));
+    assert.ok(state.group.activeTab.input instanceof TabInputCustom);
+  });
+  it('does not close the source or finalize Text when a longer user association still chooses table', async () => {
+    activateTab(makeTab(new Uri('file', '', '/data/check.csv'), true));
+    state.prepareRouting = async () => transaction(); state.unqualifiedTable = true;
+    await toggle();
+    assert.ok(state.group.activeTab.input instanceof TabInputCustom);
+    assert.ok(state.events.every(event => event[0] !== 'reopenActiveEditorWith'));
+    assert.ok(state.events.some(event => event[0] === 'routing-rollback'));
+    assert.ok(state.information.some(message => message.includes('editor associations still choose')));
+  });
+  it('retains the established remote switch with honest search guidance', async () => {
+    activateTab(makeTab(new Uri('vscode-remote', 'wsl+Ubuntu', '/data/check.csv'), true));
+    state.prepareRouting = async () => ({ ...transaction(), supported: false, limitation: 'Turn CSV off before Find in Files for this URI.' });
+    await toggle();
+    assert.ok(state.group.activeTab.input instanceof TabInputText);
+    assert.ok(state.events.every(event => event[0] !== 'vscode.open'));
+    assert.ok(state.information.some(message => message.includes('Turn CSV off')));
+  });
+  it('rolls back prepared routing if the user changes group before target opening', async () => {
+    activateTab(makeTab(new Uri('file', '', '/data/check.csv'), true));
+    const original = state.group;
+    state.prepareRouting = async () => {
+      state.otherGroups = [original]; state.group = { viewColumn: 3, tabs: [], activeTab: undefined };
+      return transaction();
+    };
+    await toggle();
+    assert.ok(state.events.some(event => event[0] === 'routing-rollback'));
+    assert.ok(state.events.every(event => !['vscode.open', 'vscode.openWith', 'reopenActiveEditorWith'].includes(event[0])));
+    assert.ok(original.activeTab.input instanceof TabInputCustom);
+  });
+
+  it('waits for delayed extension-host tab events before committing Table routing', async () => {
+    activateTab(makeTab(new Uri('file', '', '/data/check.csv'), false));
+    state.prepareRouting = async () => transaction();
+    const replace = state.replace;
+    state.replace = async viewType => {
+      setImmediate(async () => { await replace(viewType); state.tabListeners.forEach(listener => listener()); });
+    };
+    await toggle();
+    assert.ok(state.group.activeTab.input instanceof TabInputCustom);
+    assert.ok(state.events.some(event => event[0] === 'routing-commit'));
+    assert.ok(state.events.every(event => event[0] !== 'routing-rollback'));
+    assert.strictEqual(state.tabListeners.size, 0);
+  });
+
+  it('starts its tab-event timeout after a slow native command completes', async () => {
+    activateTab(makeTab(new Uri('file', '', '/data/check.csv'), false));
+    state.prepareRouting = async () => transaction();
+    const replace = state.replace;
+    let release!: () => void;
+    state.replace = async () => { await new Promise<void>(resolve => { release = resolve; }); };
+    const originalTimer = global.setTimeout;
+    const timers: Array<() => void> = [];
+    global.setTimeout = ((callback: () => void, milliseconds: number, ...args: any[]) => {
+      if (milliseconds === 5000) { timers.push(callback); return {} as any; }
+      return originalTimer(callback, milliseconds, ...args);
+    }) as typeof setTimeout;
+    try {
+      const changing = toggle();
+      while (!release) { await new Promise(resolve => setImmediate(resolve)); }
+      assert.strictEqual(timers.length, 0, 'a slow native command cannot consume the event-settlement timeout');
+      release();
+      while (!timers.length) { await new Promise(resolve => setImmediate(resolve)); }
+      await replace('csv.editor'); state.tabListeners.forEach(listener => listener());
+      await changing;
+      assert.ok(state.events.some(event => event[0] === 'routing-commit'));
+      assert.ok(state.events.every(event => event[0] !== 'routing-rollback'));
+    } finally { global.setTimeout = originalTimer; }
+  });
+
 });
