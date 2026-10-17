@@ -2146,6 +2146,15 @@ class CsvEditorController {
         position: sticky;
         background-color: var(--vscode-editor-background, ${isDark ? '#1e1e1e' : '#ffffff'}) !important;
       }
+      /* Paint collapsed divider seams with the sticky cells instead of the scrolling table. */
+      #csv-root .csv-frozen-row::before {
+        content: "";
+        position: absolute;
+        inset: -0.5px 0;
+        border-block: 1px solid var(--csv-contrast-border, var(--csv-table-border, ${isDark ? '#555' : '#ccc'}));
+        box-sizing: border-box;
+        pointer-events: none;
+      }
       #csv-root .csv-frozen-row.selected, #csv-root .csv-frozen-column.selected {
         background-image: linear-gradient(var(--vscode-editor-selectionBackground, ${isDark ? '#333333' : '#cce0ff'}), var(--vscode-editor-selectionBackground, ${isDark ? '#333333' : '#cce0ff'}));
       }
