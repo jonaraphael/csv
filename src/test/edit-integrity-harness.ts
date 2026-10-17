@@ -49,6 +49,7 @@ const { CsvEditorProvider } = require('../CsvEditorProvider') as typeof import('
 const { JSDOM } = require('jsdom');
 
 export async function createEditorHarness(options: {
+  text?: string;
   rows?: string[][];
   separator?: string;
   header?: boolean;
@@ -60,7 +61,7 @@ export async function createEditorHarness(options: {
   filters?: unknown;
 } = {}) {
   const separator = options.separator ?? ',';
-  let text = Papa.unparse(options.rows ?? [['name', 'value'], ['one', 'two']], { delimiter: separator });
+  let text = options.text ?? Papa.unparse(options.rows ?? [['name', 'value'], ['one', 'two']], { delimiter: separator });
   let diskText = text;
   let messageListener: (message: any) => Promise<void>;
   const changeListeners: Array<(event: unknown) => void> = [];
