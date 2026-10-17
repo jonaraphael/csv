@@ -1,6 +1,7 @@
 import { getFonts } from 'font-list';
 import * as vscode from 'vscode';
 import { CsvEditorProvider } from './CsvEditorProvider';
+import { openLargeFilePreview } from './large-file-preview';
 
 function displaySeparator(separator: string): string {
   return separator === '\t' ? '\\t' : separator;
@@ -21,6 +22,7 @@ async function toggleBooleanConfig(key: string, defaultVal: boolean, messagePref
 
 export function registerCsvCommands(context: vscode.ExtensionContext) {
   context.subscriptions.push(
+    vscode.commands.registerCommand('csv.openLargeFilePreview', openLargeFilePreview),
     vscode.commands.registerCommand('csv.toggleExtension', () =>
       toggleBooleanConfig('enabled', true, 'CSV extension')
     ),
