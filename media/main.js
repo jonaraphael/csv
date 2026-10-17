@@ -2092,8 +2092,12 @@ const copySelectionToClipboard = (cut = false) => {
   const bounds = getDataSelectionBounds();
   if (!bounds) return false;
   const { minRow, maxRow, minCol, maxCol } = bounds;
+  const realRowCount = Number(root.dataset.realrowcount);
+  // The append row is an editor affordance, never clipboard data. Consume an
+  // append-only gesture without a host write or native empty clipboard copy.
+  if (!Number.isSafeInteger(realRowCount) || realRowCount < 0 || minRow >= realRowCount) { return true; }
   const matrix = [];
-  for (let row = minRow; row <= maxRow; row++) {
+  for (let row = minRow; row <= Math.min(maxRow, realRowCount - 1); row++) {
     const values = [];
     for (let col = minCol; col <= maxCol; col++) {
       const cell = getRenderedCellByCoords(row, col);
