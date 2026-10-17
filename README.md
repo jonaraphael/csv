@@ -35,7 +35,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Enhanced Keyboard Navigation:** Navigate cells with arrows and Tab/Shift+Tab; quick edits can commit with arrow keys; `Ctrl/Cmd + A` selects all; `Ctrl/Cmd + C` copies selection.
 - **Advanced Multi-Cell Selection:** Easily select and copy blocks of data, then paste them elsewhere as properly formatted CSV.
 - **Add/Delete Columns:** Right-click any cell to add a column left or right, or remove the selected column.
-- **Add/Delete Rows:** Insert above/below or remove the selected row via context menu.
+- **Add/Delete Rows:** Insert above/below or remove the selected row via context menu. Menus open toward available space and remain scrollable in small editor panes.
 - **Edit Empty CSVs:** Create or open an empty CSV file and start typing immediately.
 - **Column Sorting:** Right-click a header and choose A–Z or Z–A.
 - **Custom Font Controls:** Choose a font family and optional font-size override, or inherit VS Code defaults.
