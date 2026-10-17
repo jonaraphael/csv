@@ -8,7 +8,8 @@ Module.prototype.require = function (id: string) {
   if (id === 'vscode') {
     return {
       window: { activeColorTheme: { kind: 1 } },
-      ColorThemeKind: { Dark: 1 }
+      ColorThemeKind: { Dark: 1 },
+      workspace: { getConfiguration: () => ({ get: (_key: string, fallback: unknown) => fallback }) }
     } as any;
   }
   return originalRequire.apply(this, arguments as any);

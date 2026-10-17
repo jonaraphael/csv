@@ -1,6 +1,11 @@
 import Papa from 'papaparse';
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { parseClipboardMatrix, serializeClipboardMatrix } from './clipboard';
+import { ColumnFilter, normalizeColumnFilters, compileColumnFilters, visibleSourceRows, remapColumnFilters, getFilterOperatorChoices, validateColumnFilterInput, MAX_COLUMN_FILTERS, MAX_FILTER_VALUE_LENGTH } from './column-filters';
+import { FilterDataType, parseFilterDate } from './filter-values';
+
+type FrozenPanes = { rows: number; columns: number };
 
 type SeparatorMode = 'extension' | 'auto' | 'default';
 type SeparatorSettings = {
@@ -34,7 +39,9 @@ type PasteApplyResult = {
   plan: PastePlan;
 };
 type ChunkRenderState = {
-  startAbs: number;
+  rowIds: number[];
+  bodyStart: number;
+  virtualRow: number;
   allRows: string[][];
   allRowsCount: number;
   chunkRows: number;
@@ -46,6 +53,25 @@ type ChunkRenderState = {
   clickableLinks: boolean;
   isDark: boolean;
   serialIndexWidthCh: number;
+};
+type FilterColumn = { column: number; label: string; dataType: FilterDataType; operators: ReturnType<typeof getFilterOperatorChoices> };
+type FilterDraft = {
+  session: string;
+  filterColumnsRevision: number;
+  rows: Array<{ column: number; operator: ColumnFilter['operator']; value: string; composing?: boolean }>;
+  columns: Array<{ column: number; label: string }>;
+  focus?: {
+    row: number;
+    field: 'column' | 'operator' | 'value' | 'remove';
+    selectionStart?: number;
+    selectionEnd?: number;
+    selectionDirection?: 'forward' | 'backward' | 'none';
+  };
+};
+type FilterRender = {
+  tableHtml: string; chunksJson: string; colorCss: string; nextChunkStart: number; hasRemoteChunks: boolean;
+  visibleRowIds: number[]; matchedRows: number; totalRows: number; filters: ColumnFilter[]; columns: FilterColumn[];
+  firstVisibleRow: number; realRowCount: number; headerEnabled: boolean; chunkState: ChunkRenderState | undefined;
 };
 type ChunkResponse = {
   html: string;
@@ -61,14 +87,39 @@ class CsvEditorController {
   private static readonly DEFAULT_MAX_FILE_SIZE_MB = 10;
   private static readonly LARGE_FILE_CONTINUE_THIS_TIME = 'Continue This Time';
   private static readonly LARGE_FILE_IGNORE_FOREVER = 'Ignore Forever';
+  private static readonly encodingWarnings = new WeakSet<vscode.TextDocument>();
+  private static readonly DRAFT_COMMIT_TIMEOUT_MS = 5000;
+  private static nativeHandoffQueue: Promise<void> = Promise.resolve();
 
   private isUpdatingDocument = false;
   private isSaving = false;
+  private disposed = false;
+  private defaultEditorHandoff: Promise<void> | undefined;
+  private pendingViewAction: (() => Promise<void>) | undefined;
+  private pendingDocumentReference: { document: vscode.TextDocument; separator: string } | undefined;
+  private renderedSeparator: string | undefined;
+  private viewCommitRequested = false;
+  private viewCommitSequence = 0;
+  private viewCommitNeedsFreshAck = false;
+  private draftActivityRevision = 0;
+  private pendingClose = false;
+  private pendingOperation: Promise<void> = Promise.resolve();
+  private readonly failedCellEdits = new Map<string, { row: number; col: number }>();
+  private refreshAfterDraftCommit = false;
+  private readonly draftCommitWaiters = new Set<{ resolve: (success: boolean) => void; timer: ReturnType<typeof setTimeout> }>();
   private currentWebviewPanel: vscode.WebviewPanel | undefined;
   private document!: vscode.TextDocument;
   private separatorCache: { version: number; configKey: string; separator: string } | undefined;
   private isDiffContext = false;
+  private currentHeader = false;
   private chunkRenderState: ChunkRenderState | undefined;
+  private currentFilterView: FilterRender | undefined;
+  private latestFilterRevision = 0;
+  private filterEpoch = 0;
+  private filterSession = '';
+  private filterSessionUri = '';
+  private filterColumnsRevision = 0;
+  private pendingFilterDraft: { uri: string; draft: FilterDraft } | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -80,6 +131,26 @@ class CsvEditorController {
     _token: vscode.CancellationToken
   ): Promise<void> {
     this.document = document;
+    this.currentWebviewPanel = webviewPanel;
+    let changeDocumentSubscription: vscode.Disposable | undefined;
+    let saveDocumentSubscription: vscode.Disposable | undefined;
+    // Register before remote stat/prompt awaits: a closed panel stays closed.
+    webviewPanel.onDidDispose(() => {
+      this.disposed = true;
+      changeDocumentSubscription?.dispose();
+      saveDocumentSubscription?.dispose();
+      CsvEditorProvider.editors = CsvEditorProvider.editors.filter(ed => ed !== this);
+      this.currentWebviewPanel = undefined;
+      this.pendingFilterDraft = undefined;
+      this.pendingViewAction = undefined;
+      this.pendingDocumentReference = undefined;
+      this.viewCommitRequested = false;
+      this.resolveDraftCommitWaiters(false);
+      if (CsvEditorProvider.currentActive === this) {
+        CsvEditorProvider.currentActive = undefined;
+      }
+    });
+    if (_token.isCancellationRequested) { return; }
 
     const config = vscode.workspace.getConfiguration('csv', this.document.uri);
     if (!config.get<boolean>('enabled', true)) {
@@ -89,17 +160,19 @@ class CsvEditorController {
     }
 
     const proceed = await this.confirmLargeFileOpen(config, webviewPanel, _token);
-    if (!proceed) {
+    if (!proceed || this.disposed || _token.isCancellationRequested || document.isClosed) {
       return;
     }
 
-    this.currentWebviewPanel = webviewPanel;
+    if (!vscode.workspace.getConfiguration('csv', document.uri).get<boolean>('enabled', true)) {
+      await this.openWithDefaultEditorAndClose(webviewPanel, document.uri);
+      return;
+    }
     CsvEditorProvider.editors.push(this);
 
     webviewPanel.webview.options = {
       enableScripts: true,
-      // Use file path for compatibility with older VS Code types (no Uri.joinPath)
-      localResourceRoots: [vscode.Uri.file(path.join(this.context.extensionPath, 'media'))]
+      localResourceRoots: [this.getMediaUri()]
     };
 
     this.refreshDiffContext(webviewPanel);
@@ -108,23 +181,82 @@ class CsvEditorController {
     if (webviewPanel.active) {
       CsvEditorProvider.currentActive = this;
     }
+    void this.warnAboutPossibleDecoding().catch(error => {
+      console.warn('CSV: Encoding warning action failed', error);
+    });
 
     webviewPanel.webview.postMessage({ type: 'focus' });
+    let wasVisible = webviewPanel.visible;
     webviewPanel.onDidChangeViewState(e => {
+      const becameVisible = e.webviewPanel.visible && !wasVisible;
+      wasVisible = e.webviewPanel.visible;
       if (e.webviewPanel.active) {
         const diffChanged = this.refreshDiffContext(e.webviewPanel);
-        if (diffChanged) {
-          this.updateWebviewContent();
+        if (diffChanged || becameVisible) {
+          // A hidden webview can be recreated from its original HTML snapshot.
+          // Rebuild from the current (possibly unsaved) document after pending edits.
+          void this.enqueueOperation(() => this.updateWebviewContent());
         }
         e.webviewPanel.webview.postMessage({ type: 'focus' });
         CsvEditorProvider.currentActive = this;
+      } else if (CsvEditorProvider.currentActive === this) {
+        CsvEditorProvider.currentActive = undefined;
       }
     });
 
-    webviewPanel.webview.onDidReceiveMessage(async e => {
+    webviewPanel.webview.onDidReceiveMessage(e => {
+      if (e.type === 'filterDraftChanged') {
+        if (e.session === this.filterSession) { this.draftActivityRevision += 1; }
+        return;
+      }
+      if (e.type === 'updateColumnFilters' && e.session === this.filterSession && Number.isSafeInteger(e.revision) && e.revision > this.latestFilterRevision) {
+        this.latestFilterRevision = e.revision;
+      }
+      const mutatesTable = ['replaceCells', 'pasteCells', 'insertColumn', 'insertColumns', 'deleteColumn', 'deleteColumns',
+        'insertRow', 'insertRows', 'deleteRow', 'deleteRows', 'reorderColumns', 'reorderRows', 'sortColumn', 'pasteFromClipboard'].includes(e.type) || (e.type === 'copyCells' && e.cut === true);
+      // Observe new drafts immediately, even while an earlier queued edit awaits
+      // applyEdit. An ACK received before that activity cannot authorize reload.
+      if (mutatesTable || ['cellEditStarted', 'editCell', 'discardCellDraft'].includes(e.type)) {
+        this.draftActivityRevision += 1;
+      }
+      const receivedRevision = this.draftActivityRevision;
+      return this.enqueueOperation(async () => {
+      if (mutatesTable && this.failedCellEdits.size) {
+        const failed = this.failedCellEdits.values().next().value!;
+        void webviewPanel.webview.postMessage({ type: 'editCellFailed', row: failed.row, col: failed.col, retry: true });
+        void vscode.window.showErrorMessage('CSV: Retry the failed cell edit or press Escape to discard it before changing the table.');
+        return;
+      }
       switch (e.type) {
+        case 'webviewReady': {
+          if (this.viewCommitRequested) {
+            this.postViewCommitRequest();
+          }
+          break;
+        }
+        case 'viewRefreshReady': {
+          if (e.session !== this.filterSession) { break; }
+          if (this.viewCommitRequested && e.requestId !== this.viewCommitSequence) {
+            break;
+          }
+          if (!this.viewCommitRequested && e.requestId !== undefined) {
+            break;
+          }
+          if (this.viewCommitRequested && (this.viewCommitNeedsFreshAck || receivedRevision !== this.draftActivityRevision)) {
+            this.viewCommitNeedsFreshAck = false;
+            this.viewCommitSequence += 1;
+            this.postViewCommitRequest();
+            break;
+          }
+          this.captureFilterDraft(e.filterDraft);
+          await this.finishViewCommit();
+          break;
+        }
         case 'editCell':
-          this.updateDocument(e.row, e.col, e.value);
+          await this.updateDocument(e.row, e.col, e.value);
+          break;
+        case 'discardCellDraft':
+          this.discardFailedCellDraft(e.row, e.col);
           break;
         case 'replaceCells':
           await this.replaceCells(e.replacements);
@@ -133,17 +265,54 @@ class CsvEditorController {
           await this.pasteCells(e.text, e.anchorRow, e.anchorCol, e.selection);
           break;
         case 'requestChunk':
-          await this.requestChunk(e.start, e.requestId);
+          await this.requestChunk(e.start, e.requestId, e.filterEpoch, e.session);
           break;
         case 'findMatches':
           await this.findMatches(e.requestId, e.query, e.options);
           break;
         case 'save':
-          await this.handleSave();
+          if (this.viewCommitRequested) {
+            this.saveAfterCommit();
+          } else {
+            await this.handleSave();
+          }
           break;
-        case 'copyToClipboard':
-          await vscode.env.clipboard.writeText(e.text);
-          console.log('CSV: Copied to clipboard');
+        case 'updateColumnFilters':
+          await this.updateColumnFilters(e.revision, e.filters, e.session);
+          break;
+        case 'freezePanesChanged':
+          await this.setFrozenPanes({ rows: e.rows, columns: e.columns });
+          break;
+        case 'columnSizesChanged':
+          await CsvEditorProvider.setColumnSizesForUri(this.context, this.document.uri, e.columnSizes);
+          break;
+        case 'setHeader': {
+          if (typeof e.enabled === 'boolean') {
+            const uri = this.document.uri;
+            await CsvEditorProvider.setHeaderForUri(this.context, uri, e.enabled);
+            CsvEditorProvider.editors
+              .filter(editor => editor.getDocumentUri().toString() === uri.toString())
+              .forEach(editor => editor.refresh());
+          }
+          break;
+        }
+        case 'setSerialIndex': {
+          if (typeof e.enabled === 'boolean') {
+            const uri = this.getDocumentUri();
+            if (CsvEditorProvider.getSerialIndexForUri(this.context, uri) !== e.enabled) {
+              await CsvEditorProvider.setSerialIndexForUri(this.context, uri, e.enabled);
+              CsvEditorProvider.editors
+                .filter(editor => editor.getDocumentUri().toString() === uri.toString())
+                .forEach(editor => editor.refreshViewSafely());
+            }
+          }
+          break;
+        }
+        case 'copyCells':
+          await this.copyCells(e.matrix, e.rowIds, e.startCol, e.cut === true);
+          break;
+        case 'pasteFromClipboard':
+          await this.pasteCells(await vscode.env.clipboard.readText(), e.anchorRow, e.anchorCol, e.selection);
           break;
         case 'insertColumn':
           await this.insertColumn(e.index);
@@ -182,9 +351,10 @@ class CsvEditorController {
           await this.openLinkExternally(e.url);
           break;
       }
+      });
     });
 
-    const changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument(e => {
+    changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument(e => {
       if (
         e.document.uri.toString() === document.uri.toString() &&
         !this.isUpdatingDocument &&
@@ -194,11 +364,38 @@ class CsvEditorController {
       }
     });
 
-    webviewPanel.onDidDispose(() => {
-      changeDocumentSubscription.dispose();
-      CsvEditorProvider.editors = CsvEditorProvider.editors.filter(ed => ed !== this);
-      this.currentWebviewPanel = undefined;
+    saveDocumentSubscription = vscode.workspace.onWillSaveTextDocument(e => {
+      if (e.document.uri.toString() === document.uri.toString() && !this.isSaving) {
+        // Native File > Save can run while the webview's blur edit is applying.
+        // The custom save command is already in this queue and must not await itself.
+        e.waitUntil(this.pendingOperation);
+      }
     });
+  }
+
+  private enqueueOperation(operation: () => void | Promise<void>): Promise<void> {
+    // Event listeners are not awaited by VS Code. Serialize mutations, reads and
+    // saves so every command sees the result of the preceding document edit.
+    this.pendingOperation = this.pendingOperation.then(operation).catch(error => {
+      console.error('CSV: Editor operation failed', error);
+    });
+    return this.pendingOperation;
+  }
+
+  private async warnAboutPossibleDecoding(): Promise<void> {
+    if (this.document.uri.scheme === 'untitled' || !this.document.getText().includes('\uFFFD') || CsvEditorController.encodingWarnings.has(this.document)) {
+      return;
+    }
+    CsvEditorController.encodingWarnings.add(this.document);
+    const action = 'Change File Encoding';
+    const selected = await vscode.window.showWarningMessage(
+      'CSV: This file contains replacement characters (�), which can indicate a decoding mismatch. Check the source encoding before saving.',
+      action
+    );
+    if (selected === action && !this.disposed) {
+      // Bind the action to this document even if another tab becomes active.
+      await vscode.commands.executeCommand('csv.changeEncoding', this.document.uri);
+    }
   }
 
   private getMaxFileSizeLimitMb(config: vscode.WorkspaceConfiguration): number {
@@ -227,17 +424,118 @@ class CsvEditorController {
     return (fileSizeBytes / CsvEditorController.BYTES_PER_MB).toFixed(1);
   }
 
-  private async openWithDefaultEditorAndClose(webviewPanel: vscode.WebviewPanel, uri: vscode.Uri): Promise<void> {
-    try {
-      const opts: any = {
-        viewColumn: webviewPanel.viewColumn,
-        preserveFocus: !webviewPanel.active,
-        preview: webviewPanel.active ? webviewPanel.active : false
+  private captureOtherEditorOwner(uri: vscode.Uri, viewColumn: vscode.ViewColumn | undefined): (() => Promise<void>) | undefined {
+    const group = vscode.window.tabGroups.activeTabGroup;
+    if (!group) { return; }
+    const tab = group.activeTab;
+    const input: any = tab?.input;
+    const stillOpen = () => vscode.window.tabGroups.all.includes(group) && !!tab && group.tabs.includes(tab);
+    const activeController = CsvEditorProvider.editors.find(editor => editor !== this && editor.isActive() && editor.getViewColumn() === group.viewColumn);
+    const panel = activeController?.currentWebviewPanel;
+    if (panel) {
+      const document = activeController.document;
+      return async () => {
+        if (!vscode.window.tabGroups.all.includes(group)) { return; }
+        if (activeController.currentWebviewPanel === panel && panel.viewColumn === group.viewColumn && stillOpen()) {
+          panel.reveal(group.viewColumn, false);
+        } else if (!activeController.currentWebviewPanel && !document.isClosed && group.tabs.some(candidate => {
+          const native: any = candidate.input;
+          return !native?.viewType && native?.uri?.toString() === document.uri.toString();
+        })) {
+          // Another Off handoff can replace the captured grid first. Reuse
+          // its native owner only while that owner still has a live tab here.
+          await vscode.window.showTextDocument(document, { viewColumn: group.viewColumn, preview: false });
+        }
       };
-      await vscode.commands.executeCommand('vscode.openWith', uri, 'default', opts);
-    } finally {
-      try { webviewPanel.dispose(); } catch {}
     }
+    const activeUri: vscode.Uri | undefined = input?.uri;
+    if (!activeUri || (group.viewColumn === viewColumn && activeUri.toString() === uri.toString())) { return; }
+    if (input.viewType === CsvEditorProvider.viewType) { return; }
+    if (input.viewType) {
+      return async () => { if (stillOpen()) { await vscode.commands.executeCommand('vscode.openWith', activeUri, input.viewType, { viewColumn: group.viewColumn, preserveFocus: false }); } };
+    }
+    const editor = vscode.window.visibleTextEditors.find(candidate => candidate.viewColumn === group.viewColumn && candidate.document.uri.toString() === activeUri.toString());
+    if (editor) {
+      return async () => {
+        if (!stillOpen()) { return; }
+        // The owner may have acquired its standalone table while the saved-file
+        // handoff was pending. Reveal that live view instead of promoting text.
+        const controller = CsvEditorProvider.editors.find(candidate => candidate !== this && candidate.getViewColumn() === group.viewColumn && candidate.getDocumentUri().toString() === activeUri.toString());
+        if (controller?.currentWebviewPanel) { controller.currentWebviewPanel.reveal(group.viewColumn, false); }
+        else if (!editor.document.isClosed) { await vscode.window.showTextDocument(editor.document, { viewColumn: group.viewColumn, preview: false }); }
+      };
+    }
+  }
+
+  private async openWithDefaultEditorAndClose(webviewPanel: vscode.WebviewPanel, uri: vscode.Uri, reason?: 'disabled' | 'language'): Promise<void> {
+    if (this.disposed) { return; }
+    if (!this.defaultEditorHandoff) {
+      const authorization = reason ? {
+        activity: this.draftActivityRevision, document: this.document, version: this.document.version,
+        language: this.document.languageId, session: this.filterSession, filterRevision: this.latestFilterRevision,
+        columnsRevision: this.filterColumnsRevision
+      } : undefined;
+      let reprepare = false;
+      const pending = CsvEditorController.nativeHandoffQueue.then(async () => {
+        if (this.disposed || this.document.isClosed) { return; }
+        const supported = uri.scheme !== 'untitled' || this.document.languageId === 'csv' || this.document.languageId === 'tsv';
+        if (supported && CsvEditorProvider.editors.includes(this) && vscode.workspace.getConfiguration('csv', uri).get<boolean>('enabled', true)) { return; }
+        if (authorization && (authorization.activity !== this.draftActivityRevision || authorization.document !== this.document ||
+            authorization.version !== this.document.version || authorization.language !== this.document.languageId ||
+            authorization.session !== this.filterSession || authorization.filterRevision !== this.latestFilterRevision ||
+            authorization.columnsRevision !== this.filterColumnsRevision || this.pendingDocumentReference)) {
+          // A different handoff held the native queue after this view's ACK.
+          // Release this slot and request a new ACK without blocking its own
+          // message queue, where the final cell/filter edits must be applied.
+          reprepare = true;
+          return;
+        }
+        let restoreOwner = this.captureOtherEditorOwner(uri, webviewPanel.viewColumn);
+        const focusSubscription = vscode.window.onDidChangeActiveTextEditor(() => {
+          const next = this.captureOtherEditorOwner(uri, webviewPanel.viewColumn);
+          if (next) { restoreOwner = next; }
+        });
+        const wasActive = webviewPanel.active;
+        try {
+          const opts = { viewColumn: webviewPanel.viewColumn, preserveFocus: !wasActive };
+          if (uri.scheme === 'untitled') {
+            await vscode.window.showTextDocument(this.document, { ...opts, preview: false });
+          } else {
+            const existing = vscode.window.visibleTextEditors.find(editor =>
+              editor.document.uri.toString() === uri.toString() && editor.viewColumn === webviewPanel.viewColumn);
+            if (!existing) {
+              await vscode.commands.executeCommand('vscode.openWith', uri, 'default', opts);
+            }
+          }
+        } finally {
+          focusSubscription.dispose();
+          const supported = uri.scheme !== 'untitled' || this.document.languageId === 'csv' || this.document.languageId === 'tsv';
+          const retainTable = supported && !this.disposed && CsvEditorProvider.editors.includes(this) &&
+            vscode.workspace.getConfiguration('csv', uri).get<boolean>('enabled', true);
+          const group = vscode.window.tabGroups.activeTabGroup;
+          const input: any = group?.activeTab?.input;
+          const nativeHandoffIsActive = group?.viewColumn === webviewPanel.viewColumn && !input?.viewType && input?.uri?.toString() === uri.toString();
+          if (!retainTable) { try { webviewPanel.dispose(); } catch {} }
+          // Only undo activation caused by this handoff. A later user choice in
+          // another tab/group always keeps focus and its live document owner.
+          if (nativeHandoffIsActive) {
+            if (restoreOwner) { await restoreOwner(); }
+            else if (retainTable && wasActive) { webviewPanel.reveal(webviewPanel.viewColumn, false); }
+          }
+        }
+      });
+      // Only native opens/disposal/restoration serialize; draft ACKs remain
+      // independent, so a failed edit in one file cannot block other files.
+      CsvEditorController.nativeHandoffQueue = pending.then(() => {}, () => {});
+      this.defaultEditorHandoff = pending;
+      void pending.then(() => {
+        if (this.defaultEditorHandoff === pending) { this.defaultEditorHandoff = undefined; }
+        if (reprepare && !this.disposed && reason) { this.revealSourceAfterCommit(reason); }
+      }, () => {
+        if (this.defaultEditorHandoff === pending) { this.defaultEditorHandoff = undefined; }
+      });
+    }
+    await this.defaultEditorHandoff;
   }
 
   private async confirmLargeFileOpen(
@@ -245,6 +543,9 @@ class CsvEditorController {
     webviewPanel: vscode.WebviewPanel,
     token: vscode.CancellationToken
   ): Promise<boolean> {
+    if (this.document.uri.scheme === 'untitled') {
+      return true;
+    }
     const maxFileSizeMB = this.getMaxFileSizeLimitMb(config);
     if (maxFileSizeMB <= 0) {
       return true;
@@ -293,19 +594,176 @@ class CsvEditorController {
   }
 
   public refresh() {
+    if (this.disposed) { return; }
     const config = vscode.workspace.getConfiguration('csv', this.document.uri);
-    if (!config.get<boolean>('enabled', true)) {
-      this.currentWebviewPanel?.dispose();
-      vscode.commands.executeCommand('vscode.openWith', this.document.uri, 'default');
+    const enabled = config.get<boolean>('enabled', true);
+    if (this.failedCellEdits.size) {
+      this.refreshAfterDraftCommit = true;
+      if (!enabled) {
+        void vscode.window.showErrorMessage('CSV: Retry the failed cell edit or press Escape to discard it before disabling the table view.');
+      }
+      return;
+    }
+    if (!enabled) {
+      this.revealSourceAfterCommit();
     } else {
-      if (this.currentWebviewPanel) {
+      if (this.defaultEditorHandoff) { return; }
+      if (this.viewCommitRequested || this.failedCellEdits.size) {
+        this.refreshAfterDraftCommit = true;
+        return;
+      }
+      if (this.currentWebviewPanel && !this.viewCommitRequested && !this.failedCellEdits.size) {
         this.forceReload();
       }
     }
   }
 
+  public getViewColumn(): vscode.ViewColumn | undefined {
+    return this.currentWebviewPanel?.viewColumn;
+  }
+
+  public commitPendingDraft(): Promise<boolean> {
+    const panel = this.currentWebviewPanel;
+    if (!panel) {
+      return Promise.resolve(false);
+    }
+    return new Promise(resolve => {
+      const waiter = {
+        resolve,
+        timer: setTimeout(() => {
+          this.draftCommitWaiters.delete(waiter);
+          resolve(false);
+        }, CsvEditorController.DRAFT_COMMIT_TIMEOUT_MS)
+      };
+      this.draftCommitWaiters.add(waiter);
+      const alreadyRequested = this.viewCommitRequested;
+      this.requestViewCommit();
+      if (alreadyRequested && panel.visible) {
+        this.postViewCommitRequest();
+      }
+    });
+  }
+
+  private resolveDraftCommitWaiters(success: boolean): void {
+    for (const waiter of this.draftCommitWaiters) {
+      clearTimeout(waiter.timer);
+      waiter.resolve(success);
+    }
+    this.draftCommitWaiters.clear();
+  }
+
+  public revealSourceAfterCommit(reason: 'disabled' | 'language' = 'disabled'): void {
+    const panel = this.currentWebviewPanel;
+    if (!panel) {
+      return;
+    }
+    // A deliberate close takes priority over a pending Save As or re-render.
+    this.pendingClose = true;
+    this.pendingViewAction = async () => {
+      const enabled = vscode.workspace.getConfiguration('csv', this.document.uri).get<boolean>('enabled', true);
+      const supportedLanguage = this.document.languageId === 'csv' || this.document.languageId === 'tsv';
+      if (enabled && (reason === 'disabled' || supportedLanguage)) {
+        // A quick re-enable/language roundtrip still commits the active draft.
+        this.updateWebviewContent();
+        return;
+      }
+      await this.openWithDefaultEditorAndClose(panel, this.document.uri, reason);
+    };
+    this.requestViewCommit();
+  }
+
+  public saveUntitledAfterCommit(): void {
+    if (this.document.uri.scheme === 'untitled') {
+      this.saveAfterCommit();
+    }
+  }
+
+  private saveAfterCommit(): void {
+    if (!this.currentWebviewPanel || this.pendingClose) {
+      return;
+    }
+    this.pendingViewAction = async () => {
+      await this.handleSave();
+      this.updateWebviewContent();
+    };
+    this.requestViewCommit();
+  }
+
+  private postViewCommitRequest(): void {
+    const panel = this.currentWebviewPanel;
+    if (!panel) {
+      this.resolveDraftCommitWaiters(false);
+      return;
+    }
+    try {
+      void Promise.resolve(panel.webview.postMessage({
+        type: 'prepareViewRefresh', requestId: this.viewCommitSequence
+      })).then(delivered => {
+        if (!delivered) { this.resolveDraftCommitWaiters(false); }
+      }, () => this.resolveDraftCommitWaiters(false));
+    } catch {
+      this.resolveDraftCommitWaiters(false);
+    }
+  }
+
+  private requestViewCommit(): void {
+    const panel = this.currentWebviewPanel;
+    if (!panel || this.viewCommitRequested) {
+      return;
+    }
+    this.viewCommitRequested = true;
+    this.viewCommitNeedsFreshAck = false;
+    this.viewCommitSequence += 1;
+    if (panel.visible) {
+      // The final edit arrives before the acknowledgment in the ordered queue.
+      // webviewReady resends this request if the first script is still loading.
+      this.postViewCommitRequest();
+    } else {
+      void this.enqueueOperation(() => this.finishViewCommit());
+    }
+  }
+
+  private requestRecoveryRefresh(): void {
+    this.refreshAfterDraftCommit = true;
+    if (this.viewCommitRequested) {
+      // A recovery cannot reuse the snapshot taken before its queued edit.
+      this.viewCommitNeedsFreshAck = true;
+      return;
+    }
+    // The acknowledgment itself runs on the ordered queue, so never await it here.
+    this.requestViewCommit();
+  }
+
+  private async finishViewCommit(): Promise<void> {
+    this.viewCommitRequested = false;
+    if (this.failedCellEdits.size) {
+      // Keep the live DOM and any pending action until its failed cell can be retried.
+      this.resolveDraftCommitWaiters(false);
+      return;
+    }
+    const hadWaiters = this.draftCommitWaiters.size > 0;
+    if (this.pendingDocumentReference) {
+      this.document = this.pendingDocumentReference.document;
+      this.pendingDocumentReference = undefined;
+      this.separatorCache = undefined;
+    }
+    const action = this.pendingViewAction;
+    this.pendingViewAction = undefined;
+    this.pendingClose = false;
+    const refreshNeeded = this.refreshAfterDraftCommit;
+    this.refreshAfterDraftCommit = false;
+    if (action) {
+      await action();
+    } else if (!hadWaiters || refreshNeeded) {
+      this.updateWebviewContent();
+    }
+    // An awaited action can leave a newer request pending. Its waiters need
+    // that request's own ACK, even when this older action just completed.
+    if (!this.viewCommitRequested) { this.resolveDraftCommitWaiters(!!this.currentWebviewPanel && !this.failedCellEdits.size); }
+  }
+
   private forceReload() {
-    if (!this.currentWebviewPanel) return;
+    if (!this.currentWebviewPanel || this.failedCellEdits.size) return;
     const panel = this.currentWebviewPanel;
     // First, blank the DOM to ensure a full script/style reinit on next set
     panel.webview.html = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body></body></html>';
@@ -386,6 +844,198 @@ class CsvEditorController {
     );
   }
 
+  private getFilterColumns(data: string[][]): FilterColumn[] {
+    const offset = Math.min(Math.max(0, this.getHiddenRows()), data.length);
+    const header = this.getEffectiveHeader(data, offset);
+    const body = data.slice(offset + (header ? 1 : 0));
+    const count = Math.max(1, data.reduce((max, row) => Math.max(max, row.length), 0));
+    return Array.from({ length: count }, (_, column) => {
+      const values = body.map(row => row[column] ?? '');
+      const inferred = this.estimateColumnDataType(values);
+      let dataType: FilterDataType = inferred === 'integer' || inferred === 'float' ? 'number'
+        : inferred === 'date' || inferred === 'boolean' ? inferred : 'string';
+      if (inferred === 'string') {
+        const nonblank = values.filter(value => value.trim() !== '');
+        if (nonblank.length && nonblank.every(value => parseFilterDate(value) !== undefined)) {
+          dataType = 'date';
+        }
+      }
+      return { column, label: (header ? data[offset]?.[column] : '') || `Column ${column + 1}`, dataType, operators: getFilterOperatorChoices(dataType) };
+    });
+  }
+
+  private filterResponse(): Record<string, unknown> {
+    if (!this.currentFilterView) { return { filterEpoch: this.filterEpoch }; }
+    const { chunkState, ...payload } = this.currentFilterView;
+    return { ...payload, filterEpoch: this.filterEpoch };
+  }
+
+  private async updateColumnFilters(rawRevision: unknown, rawFilters: unknown, session: unknown): Promise<void> {
+    const panel = this.currentWebviewPanel;
+    if (!panel || session !== this.filterSession) { return; }
+    const reply = (extra: Record<string, unknown>) => {
+      if (session !== this.filterSession || panel !== this.currentWebviewPanel) { return; }
+      void panel.webview.postMessage({ type: 'columnFiltersResult', session: this.filterSession, revision: rawRevision, ...this.filterResponse(), ...extra });
+    };
+    if (typeof rawRevision !== 'number' || !Number.isSafeInteger(rawRevision) || rawRevision <= 0) {
+      reply({ error: 'Filter revisions must be positive safe integers.' });
+      return;
+    }
+    if (rawRevision !== this.latestFilterRevision || rawRevision <= this.filterEpoch) { return; }
+    if (this.failedCellEdits.size) {
+      reply({ error: 'Retry the failed cell edit before changing filters.' });
+      return;
+    }
+    if (this.pendingDocumentReference || this.viewCommitRequested) {
+      reply({ error: 'Finish the current editor change before changing filters.' });
+      return;
+    }
+    if (!Array.isArray(rawFilters) || rawFilters.length > MAX_COLUMN_FILTERS) {
+      reply({ error: `Provide at most ${MAX_COLUMN_FILTERS} filter conditions.` });
+      return;
+    }
+    const data = this.trimTrailingEmptyRows(Papa.parse<string[]>(this.document.getText(), { delimiter: this.getSeparator() }).data);
+    const columns = this.getFilterColumns(data);
+    const filters: ColumnFilter[] = [];
+    const errors: Array<{ index: number; message: string }> = [];
+    rawFilters.forEach((raw: unknown, index: number) => {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        errors.push({ index, message: 'Provide a valid filter condition.' });
+        return;
+      }
+      const item = raw as Record<string, unknown>;
+      if (Object.keys(item).some(key => !['column', 'operator', 'value', 'dataType'].includes(key)) ||
+          typeof item.column !== 'number' || !Number.isSafeInteger(item.column) || item.column < 0 || item.column >= columns.length ||
+          typeof item.operator !== 'string' || typeof item.value !== 'string' || item.value.length > MAX_FILTER_VALUE_LENGTH ||
+          (item.dataType !== undefined && (typeof item.dataType !== 'string' || !['string', 'number', 'date', 'boolean'].includes(item.dataType)))) {
+        errors.push({ index, message: 'Provide a valid column, operator, type and filter value.' });
+        return;
+      }
+      const column = columns[item.column];
+      const choice = column.operators.find(operator => operator.operator === item.operator);
+      if (!choice) {
+        errors.push({ index, message: `Choose an operator supported by this ${column.dataType} column.` });
+        return;
+      }
+      const typed = !['contains', 'notContains', 'regex', 'empty', 'notEmpty'].includes(choice.operator);
+      const dataType = typed && column.dataType !== 'string' ? column.dataType : undefined;
+      // Empty text boxes remain local drafts, including incomplete typed queries.
+      if (choice.operator !== 'empty' && choice.operator !== 'notEmpty' && item.value.length === 0) { return; }
+      const error = validateColumnFilterInput(choice.operator, item.value, dataType);
+      if (error) { errors.push({ index, message: error }); return; }
+      filters.push({ column: item.column, operator: choice.operator, value: item.value, ...(dataType ? { dataType } : {}) });
+    });
+    if (errors.length) { reply({ errors, columns }); return; }
+    const view = this.buildFilterView(data, filters);
+    if (session !== this.filterSession || rawRevision !== this.latestFilterRevision) { return; }
+    const previous = CsvEditorProvider.getColumnFiltersForUri(this.context, this.document.uri);
+    try {
+      await CsvEditorProvider.setColumnFiltersForUri(this.context, this.document.uri, filters);
+      if (session !== this.filterSession || rawRevision !== this.latestFilterRevision) {
+        await CsvEditorProvider.setColumnFiltersForUri(this.context, this.document.uri, previous);
+        return;
+      }
+    } catch {
+      reply({ error: 'The filter conditions could not be saved. Try again.' });
+      return;
+    }
+    this.chunkRenderState = view.chunkState;
+    this.currentFilterView = view;
+    this.currentHeader = view.headerEnabled;
+    this.filterEpoch = rawRevision;
+    reply({});
+  }
+
+  private captureFilterDraft(raw: unknown): void {
+    this.pendingFilterDraft = undefined;
+    const columns = this.currentFilterView?.columns;
+    if (!columns || !raw || typeof raw !== 'object' || Array.isArray(raw)) { return; }
+    const item = raw as Record<string, unknown>;
+    if (item.session !== this.filterSession || item.filterColumnsRevision !== this.filterColumnsRevision ||
+        !Array.isArray(item.rows) || item.rows.length > MAX_COLUMN_FILTERS ||
+        !Array.isArray(item.columns) || item.columns.length !== columns.length) { return; }
+    if (!item.columns.every((column: unknown, index: number) => {
+      if (!column || typeof column !== 'object' || Array.isArray(column)) { return false; }
+      const identity = column as Record<string, unknown>;
+      return identity.column === columns[index].column && identity.label === columns[index].label;
+    })) { return; }
+    const rows: FilterDraft['rows'] = [];
+    for (const rawRow of item.rows as unknown[]) {
+      if (!rawRow || typeof rawRow !== 'object' || Array.isArray(rawRow)) { return; }
+      const row = rawRow as Record<string, unknown>;
+      const operator = getFilterOperatorChoices('number').find(choice => choice.operator === row.operator)?.operator;
+      if (typeof row.column !== 'number' || !Number.isSafeInteger(row.column) || row.column < 0 || row.column >= columns.length ||
+          !operator || typeof row.value !== 'string' || row.value.length > MAX_FILTER_VALUE_LENGTH ||
+          (row.composing !== undefined && typeof row.composing !== 'boolean')) { return; }
+      // Preserve blank and invalid queries as drafts; only submission validates their meaning.
+      rows.push({ column: row.column, operator, value: row.value, ...(row.composing ? { composing: true } : {}) });
+    }
+    const draft: FilterDraft = {
+      session: this.filterSession,
+      filterColumnsRevision: this.filterColumnsRevision,
+      rows,
+      columns: columns.map(column => ({ column: column.column, label: column.label }))
+    };
+    if (item.focus !== undefined) {
+      if (!item.focus || typeof item.focus !== 'object' || Array.isArray(item.focus)) { return; }
+      const focus = item.focus as Record<string, unknown>;
+      if (typeof focus.row !== 'number' || !Number.isSafeInteger(focus.row) || focus.row < 0 || focus.row >= rows.length ||
+          (focus.field !== 'column' && focus.field !== 'operator' && focus.field !== 'value' && focus.field !== 'remove')) { return; }
+      draft.focus = { row: focus.row, field: focus.field };
+      if (focus.selectionStart !== undefined || focus.selectionEnd !== undefined || focus.selectionDirection !== undefined) {
+        if (focus.field !== 'value' || typeof focus.selectionStart !== 'number' || typeof focus.selectionEnd !== 'number' ||
+            !Number.isSafeInteger(focus.selectionStart) || !Number.isSafeInteger(focus.selectionEnd) ||
+            focus.selectionStart < 0 || focus.selectionEnd < focus.selectionStart || focus.selectionEnd > rows[focus.row].value.length ||
+            (focus.selectionDirection !== 'forward' && focus.selectionDirection !== 'backward' && focus.selectionDirection !== 'none')) { return; }
+        Object.assign(draft.focus, { selectionStart: focus.selectionStart, selectionEnd: focus.selectionEnd, selectionDirection: focus.selectionDirection });
+      }
+    }
+    this.pendingFilterDraft = { uri: this.filterSessionUri, draft };
+  }
+
+  private consumeFilterDraft(columns: FilterColumn[]): FilterDraft | undefined {
+    const pending = this.pendingFilterDraft;
+    this.pendingFilterDraft = undefined;
+    if (!pending || pending.uri !== this.document.uri.toString() || pending.draft.filterColumnsRevision !== this.filterColumnsRevision ||
+        pending.draft.columns.length !== columns.length || pending.draft.columns.some((column, index) =>
+          column.column !== columns[index].column || column.label !== columns[index].label)) { return undefined; }
+    return pending.draft;
+  }
+
+  private async remapFilters(columnOrder: number[]): Promise<void> {
+    if (columnOrder.length !== this.currentFilterView?.columns.length || columnOrder.some((column, index) => column !== index)) {
+      this.filterColumnsRevision++;
+      this.pendingFilterDraft = undefined;
+    }
+    await CsvEditorProvider.setColumnFiltersForUri(this.context, this.document.uri,
+      remapColumnFilters(CsvEditorProvider.getColumnFiltersForUri(this.context, this.document.uri), columnOrder));
+  }
+
+  public refreshViewSafely(): void {
+    this.refreshAfterDraftCommit = true;
+    this.requestViewCommit();
+  }
+
+  public getCurrentFrozenPanes(): FrozenPanes {
+    return CsvEditorProvider.getFrozenPanesForUri(this.context, this.document.uri, this.currentHeader);
+  }
+
+  public async setFrozenPanes(change: Partial<FrozenPanes>): Promise<void> {
+    await CsvEditorProvider.setFrozenPanesForUri(this.context, this.document.uri, change);
+    this.currentWebviewPanel?.webview.postMessage({ type: 'frozenPanes', ...this.getCurrentFrozenPanes() });
+  }
+
+  public updateDocumentReference(document: vscode.TextDocument): void {
+    if (document.uri.toString() === this.document.uri.toString()) {
+      this.pendingDocumentReference = {
+        document,
+        separator: this.pendingDocumentReference?.separator ?? this.renderedSeparator ?? this.getSeparator()
+      };
+      this.refreshAfterDraftCommit = true;
+      this.requestViewCommit();
+    }
+  }
+
   public getDocumentUri(): vscode.Uri {
     return this.document.uri;
   }
@@ -396,13 +1046,50 @@ class CsvEditorController {
 
   // ───────────── Document Editing Methods ─────────────
 
+  private reportFailedCellEdit(row: number, col: number): void {
+    this.failedCellEdits.set(`${row}:${col}`, { row, col });
+    void this.currentWebviewPanel?.webview.postMessage({
+      type: 'editCellFailed', row, col, retry: !!this.viewCommitRequested
+    });
+  }
+
+  private postCommittedCell(row: number, col: number, value: string): void {
+    const clickableLinks = vscode.workspace.getConfiguration('csv', this.document.uri).get<boolean>('clickableLinks', true);
+    void this.currentWebviewPanel?.webview.postMessage({
+      type: 'updateCell', row, col, value, rendered: this.formatCellContent(value, clickableLinks)
+    });
+  }
+
+  private clearFailedCellEdit(row: number, col: number, value: string): void {
+    if (this.failedCellEdits.delete(`${row}:${col}`)) {
+      this.postCommittedCell(row, col, value);
+      if (!this.failedCellEdits.size) { this.requestRecoveryRefresh(); }
+    }
+  }
+
+  private discardFailedCellDraft(row: number, col: number): void {
+    const failed = this.failedCellEdits.get(`${row}:${col}`);
+    if (!failed) {
+      return;
+    }
+    // Escape discards the failed DOM draft, never overwrites the current owner.
+    const document = this.pendingDocumentReference?.document ?? this.document;
+    const data = Papa.parse<string[]>(document.getText(), { delimiter: this.getSeparator() }).data;
+    this.clearFailedCellEdit(row, col, String(data[row]?.[col] ?? ''));
+
+  }
+
   private async updateDocument(row: number, col: number, value: string) {
+    // The old document may be closed during a language change. Apply its final
+    // draft to the live shared URI using the delimiter of the still-visible grid.
+    const document = this.pendingDocumentReference?.document ?? this.document;
     this.isUpdatingDocument = true;
     let structuralChange = false;
+    let filterMembershipChanged = false;
     let applied = false;
     try {
       const separator = this.getSeparator();
-      const oldText = this.document.getText();
+      const oldText = document.getText();
       const result = Papa.parse(oldText, { dynamicTyping: false, delimiter: separator });
       const data = result.data as string[][];
       const hadRows = data.length;
@@ -412,10 +1099,15 @@ class CsvEditorController {
           ? String(data[row][col] ?? '')
           : undefined;
 
+      const filters = CsvEditorProvider.getColumnFiltersForUri(this.context, this.document.uri);
+      const matches = compileColumnFilters(filters);
+      const previouslyMatched = matches(data[row] ?? []);
       const { data: nextData, trimmed, createdRow, createdCol } = this.mutateDataForEdit(data, row, col, value);
+      filterMembershipChanged = filters.length > 0 && previouslyMatched !== matches(nextData[row] ?? []);
       structuralChange = !!(trimmed || createdRow || createdCol || row >= hadRows || col >= hadColsAtRow);
 
       if (!structuralChange && previousValue === value) {
+        this.clearFailedCellEdit(row, col, value);
         return;
       }
 
@@ -426,40 +1118,52 @@ class CsvEditorController {
           separator,
           [{ row, col, value: String(value ?? '') }]
         );
+      } else {
+        newCsvText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(oldText, separator, nextData);
       }
       if (newCsvText === undefined) {
         newCsvText = Papa.unparse(nextData, { delimiter: separator });
       }
 
       if (newCsvText === oldText) {
+        this.clearFailedCellEdit(row, col, value);
         return;
       }
 
       const fullRange = new vscode.Range(
         0, 0,
-        this.document.lineCount,
-        this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0
+        document.lineCount,
+        document.lineCount ? document.lineAt(document.lineCount - 1).text.length : 0
       );
       const edit = new vscode.WorkspaceEdit();
-      edit.replace(this.document.uri, fullRange, newCsvText);
-      await vscode.workspace.applyEdit(edit);
-      applied = true;
+      edit.replace(document.uri, fullRange, newCsvText);
+      applied = await vscode.workspace.applyEdit(edit);
+    } catch (error) {
+      this.reportFailedCellEdit(row, col);
+      throw error;
     } finally {
       this.isUpdatingDocument = false;
     }
 
     if (!applied) {
+      this.reportFailedCellEdit(row, col);
       return;
     }
+    const recoveredDraft = this.failedCellEdits.delete(`${row}:${col}`);
 
-    console.log(`CSV: Updated row ${row + 1}, column ${col + 1} to "${value}"`);
-    const config = vscode.workspace.getConfiguration('csv', this.document.uri);
+    console.log(`CSV: Updated row ${row + 1}, column ${col + 1}`);
+    const config = vscode.workspace.getConfiguration('csv', document.uri);
     const clickableLinks = config.get<boolean>('clickableLinks', true);
     const rendered = this.formatCellContent(value ?? '', clickableLinks);
     this.currentWebviewPanel?.webview.postMessage({ type: 'updateCell', row, col, value, rendered });
 
     // Trigger a full re-render if structure may have changed (new row/col created)
-    if (structuralChange) {
+    if (recoveredDraft && !this.failedCellEdits.size) {
+      this.requestRecoveryRefresh();
+    }
+    if (filterMembershipChanged) {
+      this.refreshViewSafely();
+    } else if (structuralChange && !this.pendingDocumentReference) {
       try { this.updateWebviewContent(); } catch (e) { console.error('CSV: refresh failed after structural edit', e); }
     }
   }
@@ -528,34 +1232,32 @@ class CsvEditorController {
     }
   }
 
-  private parseClipboardMatrix(text: string): string[][] {
-    if (!text || text.length === 0) {
-      return [];
+  private async copyCells(rawMatrix: unknown, rawRowIds: unknown, rawStartCol: unknown, cut: boolean): Promise<void> {
+    if (!Array.isArray(rawMatrix) || rawMatrix.length === 0 || !rawMatrix.every(row =>
+      Array.isArray(row) && row.length > 0 && row.every(value => typeof value === 'string')
+    )) {
+      return;
     }
-    const parsed = Papa.parse(text, { dynamicTyping: false, delimiter: '' });
-    const rowsRaw = Array.isArray(parsed.data) ? parsed.data : [];
-    const matrix: string[][] = rowsRaw.map(rawRow => {
-      if (Array.isArray(rawRow)) {
-        return rawRow.map(cell => String(cell ?? ''));
-      }
-      return [String(rawRow ?? '')];
-    });
-    while (matrix.length > 0 && matrix[matrix.length - 1].every(value => value === '')) {
-      matrix.pop();
+    const matrix = rawMatrix as string[][];
+    const rowIds = Array.isArray(rawRowIds) ? rawRowIds : [];
+    const startCol = Number(rawStartCol);
+    if (rowIds.length !== matrix.length || new Set(rowIds).size !== rowIds.length || !rowIds.every(row => Number.isInteger(row) && row >= 0) || !Number.isInteger(startCol) || startCol < 0) {
+      return;
     }
-    if (matrix.length === 0) {
-      return [];
+    const documentVersion = this.document.version;
+    try {
+      await vscode.env.clipboard.writeText(serializeClipboardMatrix(matrix, this.getSeparator()));
+    } catch {
+      void vscode.window.showErrorMessage('CSV: Unable to write to the clipboard. The selected cells were kept.');
+      return;
     }
-    const width = matrix.reduce((max, row) => Math.max(max, row.length), 0);
-    if (width <= 0) {
-      return [];
+    if (cut && this.document.version === documentVersion) {
+      await this.replaceCells(matrix.flatMap((row, rowOffset) => row.map((_value, colOffset) => ({
+        row: rowIds[rowOffset],
+        col: startCol + colOffset,
+        value: ''
+      }))));
     }
-    matrix.forEach(row => {
-      while (row.length < width) {
-        row.push('');
-      }
-    });
-    return matrix;
   }
 
   private static parsePasteSelectionBounds(raw: unknown): PasteSelectionBounds | undefined {
@@ -622,7 +1324,8 @@ class CsvEditorController {
     matrix: string[][],
     anchorRow: number,
     anchorCol: number,
-    selection: PasteSelectionBounds | undefined
+    selection: PasteSelectionBounds | undefined,
+    targetRows?: number[]
   ): PasteApplyResult {
     const plan = CsvEditorController.computePastePlan(matrix, anchorRow, anchorCol, selection);
     if (!plan) {
@@ -640,6 +1343,11 @@ class CsvEditorController {
       };
     }
 
+    const rowsToWrite = targetRows ?? Array.from({ length: plan.endRow - plan.startRow + 1 }, (_, index) => plan.startRow + index);
+    if (rowsToWrite.length) {
+      plan.startRow = rowsToWrite[0];
+      plan.endRow = rowsToWrite[rowsToWrite.length - 1];
+    }
     const updates: Array<{ row: number; col: number; value: string }> = [];
     let changed = false;
     let structuralChange = false;
@@ -667,7 +1375,7 @@ class CsvEditorController {
 
     if (plan.fillSelection) {
       const value = String(matrix[0][0] ?? '');
-      for (let row = plan.startRow; row <= plan.endRow; row++) {
+      for (const row of rowsToWrite) {
         for (let col = plan.startCol; col <= plan.endCol; col++) {
           setCellValue(row, col, value);
         }
@@ -675,7 +1383,7 @@ class CsvEditorController {
     } else {
       for (let r = 0; r < matrix.length; r++) {
         for (let c = 0; c < matrix[r].length; c++) {
-          setCellValue(plan.startRow + r, plan.startCol + c, String(matrix[r][c] ?? ''));
+          setCellValue(rowsToWrite[r], plan.startCol + c, String(matrix[r][c] ?? ''));
         }
       }
     }
@@ -698,7 +1406,7 @@ class CsvEditorController {
     if (!Number.isInteger(anchorRow) || anchorRow < 0 || !Number.isInteger(anchorCol) || anchorCol < 0) {
       return;
     }
-    const matrix = this.parseClipboardMatrix(text);
+    const matrix = parseClipboardMatrix(text, this.getSeparator());
     if (!matrix.length || !matrix[0].length) {
       return;
     }
@@ -709,9 +1417,21 @@ class CsvEditorController {
       const separator = this.getSeparator();
       const oldText = this.document.getText();
       const result = Papa.parse(oldText, { dynamicTyping: false, delimiter: separator });
-      const data = result.data as string[][];
+      const data = this.trimTrailingEmptyRows(result.data as string[][]);
 
-      const pasteResult = CsvEditorController.applyPasteMatrixToData(data, matrix, anchorRow, anchorCol, selection);
+      const realData = this.trimTrailingEmptyRows(data);
+      const filters = normalizeColumnFilters(CsvEditorProvider.getColumnFiltersForUri(this.context, this.document.uri), data.reduce((max, row) => Math.max(max, row.length), 0));
+      const visibleRows = [...visibleSourceRows(realData, this.getHiddenRows(), this.getEffectiveHeader(realData, this.getHiddenRows()), filters), realData.length];
+      const anchorIndex = visibleRows.indexOf(anchorRow);
+      if (anchorIndex < 0) {
+        void vscode.window.showInformationMessage('CSV: Select a visible cell and paste again.');
+        return;
+      }
+      const plan = CsvEditorController.computePastePlan(matrix, anchorRow, anchorCol, selection);
+      const targetRows = plan?.fillSelection
+        ? visibleRows.filter(row => row >= plan.startRow && row <= plan.endRow)
+        : matrix.map((_row, index) => visibleRows[anchorIndex + index] ?? realData.length + anchorIndex + index - visibleRows.length + 1);
+      const pasteResult = CsvEditorController.applyPasteMatrixToData(data, matrix, anchorRow, anchorCol, selection, targetRows);
       if (!pasteResult.changed) {
         return;
       }
@@ -719,6 +1439,8 @@ class CsvEditorController {
       let newCsvText: string | undefined;
       if (!pasteResult.structuralChange) {
         newCsvText = CsvEditorProvider.applyFieldUpdatesPreservingFormat(oldText, separator, pasteResult.updates);
+      } else {
+        newCsvText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(oldText, separator, this.trimTrailingEmptyRows(data));
       }
       if (newCsvText === undefined) {
         newCsvText = Papa.unparse(data, { delimiter: separator });
@@ -757,17 +1479,17 @@ class CsvEditorController {
     if (start < state.allRowsCount) {
       const end = Math.min(start + state.chunkRows, state.allRowsCount);
       const html = state.allRows.slice(start, end).map((row, localR) => {
-        const absRow = state.startAbs + start + localR;
-        const displayIdx = start + localR + 1;
+        const absRow = state.rowIds[start + localR];
+        const displayIdx = absRow - state.bodyStart + 1;
         let cells = '';
         for (let cIdx = 0; cIdx < state.numColumns; cIdx++) {
           const rawValue = row[cIdx] || '';
           const safe = this.formatCellContent(rawValue, state.clickableLinks);
           const titleAttr = this.getMultilineCellTitleAttr(rawValue);
-          cells += `<td tabindex="0" style="min-width:${Math.min(state.columnWidths[cIdx] || 0, 100)}ch;max-width:100ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:${state.columnColors[cIdx]};overflow:visible;white-space: pre-wrap;overflow-wrap:anywhere;"${titleAttr} data-row="${absRow}" data-col="${cIdx}">${safe}</td>`;
+          cells += `<td tabindex="0" style="min-width:${Math.min(state.columnWidths[cIdx] || 0, 100)}ch;max-width:100ch;border:1px solid var(--csv-table-border, ${state.isDark ? '#555' : '#ccc'});color:${state.columnColors[cIdx]};overflow:visible;white-space: pre-wrap;overflow-wrap:anywhere;"${titleAttr} data-row="${absRow}" data-col="${cIdx}">${safe}</td>`;
         }
         const idxCell = state.addSerialIndex
-          ? `<td tabindex="0" style="min-width:${state.serialIndexWidthCh}ch;max-width:${state.serialIndexWidthCh}ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:#888;" data-row="${absRow}" data-col="-1">${displayIdx}</td>`
+          ? `<td tabindex="0" style="min-width:${state.serialIndexWidthCh}ch;max-width:${state.serialIndexWidthCh}ch;border:1px solid var(--csv-table-border, ${state.isDark ? '#555' : '#ccc'});color:#888;" data-row="${absRow}" data-col="-1">${displayIdx}</td>`
           : '';
         return `<tr>${idxCell}${cells}</tr>`;
       }).join('');
@@ -782,26 +1504,28 @@ class CsvEditorController {
     }
 
     if (start === state.allRowsCount && state.includeTrailingEmptyRow) {
-      const virtualAbs = state.startAbs + state.allRowsCount;
-      const displayIdx = state.allRowsCount + 1;
+      const virtualAbs = state.virtualRow;
+      const displayIdx = virtualAbs - state.bodyStart + 1;
       const idxCell = state.addSerialIndex
-        ? `<td tabindex="0" style="min-width:${state.serialIndexWidthCh}ch;max-width:${state.serialIndexWidthCh}ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:#888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>`
+        ? `<td tabindex="0" style="min-width:${state.serialIndexWidthCh}ch;max-width:${state.serialIndexWidthCh}ch;border:1px solid var(--csv-table-border, ${state.isDark ? '#555' : '#ccc'});color:#888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>`
         : '';
-      const dataCells = Array.from({ length: state.numColumns }, (_, i) => `<td tabindex="0" style="min-width:${Math.min(state.columnWidths[i] || 0, 100)}ch;max-width:100ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:${state.columnColors[i]};overflow:visible;white-space: pre-wrap;overflow-wrap:anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+      const dataCells = Array.from({ length: state.numColumns }, (_, i) => `<td tabindex="0" style="min-width:${Math.min(state.columnWidths[i] || 0, 100)}ch;max-width:100ch;border:1px solid var(--csv-table-border, ${state.isDark ? '#555' : '#ccc'});color:${state.columnColors[i]};overflow:visible;white-space: pre-wrap;overflow-wrap:anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
       return { html: `<tr>${idxCell}${dataCells}</tr>`, nextStart: -1, done: true };
     }
 
     return { html: '', nextStart: -1, done: true };
   }
 
-  private async requestChunk(rawStart: unknown, requestId: unknown): Promise<void> {
-    if (!this.currentWebviewPanel || !this.chunkRenderState) {
+  private async requestChunk(rawStart: unknown, requestId: unknown, filterEpoch: unknown, session: unknown): Promise<void> {
+    if (!this.currentWebviewPanel || !this.chunkRenderState || filterEpoch !== this.filterEpoch || session !== this.filterSession) {
       return;
     }
     const start = Number(rawStart);
     if (!Number.isInteger(start) || start < 0) {
       this.currentWebviewPanel.webview.postMessage({
         type: 'chunkData',
+        session: this.filterSession,
+        filterEpoch: this.filterEpoch,
         requestId,
         start: -1,
         html: '',
@@ -813,6 +1537,8 @@ class CsvEditorController {
     const response = this.renderChunkFromState(this.chunkRenderState, start);
     this.currentWebviewPanel.webview.postMessage({
       type: 'chunkData',
+      session: this.filterSession,
+      filterEpoch: this.filterEpoch,
       requestId,
       start,
       html: response.html,
@@ -882,7 +1608,8 @@ class CsvEditorController {
     const offset = Math.min(Math.max(0, hiddenRows), data.length);
     const matches: Array<{ row: number; col: number; value: string }> = [];
 
-    for (let row = offset; row < data.length; row++) {
+    const filters = normalizeColumnFilters(CsvEditorProvider.getColumnFiltersForUri(this.context, this.document.uri), data.reduce((max, row) => Math.max(max, row.length), 0));
+    for (const row of visibleSourceRows(data, offset, this.getEffectiveHeader(data, hiddenRows), filters)) {
       const current = data[row] || [];
       for (let col = 0; col < current.length; col++) {
         const value = String(current[col] ?? '');
@@ -949,6 +1676,13 @@ class CsvEditorController {
   private async handleSave() {
     this.isSaving = true;
     try {
+      if (this.document.uri.scheme === 'untitled') {
+        // Native Save owns the actual Save As transition. The temporary grid
+        // closes when VS Code closes the original untitled document.
+        await vscode.window.showTextDocument(this.document, { viewColumn: this.currentWebviewPanel?.viewColumn, preview: false });
+        await vscode.commands.executeCommand('workbench.action.files.save');
+        return;
+      }
       const success = await this.document.save();
       console.log(success ? 'CSV: Document saved' : 'CSV: Failed to save document');
     } catch (error) {
@@ -963,14 +1697,17 @@ class CsvEditorController {
     const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const data = result.data as string[][];
+    const data = this.trimTrailingEmptyRows(result.data as string[][]);
+    const order = Array.from({ length: data.reduce((max, row) => Math.max(max, row.length), 0) }, (_, column) => column);
     for (const row of data) {
       if (index > row.length) {
         while (row.length < index) row.push('');
       }
       row.splice(index, 0, '');
     }
-    const newText = Papa.unparse(data, { delimiter: separator });
+    order.splice(index, 0, -1);
+    const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, data, undefined, order)
+      ?? Papa.unparse(data, { delimiter: separator });
     const fullRange = new vscode.Range(
       0, 0,
       this.document.lineCount,
@@ -980,6 +1717,7 @@ class CsvEditorController {
     edit.replace(this.document.uri, fullRange, newText);
     await vscode.workspace.applyEdit(edit);
     this.isUpdatingDocument = false;
+    await this.remapFilters(order);
     this.updateWebviewContent();
   }
 
@@ -989,7 +1727,8 @@ class CsvEditorController {
     const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const data = result.data as string[][];
+    const data = this.trimTrailingEmptyRows(result.data as string[][]);
+    const order = Array.from({ length: data.reduce((max, row) => Math.max(max, row.length), 0) }, (_, column) => column);
     for (let k = 0; k < count; k++) {
       for (const row of data) {
         if (index > row.length) {
@@ -998,7 +1737,9 @@ class CsvEditorController {
         row.splice(index, 0, '');
       }
     }
-    const newText = Papa.unparse(data, { delimiter: separator });
+    order.splice(index, 0, ...Array(count).fill(-1));
+    const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, data, undefined, order)
+      ?? Papa.unparse(data, { delimiter: separator });
     const fullRange = new vscode.Range(
       0, 0,
       this.document.lineCount,
@@ -1008,6 +1749,7 @@ class CsvEditorController {
     edit.replace(this.document.uri, fullRange, newText);
     await vscode.workspace.applyEdit(edit);
     this.isUpdatingDocument = false;
+    await this.remapFilters(order);
     this.updateWebviewContent();
   }
 
@@ -1016,13 +1758,16 @@ class CsvEditorController {
     const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const data = result.data as string[][];
+    const data = this.trimTrailingEmptyRows(result.data as string[][]);
+    const order = Array.from({ length: data.reduce((max, row) => Math.max(max, row.length), 0) }, (_, column) => column);
     for (const row of data) {
       if (index < row.length) {
         row.splice(index, 1);
       }
     }
-    const newText = Papa.unparse(data, { delimiter: separator });
+    order.splice(index, 1);
+    const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, data, undefined, order)
+      ?? Papa.unparse(data, { delimiter: separator });
     const fullRange = new vscode.Range(
       0, 0,
       this.document.lineCount,
@@ -1032,6 +1777,7 @@ class CsvEditorController {
     edit.replace(this.document.uri, fullRange, newText);
     await vscode.workspace.applyEdit(edit);
     this.isUpdatingDocument = false;
+    await this.remapFilters(order);
     this.updateWebviewContent();
   }
 
@@ -1041,7 +1787,8 @@ class CsvEditorController {
     const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const data = result.data as string[][];
+    const data = this.trimTrailingEmptyRows(result.data as string[][]);
+    const order = Array.from({ length: data.reduce((max, row) => Math.max(max, row.length), 0) }, (_, column) => column);
     const sorted = [...indices].sort((a,b)=>b-a);
     for (const idx of sorted) {
       for (const row of data) {
@@ -1050,7 +1797,9 @@ class CsvEditorController {
         }
       }
     }
-    const newText = Papa.unparse(data, { delimiter: separator });
+    for (const column of sorted) { order.splice(column, 1); }
+    const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, data, undefined, order)
+      ?? Papa.unparse(data, { delimiter: separator });
     const fullRange = new vscode.Range(
       0, 0,
       this.document.lineCount,
@@ -1060,6 +1809,7 @@ class CsvEditorController {
     edit.replace(this.document.uri, fullRange, newText);
     await vscode.workspace.applyEdit(edit);
     this.isUpdatingDocument = false;
+    await this.remapFilters(order);
     this.updateWebviewContent();
   }
 
@@ -1110,26 +1860,22 @@ class CsvEditorController {
       return sa.localeCompare(sb, undefined, { sensitivity: 'base' });
     };
 
-    body.sort((r1, r2) => {
+    const filters = normalizeColumnFilters(CsvEditorProvider.getColumnFiltersForUri(this.context, this.document.uri), rows.reduce((max, row) => Math.max(max, row.length), 0));
+    const matches = compileColumnFilters(filters);
+    const matchingSlots = body.map((_row, slot) => slot).filter(slot => matches(body[slot]));
+    const sortedMatches = matchingSlots.map(slot => body[slot]).sort((r1, r2) => {
       const diff = cmp(r1[index] ?? '', r2[index] ?? '');
       return ascending ? diff : -diff;
     });
+    matchingSlots.forEach((slot, order) => { body[slot] = sortedMatches[order]; });
 
     const prefix = rows.slice(0, offset);
     const combined = treatHeader ? [...prefix, header, ...body] : [...prefix, ...body];
 
-    // Sanitize before unparse: ensure undefined/null/NaN become empty strings
-    const sanitized: string[][] = combined.map(r => r.map((v: any) => {
-      if (v === undefined || v === null) return '';
-      const t = typeof v;
-      if (t === 'number') {
-        return Number.isNaN(v) ? '' : String(v);
-      }
-      const s = String(v);
-      return s.toLowerCase() === 'nan' ? '' : s;
-    }));
-
-    const newCsv = Papa.unparse(sanitized, { delimiter: separator });
+    const originalIndex = new Map(rows.map((row, position) => [row, position]));
+    const rowOrder = combined.map(row => originalIndex.get(row)!);
+    const newCsv = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, combined, rowOrder)
+      ?? Papa.unparse(combined, { delimiter: separator });
 
     const fullRange = new vscode.Range(
       0, 0,
@@ -1151,14 +1897,17 @@ class CsvEditorController {
     const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const data = result.data as string[][];
+    const data = this.trimTrailingEmptyRows(result.data as string[][]);
+    const order = data.map((_row, position) => position);
     const numColumns = data.reduce((max, r) => Math.max(max, r.length), 0);
     const newRow = Array(numColumns).fill('');
     if (index > data.length) {
       while (data.length < index) data.push(Array(numColumns).fill(''));
     }
     data.splice(index, 0, newRow);
-    const newText = Papa.unparse(data, { delimiter: separator });
+    order.splice(index, 0, -1);
+    const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, data, order)
+      ?? Papa.unparse(data, { delimiter: separator });
     const fullRange = new vscode.Range(
       0, 0,
       this.document.lineCount,
@@ -1177,7 +1926,8 @@ class CsvEditorController {
     const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const data = result.data as string[][];
+    const data = this.trimTrailingEmptyRows(result.data as string[][]);
+    const order = data.map((_row, position) => position);
     const numColumns = data.reduce((max, r) => Math.max(max, r.length), 0);
     for (let k = 0; k < count; k++) {
       const newRow = Array(numColumns).fill('');
@@ -1186,7 +1936,9 @@ class CsvEditorController {
       }
       data.splice(index, 0, newRow);
     }
-    const newText = Papa.unparse(data, { delimiter: separator });
+    order.splice(index, 0, ...Array(count).fill(-1));
+    const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, data, order)
+      ?? Papa.unparse(data, { delimiter: separator });
     const fullRange = new vscode.Range(
       0, 0,
       this.document.lineCount,
@@ -1204,11 +1956,14 @@ class CsvEditorController {
     const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const data = result.data as string[][];
+    const data = this.trimTrailingEmptyRows(result.data as string[][]);
+    const order = data.map((_row, position) => position);
     if (index < data.length) {
       data.splice(index, 1);
     }
-    const newText = Papa.unparse(data, { delimiter: separator });
+    order.splice(index, 1);
+    const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, data, order)
+      ?? Papa.unparse(data, { delimiter: separator });
     const fullRange = new vscode.Range(
       0, 0,
       this.document.lineCount,
@@ -1227,14 +1982,17 @@ class CsvEditorController {
     const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const data = result.data as string[][];
+    const data = this.trimTrailingEmptyRows(result.data as string[][]);
+    const order = data.map((_row, position) => position);
     const sorted = [...indices].sort((a,b)=>b-a);
     for (const idx of sorted) {
       if (idx < data.length) {
         data.splice(idx, 1);
       }
     }
-    const newText = Papa.unparse(data, { delimiter: separator });
+    for (const row of sorted) { order.splice(row, 1); }
+    const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, data, order)
+      ?? Papa.unparse(data, { delimiter: separator });
     const fullRange = new vscode.Range(
       0, 0,
       this.document.lineCount,
@@ -1296,7 +2054,7 @@ class CsvEditorController {
       const separator = this.getSeparator();
       const text = this.document.getText();
       const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-      const data = result.data as string[][];
+      const data = this.trimTrailingEmptyRows(result.data as string[][]);
       const numColumns = data.reduce((max, row) => Math.max(max, row.length), 0);
       if (numColumns <= 0) return;
 
@@ -1307,13 +2065,13 @@ class CsvEditorController {
       const reorderedData = data.map(row => {
         const normalized = Array.from({ length: numColumns }, (_, i) => row[i] ?? '');
         const next = columnOrder.map(colIdx => normalized[colIdx] ?? '');
-        while (next.length > 0 && next[next.length - 1] === '') {
-          next.pop();
-        }
-        return next;
+        // Keep explicit empty fields; omit only positions absent from the source row.
+        const lastPresent = columnOrder.reduce((last, colIdx, index) => colIdx < row.length ? index : last, -1);
+        return next.slice(0, lastPresent + 1);
       });
 
-      const newText = Papa.unparse(reorderedData, { delimiter: separator });
+      const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, reorderedData, undefined, columnOrder)
+        ?? Papa.unparse(reorderedData, { delimiter: separator });
       const fullRange = new vscode.Range(
         0, 0,
         this.document.lineCount,
@@ -1322,6 +2080,7 @@ class CsvEditorController {
       const edit = new vscode.WorkspaceEdit();
       edit.replace(this.document.uri, fullRange, newText);
       await vscode.workspace.applyEdit(edit);
+      await this.remapFilters(columnOrder);
       this.updateWebviewContent();
     } finally {
       this.isUpdatingDocument = false;
@@ -1334,13 +2093,15 @@ class CsvEditorController {
       const separator = this.getSeparator();
       const text = this.document.getText();
       const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-      const data = result.data as string[][];
+      const data = this.trimTrailingEmptyRows(result.data as string[][]);
       if (!data.length) return;
 
-      const { reordered, changed } = this.reorderByIndices(data, indices, beforeIndex);
+      const { reordered: rowOrder, changed } = this.reorderByIndices(data.map((_, index) => index), indices, beforeIndex);
       if (!changed) return;
 
-      const newText = Papa.unparse(reordered, { delimiter: separator });
+      const reordered = rowOrder.map(index => data[index]);
+      const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, reordered, rowOrder)
+        ?? Papa.unparse(reordered, { delimiter: separator });
       const fullRange = new vscode.Range(
         0, 0,
         this.document.lineCount,
@@ -1358,13 +2119,16 @@ class CsvEditorController {
   // ───────────── Webview Rendering ─────────────
 
   private updateWebviewContent() {
-    if (!this.currentWebviewPanel) return;
+    if (!this.currentWebviewPanel || this.failedCellEdits.size || this.pendingDocumentReference) return;
+    if (this.viewCommitRequested) {
+      this.refreshAfterDraftCommit = true;
+      return;
+    }
 
     const webview = this.currentWebviewPanel.webview;
     const config = vscode.workspace.getConfiguration('csv', this.document.uri);
-    const addSerialIndex = CsvEditorProvider.getSerialIndexForUri(this.context, this.document.uri);
     const separator = this.getSeparator();
-    const hiddenRows = this.getHiddenRows();
+    this.renderedSeparator = separator;
 
     let parsed;
     try {
@@ -1385,33 +2149,19 @@ class CsvEditorController {
 
     const cellPadding = config.get<number>('cellPadding', 4);
     const data = this.trimTrailingEmptyRows((parsed.data || []) as string[][]);
-    const treatHeader = this.getEffectiveHeader(data, hiddenRows);
-    const clickableLinks = config.get<boolean>('clickableLinks', true);
-    const configuredColumnColorMode = config.get<string>('columnColorMode', 'type');
-    const diffUseThemeForeground = config.get<boolean>('diffUseThemeForeground', true);
-    const columnColorMode = CsvEditorController.resolveEffectiveColumnColorMode(
-      configuredColumnColorMode,
-      this.isDiffContext,
-      diffUseThemeForeground
-    );
-    const columnColorPalette = config.get<string>('columnColorPalette', 'default');
-    const showTrailingEmptyRow = config.get<boolean>('showTrailingEmptyRow', true);
+    const filters = normalizeColumnFilters(CsvEditorProvider.getColumnFiltersForUri(this.context, this.document.uri), data.reduce((max, row) => Math.max(max, row.length), 0));
+    const view = this.buildFilterView(data, filters);
+    const filterDraft = this.consumeFilterDraft(view.columns);
+    this.currentHeader = view.headerEnabled;
+    this.chunkRenderState = view.chunkState;
+    this.currentFilterView = view;
+    this.latestFilterRevision = 0;
+    this.filterEpoch = 0;
+    this.filterSession = this.getNonce();
+    this.filterSessionUri = this.document.uri.toString();
     const mouseWheelZoomEnabled = config.get<boolean>('mouseWheelZoom', true);
     const mouseWheelZoomInvert = config.get<boolean>('mouseWheelZoomInvert', false);
-
-    const { tableHtml, chunksJson, colorCss, nextChunkStart, hasRemoteChunks, chunkState } =
-      this.generateTableAndChunks(
-        data,
-        treatHeader,
-        addSerialIndex,
-        hiddenRows,
-        clickableLinks,
-        columnColorMode,
-        columnColorPalette,
-        showTrailingEmptyRow,
-        /* maxSerializedChunks */ 0
-      );
-    this.chunkRenderState = chunkState;
+    const { tableHtml, chunksJson, colorCss, nextChunkStart, hasRemoteChunks } = view;
 
     const nonce = this.getNonce();
 
@@ -1427,9 +2177,34 @@ class CsvEditorController {
       extraColumnColorCss: colorCss,
       nextChunkStart,
       hasRemoteChunks,
+      headerEnabled: view.headerEnabled,
+      firstVisibleRow: view.firstVisibleRow,
       mouseWheelZoomEnabled,
-      mouseWheelZoomInvert
+      mouseWheelZoomInvert,
+      columnSizes: CsvEditorProvider.getColumnSizesForUri(this.context, this.document.uri),
+      frozenPanes: this.getCurrentFrozenPanes(),
+      realRowCount: data.length,
+      visibleRowIds: view.visibleRowIds,
+      filterMetadata: { session: this.filterSession, filterColumnsRevision: this.filterColumnsRevision, filters, columns: view.columns, matchedRows: view.matchedRows, totalRows: view.totalRows, maxFilters: MAX_COLUMN_FILTERS, revision: 0, ...(filterDraft ? { filterDraft } : {}) }
     });
+  }
+
+  private buildFilterView(data: string[][], filters: ColumnFilter[]): FilterRender {
+    const config = vscode.workspace.getConfiguration('csv', this.document.uri);
+    const hiddenRows = Math.min(Math.max(0, this.getHiddenRows()), data.length);
+    const headerEnabled = this.getEffectiveHeader(data, hiddenRows);
+    const columnColorMode = CsvEditorController.resolveEffectiveColumnColorMode(
+      config.get<string>('columnColorMode', 'type'), this.isDiffContext, config.get<boolean>('diffUseThemeForeground', true));
+    const render = this.generateTableAndChunks(data, headerEnabled,
+      CsvEditorProvider.getSerialIndexForUri(this.context, this.document.uri), hiddenRows,
+      config.get<boolean>('clickableLinks', true), columnColorMode, config.get<string>('columnColorPalette', 'default'),
+      config.get<boolean>('showTrailingEmptyRow', true), 0, filters);
+    const visible = visibleSourceRows(data, hiddenRows, headerEnabled, filters);
+    return { ...render, filters, columns: this.getFilterColumns(data), headerEnabled,
+      firstVisibleRow: hiddenRows, realRowCount: data.length,
+      visibleRowIds: filters.length ? [...visible, data.length] : [],
+      matchedRows: visible.filter(row => !(headerEnabled && row === hiddenRows)).length,
+      totalRows: Math.max(0, data.length - hiddenRows - (headerEnabled ? 1 : 0)) };
   }
 
   private generateTableAndChunks(
@@ -1441,7 +2216,8 @@ class CsvEditorController {
     columnColorMode: string,
     columnColorPalette: string,
     showTrailingEmptyRow: boolean,
-    maxSerializedChunks: number = Number.MAX_SAFE_INTEGER
+    maxSerializedChunks: number = Number.MAX_SAFE_INTEGER,
+    filters: ColumnFilter[] = []
   ): {
     tableHtml: string;
     chunksJson: string;
@@ -1454,7 +2230,8 @@ class CsvEditorController {
     const totalRows = data.length;
     const offset = Math.min(Math.max(0, hiddenRows), totalRows);
 
-    const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
+    const themeKind = vscode.window.activeColorTheme.kind;
+    const isDark = themeKind === vscode.ColorThemeKind.Dark || themeKind === vscode.ColorThemeKind.HighContrast;
     let headerRow: string[] = [];
     let bodyData: string[][] = [];
     if (totalRows === 0 || offset >= totalRows) {
@@ -1466,8 +2243,12 @@ class CsvEditorController {
     } else {
       bodyData = data.slice(offset);
     }
+    const bodyStart = headerFlag ? offset + 1 : offset;
+    const matches = compileColumnFilters(filters);
+    const rowIds = bodyData.map((_row, index) => bodyStart + index).filter(row => matches(data[row]));
+    bodyData = rowIds.map(row => data[row]);
     const visibleForWidth = headerFlag ? [headerRow, ...bodyData] : bodyData;
-    let numColumns = visibleForWidth.reduce((max, row) => Math.max(max, row.length), 0);
+    let numColumns = data.reduce((max, row) => Math.max(max, row.length), 0);
     if (numColumns === 0) numColumns = 1; // ensure at least 1 column for the virtual row
 
     const columnData = Array.from({ length: numColumns }, (_, i) => bodyData.map(row => row[i] || ''));
@@ -1478,13 +2259,13 @@ class CsvEditorController {
       : (columnColorPalette === 'warm' ? 'warm' : 'default');
     const columnColors = useThemeForeground
       ? Array.from({ length: numColumns }, () => 'var(--vscode-editor-foreground)')
-      : columnTypes.map((type, i) => this.getColumnColor(type, isDark, i, palette));
+      : columnTypes.map((type, i) => `var(--csv-column-${i}, ${this.getColumnColor(type, isDark, i, palette)})`);
     const columnWidths = this.computeColumnWidths(visibleForWidth);
 
     const BASE_CHUNK_ROWS = 1000;
     const MAX_CELLS_PER_CHUNK = 20000;
     const MIN_CHUNK_ROWS = 10;
-    const allRows = headerFlag ? data.slice(offset + 1) : data.slice(offset);
+    const allRows = bodyData;
     const allRowsCount = allRows.length; // preserve total before any truncation
     const chunkRows = Math.max(
       MIN_CHUNK_ROWS,
@@ -1493,7 +2274,7 @@ class CsvEditorController {
     // Always keep one editable row for fully empty views; otherwise allow disabling the
     // trailing virtual row via settings.
     const includeTrailingEmptyRow = showTrailingEmptyRow || allRowsCount === 0;
-    const serialIndexMaxDisplay = includeTrailingEmptyRow ? allRowsCount + 1 : allRowsCount;
+    const serialIndexMaxDisplay = data.length - bodyStart + (includeTrailingEmptyRow ? 1 : 0);
     const serialIndexWidthCh = Math.max(4, String(Math.max(1, serialIndexMaxDisplay)).length + 1);
     const chunks: string[] = [];
     const chunked = allRowsCount > chunkRows;
@@ -1510,19 +2291,18 @@ class CsvEditorController {
           break;
         }
         const htmlChunk = allRows.slice(i, i + chunkRows).map((row, localR) => {
-          const startAbs = headerFlag ? offset + 1 : offset;
-          const absRow = startAbs + i + localR;
-          const displayIdx = i + localR + 1; // numbering relative to first visible data row
+          const absRow = rowIds[i + localR];
+          const displayIdx = absRow - bodyStart + 1; // retain source numbering across filtered gaps
           let cells = '';
           for (let cIdx = 0; cIdx < numColumns; cIdx++) {
             const rawValue = row[cIdx] || '';
             const safe = this.formatCellContent(rawValue, clickableLinks);
             const titleAttr = this.getMultilineCellTitleAttr(rawValue);
-            cells += `<td tabindex="0" style="min-width:${Math.min(columnWidths[cIdx]||0,100)}ch;max-width:100ch;border:1px solid ${isDark?'#555':'#ccc'};color:${columnColors[cIdx]};overflow:visible;white-space: pre-wrap;overflow-wrap:anywhere;"${titleAttr} data-row="${absRow}" data-col="${cIdx}">${safe}</td>`;
+            cells += `<td tabindex="0" style="min-width:${Math.min(columnWidths[cIdx]||0,100)}ch;max-width:100ch;border:1px solid var(--csv-table-border, ${isDark?'#555':'#ccc'});color:${columnColors[cIdx]};overflow:visible;white-space: pre-wrap;overflow-wrap:anywhere;"${titleAttr} data-row="${absRow}" data-col="${cIdx}">${safe}</td>`;
           }
 
           return `<tr>${
-            addSerialIndex ? `<td tabindex="0" style="min-width:${serialIndexWidthCh}ch;max-width:${serialIndexWidthCh}ch;border:1px solid ${isDark?'#555':'#ccc'};color:#888;" data-row="${absRow}" data-col="-1">${displayIdx}</td>` : ''
+            addSerialIndex ? `<td tabindex="0" style="min-width:${serialIndexWidthCh}ch;max-width:${serialIndexWidthCh}ch;border:1px solid var(--csv-table-border, ${isDark?'#555':'#ccc'});color:#888;" data-row="${absRow}" data-col="-1">${displayIdx}</td>` : ''
           }${cells}</tr>`;
         }).join('');
 
@@ -1531,41 +2311,44 @@ class CsvEditorController {
       }
     }
 
+    // Body classes change in place; inherited variables update every mounted or
+    // later-loaded cell without overriding the user's mode or reloading a draft.
     const colorCss = useThemeForeground
       ? ''
-      : columnColors.map((hex, i) => `td[data-col="${i}"], th[data-col="${i}"] { color: ${hex}; }`).join('');
+      : `body:is(.vscode-light, .vscode-high-contrast-light) { ${columnTypes.map((type, i) => `--csv-column-${i}: ${this.getColumnColor(type, false, i, palette)};`).join('')} }` +
+        `body:is(.vscode-dark, .vscode-high-contrast) { ${columnTypes.map((type, i) => `--csv-column-${i}: ${this.getColumnColor(type, true, i, palette)};`).join('')} }`;
 
     let tableHtml = `<table>`;
     if (headerFlag) {
       tableHtml += `<thead><tr>${
         addSerialIndex
-          ? `<th tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: #888;"></th>`
+          ? `<th tabindex="0" data-serial-index="1" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); background-color: var(--csv-header-background, ${isDark ? '#1e1e1e' : '#ffffff'}); color: #888;"></th>`
           : ''
       }`;
       for (let i = 0; i < numColumns; i++) {
         const safe = this.formatCellContent(headerRow[i] || '', clickableLinks);
-        tableHtml += `<th tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${offset}" data-col="${i}">${safe}</th>`;
+        tableHtml += `<th tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); background-color: var(--csv-header-background, ${isDark ? '#1e1e1e' : '#ffffff'}); color: ${columnColors[i]}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;" data-row="${offset}" data-col="${i}" data-filter-column="${filters.some(filter => filter.column === i) ? 'active' : 'none'}">${safe}</th>`;
       }
       tableHtml += `</tr></thead><tbody>`;
       const initialBodyRows = chunked ? allRows.slice(0, chunkRows) : allRows;
       initialBodyRows.forEach((row, r) => {
         tableHtml += `<tr>${
           addSerialIndex
-            ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${offset + 1 + r}" data-col="-1">${r + 1}</td>`
+            ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: #888;" data-row="${rowIds[r]}" data-col="-1">${rowIds[r] - bodyStart + 1}</td>`
             : ''
         }`;
         for (let i = 0; i < numColumns; i++) {
           const rawValue = row[i] || '';
           const safe = this.formatCellContent(rawValue, clickableLinks);
           const titleAttr = this.getMultilineCellTitleAttr(rawValue);
-          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;"${titleAttr} data-row="${offset + 1 + r}" data-col="${i}">${safe}</td>`;
+          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;"${titleAttr} data-row="${rowIds[r]}" data-col="${i}">${safe}</td>`;
         }
         tableHtml += `</tr>`;
       });
       if (!chunked && includeTrailingEmptyRow) {
-        const virtualAbs = offset + 1 + initialBodyRows.length;
-        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${initialBodyRows.length + 1}</td>` : '';
-        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+        const virtualAbs = data.length;
+        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: #888;" data-row="${virtualAbs}" data-col="-1">${virtualAbs - bodyStart + 1}</td>` : '';
+        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
         tableHtml += `<tr>${idxCell}${dataCells}</tr>`;
       }
       tableHtml += `</tbody>`;
@@ -1575,22 +2358,22 @@ class CsvEditorController {
       nonHeaderRows.forEach((row, r) => {
         tableHtml += `<tr>${
           addSerialIndex
-            ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${offset + r}" data-col="-1">${r + 1}</td>`
+            ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: #888;" data-row="${rowIds[r]}" data-col="-1">${rowIds[r] - bodyStart + 1}</td>`
             : ''
         }`;
         for (let i = 0; i < numColumns; i++) {
           const rawValue = row[i] || '';
           const safe = this.formatCellContent(rawValue, clickableLinks);
           const titleAttr = this.getMultilineCellTitleAttr(rawValue);
-          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;"${titleAttr} data-row="${offset + r}" data-col="${i}">${safe}</td>`;
+          tableHtml += `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;"${titleAttr} data-row="${rowIds[r]}" data-col="${i}">${safe}</td>`;
         }
         tableHtml += `</tr>`;
       });
       if (!chunked && includeTrailingEmptyRow) {
-        const virtualAbs = offset + nonHeaderRows.length;
-        const displayIdx = nonHeaderRows.length + 1;
-        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
-        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+        const virtualAbs = data.length;
+        const displayIdx = virtualAbs - bodyStart + 1;
+        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
+        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
         tableHtml += `<tr>${idxCell}${dataCells}</tr>`;
       }
       tableHtml += `</tbody>`;
@@ -1599,11 +2382,10 @@ class CsvEditorController {
     // If chunked, append a final chunk with the virtual row so it appears at the end.
     if (chunked && includeTrailingEmptyRow) {
       if (nextChunkStart === -1 && serializedChunkCount < safeMaxSerializedChunks) {
-        const startAbs = headerFlag ? offset + 1 : offset;
-        const virtualAbs = startAbs + allRowsCount;
-        const displayIdx = allRowsCount + 1;
-        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
-        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
+        const virtualAbs = data.length;
+        const displayIdx = virtualAbs - bodyStart + 1;
+        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
+        const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
         const vrow = `<tr>${idxCell}${dataCells}</tr>`;
         chunks.push(vrow);
       } else if (nextChunkStart === -1) {
@@ -1614,7 +2396,9 @@ class CsvEditorController {
     const hasRemoteChunks = nextChunkStart >= 0;
     const chunkState: ChunkRenderState | undefined = chunked
       ? {
-          startAbs: headerFlag ? offset + 1 : offset,
+          rowIds,
+          bodyStart,
+          virtualRow: data.length,
           allRows,
           allRowsCount,
           chunkRows,
@@ -1667,6 +2451,12 @@ class CsvEditorController {
     return !matches;
   }
 
+  private getMediaUri(...segments: string[]): vscode.Uri {
+    return this.context.extensionUri.with({
+      path: path.posix.join(this.context.extensionUri.path, 'media', ...segments)
+    });
+  }
+
   private wrapHtml(args: {
     webview: vscode.Webview;
     nonce: string;
@@ -1679,14 +2469,30 @@ class CsvEditorController {
     extraColumnColorCss: string;
     nextChunkStart: number;
     hasRemoteChunks: boolean;
+    headerEnabled: boolean;
     mouseWheelZoomEnabled: boolean;
     mouseWheelZoomInvert: boolean;
+    columnSizes: Record<string, number>;
+    frozenPanes: FrozenPanes;
+    firstVisibleRow: number;
+    realRowCount: number;
+    visibleRowIds: number[];
+    filterMetadata: { session: string; filterColumnsRevision: number; filters: ColumnFilter[]; columns: FilterColumn[]; matchedRows: number; totalRows: number; maxFilters: number; revision: number; filterDraft?: FilterDraft };
   }): string {
-    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, mouseWheelZoomEnabled, mouseWheelZoomInvert } = args;
-    const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
-    // Build script URI using file path for compatibility (older APIs may lack Uri.joinPath)
+    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, headerEnabled, mouseWheelZoomEnabled, mouseWheelZoomInvert, columnSizes, frozenPanes, firstVisibleRow, realRowCount, visibleRowIds, filterMetadata } = args;
+    const themeKind = vscode.window.activeColorTheme.kind;
+    const isDark = themeKind === vscode.ColorThemeKind.Dark || themeKind === vscode.ColorThemeKind.HighContrast;
     const scriptUri = webview.asWebviewUri(
-      vscode.Uri.file(path.join(this.context.extensionPath, 'media', 'main.js'))
+      this.getMediaUri('main.js')
+    );
+
+    const filterScriptUri = webview.asWebviewUri(this.getMediaUri('column-filters.js'));
+    const filterMetadataJson = JSON.stringify(filterMetadata).replace(/[<>&\u2028\u2029]/g, character => '\\u' + character.charCodeAt(0).toString(16).padStart(4, '0'));
+    const frozenPanesScriptUri = webview.asWebviewUri(
+      this.getMediaUri('frozen-panes.js')
+    );
+    const contrastStyleUri = webview.asWebviewUri(
+      this.getMediaUri('high-contrast.css')
     );
 
     // Safe separator transport (assumes single character; see assumptions)
@@ -1701,18 +2507,41 @@ class CsvEditorController {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CSV</title>
     <style nonce="${nonce}">
+      /* Preserve the existing light/dark colors as theme classes change. */
+      body:is(.vscode-light, .vscode-high-contrast-light) {
+        --csv-table-border: #ccc;
+        --csv-header-background: #ffffff;
+        --csv-selection-background: #cce0ff;
+        --csv-find-highlight-background: #fefefe;
+        --csv-find-active-background: #ffffcc;
+        --csv-link-color: #0066cc;
+        --csv-link-hover-color: #0044aa;
+        --csv-menu-background: #ffffff;
+        --csv-menu-hover-background: #eeeeee;
+      }
+      body:is(.vscode-dark, .vscode-high-contrast) {
+        --csv-table-border: #555;
+        --csv-header-background: #1e1e1e;
+        --csv-selection-background: #333333;
+        --csv-find-highlight-background: #2a2a2a;
+        --csv-find-active-background: #444444;
+        --csv-link-color: #6cb6ff;
+        --csv-link-hover-color: #8ecfff;
+        --csv-menu-background: #2d2d2d;
+        --csv-menu-hover-background: #3d3d3d;
+      }
       body { font-family: ${this.escapeCss(fontFamily)}; font-size: ${fontSize}px; margin: 0; padding: 0; user-select: none; }
       .table-container { overflow: auto; height: 100vh; }
       table { border-collapse: collapse; width: max-content; }
-      th, td { padding: ${cellPadding}px 8px; border: 1px solid ${isDark ? '#555' : '#ccc'}; font-size: inherit; }
-      th { position: sticky; top: 0; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+      th, td { padding: ${cellPadding}px 8px; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); font-size: inherit; }
+      th { position: static; background-color: var(--csv-header-background, ${isDark ? '#1e1e1e' : '#ffffff'}); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
       td { overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
-      td.selected, th.selected { background-color: ${isDark ? '#333333' : '#cce0ff'} !important; }
+      td.selected, th.selected { background-color: var(--csv-selection-background, ${isDark ? '#333333' : '#cce0ff'}) !important; }
       td.editing, th.editing { overflow: visible !important; white-space: pre-wrap !important; overflow-wrap: anywhere !important; max-width: none !important; }
-      .highlight { background-color: ${isDark ? '#2a2a2a' : '#fefefe'} !important; }
-      .active-match { background-color: ${isDark ? '#444444' : '#ffffcc'} !important; }
-      .csv-link { color: ${isDark ? '#6cb6ff' : '#0066cc'}; text-decoration: underline; cursor: pointer; }
-      .csv-link:hover { color: ${isDark ? '#8ecfff' : '#0044aa'}; }
+      .highlight { background-color: var(--csv-find-highlight-background, ${isDark ? '#2a2a2a' : '#fefefe'}) !important; }
+      .active-match { background-color: var(--csv-find-active-background, ${isDark ? '#444444' : '#ffffcc'}) !important; }
+      .csv-link { color: var(--csv-link-color, ${isDark ? '#6cb6ff' : '#0066cc'}); text-decoration: underline; cursor: pointer; }
+      .csv-link:hover { color: var(--csv-link-hover-color, ${isDark ? '#8ecfff' : '#0044aa'}); }
       #findReplaceWidget {
         position: fixed;
         top: 12px;
@@ -1885,19 +2714,55 @@ class CsvEditorController {
         font-size: inherit;
       }
       #findReplaceWidget .fr-overflow-item:hover { background: rgba(255,255,255,0.05); }
-      #contextMenu { position: absolute; display: none; background: ${isDark ? '#2d2d2d' : '#ffffff'}; border: 1px solid ${isDark ? '#555' : '#ccc'}; z-index: 10000; font-family: ${this.escapeCss(fontFamily)}; font-size: inherit; }
+      #contextMenu { position: fixed; display: none; width: max-content; box-sizing: border-box; overflow: auto; overflow-wrap: anywhere; background: var(--csv-menu-background, ${isDark ? '#2d2d2d' : '#ffffff'}); border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); z-index: 10000; font-family: ${this.escapeCss(fontFamily)}; font-size: inherit; }
       #contextMenu div { padding: 4px 12px; cursor: pointer; }
-      #contextMenu div:hover { background: ${isDark ? '#3d3d3d' : '#eeeeee'}; }
+      #contextMenu div:hover { background: var(--csv-menu-hover-background, ${isDark ? '#3d3d3d' : '#eeeeee'}); }
 
+      #csv-root .csv-frozen-row, #csv-root .csv-frozen-column {
+        position: sticky;
+        background-color: var(--vscode-editor-background, ${isDark ? '#1e1e1e' : '#ffffff'}) !important;
+      }
+      /* Paint collapsed divider seams with the sticky cells instead of the scrolling table. */
+      #csv-root .csv-frozen-row::before {
+        content: "";
+        position: absolute;
+        inset: -0.5px 0;
+        border-block: 1px solid var(--csv-contrast-border, var(--csv-table-border, ${isDark ? '#555' : '#ccc'}));
+        box-sizing: border-box;
+        pointer-events: none;
+      }
+      #csv-root .csv-frozen-row.selected, #csv-root .csv-frozen-column.selected {
+        background-image: linear-gradient(var(--vscode-editor-selectionBackground, ${isDark ? '#333333' : '#cce0ff'}), var(--vscode-editor-selectionBackground, ${isDark ? '#333333' : '#cce0ff'}));
+      }
+      #csv-root .csv-frozen-row.highlight, #csv-root .csv-frozen-column.highlight {
+        background-image: linear-gradient(var(--vscode-editor-findMatchHighlightBackground, transparent), var(--vscode-editor-findMatchHighlightBackground, transparent));
+      }
+      #csv-root .csv-frozen-row.active-match, #csv-root .csv-frozen-column.active-match {
+        background-image: linear-gradient(var(--vscode-editor-findMatchBackground, transparent), var(--vscode-editor-findMatchBackground, transparent));
+      }
+      #filterStatus { position: sticky; top: 0; left: 0; z-index: 6; display: flex; flex-direction: column; gap: 8px; align-items: stretch; max-height: 25vh; overflow: auto; padding: 6px; background: var(--vscode-editorWidget-background, ${isDark ? '#252526' : '#ffffff'}); color: var(--vscode-editorWidget-foreground, inherit); border-bottom: 1px solid var(--vscode-editorWidget-border, ${isDark ? '#555' : '#ccc'}); }
+      #filterStatus[hidden] { display: none; }
+      #filterStatus button { color: inherit; background: transparent; border: 1px solid var(--vscode-button-border, currentColor); border-radius: 3px; cursor: pointer; }
+      .column-filter-toolbar, .column-filter-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+      .column-filter-conditions { display: flex; flex-direction: column; gap: 6px; }
+      .column-filter-row select, .column-filter-row input { max-width: 100%; min-width: 0; box-sizing: border-box; font: inherit; color: var(--vscode-input-foreground, inherit); background: var(--vscode-input-background, transparent); border: 1px solid var(--vscode-input-border, var(--vscode-editorWidget-border, currentColor)); }
+      .column-filter-row input { flex: 1 1 18ch; }
+      .column-filter-error { color: var(--vscode-errorForeground, inherit); flex-basis: 100%; }
+      .column-filter-type, .column-filter-and { font-size: 0.9em; }
+      th[data-filter-column="active"]::after { content: " ⏷"; }
+      #filterStatus button:focus-visible { outline: 2px solid var(--vscode-focusBorder); }
       /* Per-column computed colors */
-      ${extraColumnColorCss}
     </style>
+    <style id="__csvColumnColors" nonce="${nonce}">${extraColumnColorCss}</style>
+    <link rel="stylesheet" href="${contrastStyleUri}">
   </head>
   <body>
-    <div id="csv-root" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
+    <div id="csv-root" data-headerenabled="${headerEnabled ? '1' : '0'}" data-roworder="${this.escapeHtml(JSON.stringify(visibleRowIds))}" data-filtered="${filterMetadata.filters.length ? '1' : '0'}" data-filterepoch="0" data-frozenrows="${frozenPanes.rows}" data-frozencolumns="${frozenPanes.columns}" data-firstrow="${firstVisibleRow}" data-realrowcount="${realRowCount}" data-columnsizes="${this.escapeHtml(JSON.stringify(columnSizes))}" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
+      <div id="filterStatus" aria-label="Column filters"${filterMetadata.filters.length ? '' : ' hidden'}></div>
       ${tableHtml}
     </div>
 
+    <script id="__csvFilters" type="application/json" nonce="${nonce}">${filterMetadataJson}</script>
     <script id="__csvChunks" type="application/json" nonce="${nonce}">${chunksJson}</script>
 
     <div id="findReplaceWidget" class="replace-collapsed" role="group" aria-label="Find and Replace">
@@ -1930,7 +2795,7 @@ class CsvEditorController {
           </div>
           <div class="fr-actions">
             <button id="replaceOne" class="fr-action-btn" type="button" aria-label="Replace" title="Replace" disabled>↵</button>
-            <button id="replaceAll" class="fr-action-btn" type="button" aria-label="Replace All" title="Replace All" disabled>⇅</button>
+            <button id="replaceAll" class="fr-action-btn" type="button" aria-label="Replace All" title="${filterMetadata.filters.length ? 'Replace All in matching filtered rows' : 'Replace All'}" disabled>⇅</button>
           </div>
         </div>
         <div id="findOverflowMenu" class="fr-overflow-menu" role="menu" aria-label="Find Options">
@@ -1942,6 +2807,8 @@ class CsvEditorController {
     </div>
     <div id="contextMenu"></div>
 
+    <script nonce="${nonce}" src="${frozenPanesScriptUri}"></script>
+    <script nonce="${nonce}" src="${filterScriptUri}"></script>
     <script nonce="${nonce}" src="${scriptUri}"></script>
   </body>
 </html>`;
@@ -1954,7 +2821,9 @@ class CsvEditorController {
     const widths = Array(numColumns).fill(0);
     for (const row of data) {
       for (let i = 0; i < numColumns; i++){
-        widths[i] = Math.max(widths[i], (row[i] || '').length);
+        for (const line of (row[i] || '').split(/\r\n|[\r\n]/)) {
+          widths[i] = Math.max(widths[i], line.length);
+        }
       }
     }
     console.log(`CSV: Column widths: ${widths}`);
@@ -1962,6 +2831,12 @@ class CsvEditorController {
   }
 
   private getSeparator(): string {
+    if (this.pendingDocumentReference) {
+      return this.pendingDocumentReference.separator;
+    }
+    if ((this.failedCellEdits.size || this.refreshAfterDraftCommit) && this.renderedSeparator !== undefined) {
+      return this.renderedSeparator;
+    }
     const stored = CsvEditorProvider.getSeparatorForUri(this.context, this.document.uri);
     if (stored && stored.length) return stored;
 
@@ -1976,7 +2851,9 @@ class CsvEditorController {
       return this.separatorCache.separator;
     }
 
-    const filePath = this.document?.uri.fsPath || this.document?.uri.path || '';
+    const filePath = this.document.uri.scheme === 'untitled'
+      ? this.document.languageId === 'tsv' ? 'untitled.tsv' : 'untitled.csv'
+      : this.document?.uri.fsPath || this.document?.uri.path || '';
     const text = this.document.getText();
     const separator = CsvEditorProvider.resolveInheritedSeparator(filePath, text, settings);
     this.separatorCache = { version, configKey, separator };
@@ -2202,6 +3079,9 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   public static readonly headerKey     = 'csv.headerByUri';
   public static readonly serialKey     = 'csv.serialIndexByUri';
   public static readonly sepKey        = 'csv.separatorByUri';
+  public static readonly columnSizesKey = 'csv.columnSizesByUri';
+  public static readonly frozenPanesKey = 'csv.frozenPanesByUri';
+  public static readonly columnFiltersKey = 'csv.columnFiltersByUri';
   private static readonly DEFAULT_SEPARATOR = ',';
   private static readonly DEFAULT_SEPARATOR_MODE: SeparatorMode = 'extension';
   private static readonly BUILTIN_SEPARATORS_BY_EXTENSION: Record<string, string> = {
@@ -2386,8 +3266,8 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     const sep = delimiter && delimiter.length ? delimiter : CsvEditorProvider.DEFAULT_SEPARATOR;
     const rows: CsvFieldSpan[][] = [];
     let row: CsvFieldSpan[] = [];
-    let fieldStart = 0;
-    let i = 0;
+    let fieldStart = text.startsWith('\uFEFF') ? 1 : 0;
+    let i = fieldStart;
     let inQuotes = false;
     let quoted = false;
 
@@ -2507,6 +3387,90 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     return output;
   }
 
+  public static applyStructuralUpdatesPreservingFormat(
+    text: string,
+    delimiter: string,
+    data: string[][],
+    rowOrder?: number[],
+    columnOrder?: number[]
+  ): string | undefined {
+    const parsed = Papa.parse<string[]>(text, { delimiter, dynamicTyping: false });
+    if (parsed.errors.some(error => error.type === 'Quotes')) {
+      return undefined;
+    }
+    const original = parsed.data;
+    let contentRowCount = original.length;
+    while (contentRowCount > 0 && original[contentRowCount - 1].every(value => value === '')) {
+      contentRowCount--;
+    }
+    const spans = CsvEditorProvider.parseCsvFieldSpans(text, delimiter);
+    // Pasting into the displayed append row can fill an existing empty source
+    // record. Consume that record rather than retaining it again as a suffix.
+    for (let row = 0; row < data.length; row++) {
+      const sourceRow = rowOrder?.[row] ?? row;
+      const sourceEnd = spans[sourceRow]?.slice(-1)[0]?.end;
+      const sourceStart = spans[sourceRow]?.[0]?.start;
+      if (sourceEnd !== undefined && (sourceEnd < text.length || (sourceStart ?? sourceEnd) < sourceEnd) && data[row].some(value => value !== '')) {
+        contentRowCount = Math.max(contentRowCount, sourceRow + 1);
+      }
+    }
+    const bom = text.startsWith('\uFEFF') ? '\uFEFF' : '';
+    const lastSpan = contentRowCount > 0 ? spans[contentRowCount - 1]?.slice(-1)[0] : undefined;
+    const suffix = text.slice(lastSpan?.end ?? bom.length);
+    const rowBreak = (row: number): string | undefined => {
+      const end = spans[row]?.slice(-1)[0]?.end;
+      if (end === undefined) {
+        return undefined;
+      }
+      return /^(\r\n|\n|\r)/.exec(text.slice(end))?.[0];
+    };
+    const defaultBreak = parsed.meta.linebreak || '\n';
+    const columnPrefersQuotes = (col: number): boolean => {
+      // The body supplies the convention when a header uses a different style.
+      const sample = spans.slice(contentRowCount > 1 ? 1 : 0, contentRowCount)
+        .map(row => row[col]).filter((span): span is CsvFieldSpan => !!span);
+      return sample.length > 0 && sample.every(span => span.quoted);
+    };
+    const quotedColumns = new Map<number, boolean>();
+    let output = bom;
+    for (let row = 0; row < data.length; row++) {
+      const sourceRow = rowOrder?.[row] ?? row;
+      const fields: string[] = [];
+      for (let col = 0; col < data[row].length; col++) {
+        const sourceCol = columnOrder?.[col] ?? col;
+        const span = sourceRow < contentRowCount ? spans[sourceRow]?.[sourceCol] : undefined;
+        const value = data[row][col] ?? '';
+        if (span && original[sourceRow]?.[sourceCol] === value) {
+          fields.push(text.slice(span.start, span.end));
+        } else {
+          if (!quotedColumns.has(sourceCol)) {
+            quotedColumns.set(sourceCol, columnPrefersQuotes(sourceCol));
+          }
+          fields.push(CsvEditorProvider.encodeCsvField(value, delimiter, span?.quoted ?? quotedColumns.get(sourceCol) ?? false));
+        }
+      }
+      output += fields.join(delimiter);
+      if (row < data.length - 1) {
+        output += rowBreak(sourceRow) ?? defaultBreak;
+      }
+    }
+    output += suffix;
+    // Papa Parse remains authoritative: never reuse source tokens if their
+    // reconstruction would change the requested values or field boundaries.
+    const actual = Papa.parse<string[]>(output, { delimiter, dynamicTyping: false });
+    const trimEmpty = (rows: string[][]) => {
+      const result = [...rows];
+      while (result.length > 0 && result[result.length - 1].every(value => value === '')) {
+        result.pop();
+      }
+      return result;
+    };
+    if (actual.errors.some(error => error.type === 'Quotes') || JSON.stringify(trimEmpty(actual.data)) !== JSON.stringify(trimEmpty(data))) {
+      return undefined;
+    }
+    return output;
+  }
+
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   public async resolveCustomTextEditor(
@@ -2516,31 +3480,36 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   ): Promise<void> {
     console.log(`CSV(reg): creating controller for ${document.uri.toString()}`);
     const controller = new CsvEditorController(this.context);
-    // Track active controller
-    webviewPanel.onDidChangeViewState(e => {
-      if (e.webviewPanel.active) {
-        CsvEditorProvider.currentActive = controller;
-      }
-    });
     await controller.resolveCustomTextEditor(document, webviewPanel, _token);
   }
 
   public static getActiveProvider(): CsvEditorController | undefined {
-    return CsvEditorProvider.currentActive || CsvEditorProvider.editors.find(ed => ed.isActive());
+    const current = CsvEditorProvider.currentActive;
+    return current?.isActive() ? current : CsvEditorProvider.editors.find(ed => ed.isActive());
+  }
+
+  public static hasHiddenRowsOverride(context: vscode.ExtensionContext, uri: vscode.Uri): boolean {
+    const map = context.workspaceState.get<Record<string, number>>(CsvEditorProvider.hiddenRowsKey, {});
+    const saved = map[uri.toString()];
+    return Object.prototype.hasOwnProperty.call(map, uri.toString()) && typeof saved === 'number' && Number.isFinite(saved);
   }
 
   public static getHiddenRowsForUri(context: vscode.ExtensionContext, uri: vscode.Uri): number {
     const map = context.workspaceState.get<Record<string, number>>(CsvEditorProvider.hiddenRowsKey, {});
-    const n = map[uri.toString()] ?? 0;
-    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+    const saved = map[uri.toString()];
+    if (Object.prototype.hasOwnProperty.call(map, uri.toString()) && typeof saved === 'number' && Number.isFinite(saved)) {
+      return Math.max(0, Math.floor(saved));
+    }
+    const configured = vscode.workspace.getConfiguration('csv', uri).get<number>('defaultIgnoreRows', 0);
+    return typeof configured === 'number' && Number.isFinite(configured) ? Math.max(0, Math.floor(configured)) : 0;
   }
 
-  public static async setHiddenRowsForUri(context: vscode.ExtensionContext, uri: vscode.Uri, n: number): Promise<void> {
-    const map = { ...(context.workspaceState.get<Record<string, number>>(CsvEditorProvider.hiddenRowsKey, {})) };
-    if (!Number.isFinite(n) || n <= 0) {
+  public static async setHiddenRowsForUri(context: vscode.ExtensionContext, uri: vscode.Uri, n: number | undefined): Promise<void> {
+    const map = { ...context.workspaceState.get<Record<string, number>>(CsvEditorProvider.hiddenRowsKey, {}) };
+    if (n === undefined || !Number.isFinite(n)) {
       delete map[uri.toString()];
     } else {
-      map[uri.toString()] = Math.floor(n);
+      map[uri.toString()] = Math.max(0, Math.floor(n));
     }
     await context.workspaceState.update(CsvEditorProvider.hiddenRowsKey, map);
   }
@@ -2570,6 +3539,74 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     const map = { ...(context.workspaceState.get<Record<string, boolean>>(CsvEditorProvider.serialKey, {})) };
     map[uri.toString()] = !!val; // always persist explicit override
     await context.workspaceState.update(CsvEditorProvider.serialKey, map);
+  }
+
+  public static getColumnFiltersForUri(context: vscode.ExtensionContext, uri: vscode.Uri): ColumnFilter[] {
+    const map = context.workspaceState.get<Record<string, unknown>>(CsvEditorProvider.columnFiltersKey, {});
+    return normalizeColumnFilters(map[uri.toString()]);
+  }
+
+  public static async setColumnFiltersForUri(context: vscode.ExtensionContext, uri: vscode.Uri, filters: unknown): Promise<void> {
+    const map = { ...context.workspaceState.get<Record<string, unknown>>(CsvEditorProvider.columnFiltersKey, {}) };
+    const normalized = normalizeColumnFilters(filters);
+    if (normalized.length) {
+      map[uri.toString()] = normalized;
+    } else {
+      delete map[uri.toString()];
+    }
+    await context.workspaceState.update(CsvEditorProvider.columnFiltersKey, map);
+  }
+
+  public static getFrozenPanesForUri(context: vscode.ExtensionContext, uri: vscode.Uri, header: boolean): FrozenPanes {
+    const map = context.workspaceState.get<Record<string, Partial<FrozenPanes>>>(CsvEditorProvider.frozenPanesKey, {});
+    const saved = map[uri.toString()] ?? {};
+    const valid = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+    return { rows: valid(saved.rows) ? saved.rows : (header ? 1 : 0), columns: valid(saved.columns) ? saved.columns : 0 };
+  }
+
+  public static async setFrozenPanesForUri(context: vscode.ExtensionContext, uri: vscode.Uri, change: Partial<FrozenPanes>): Promise<void> {
+    const map = { ...context.workspaceState.get<Record<string, Partial<FrozenPanes>>>(CsvEditorProvider.frozenPanesKey, {}) };
+    const saved = { ...map[uri.toString()] };
+    for (const axis of ['rows', 'columns'] as const) {
+      const value = change[axis];
+      if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
+        saved[axis] = value;
+      }
+    }
+    map[uri.toString()] = saved;
+    await context.workspaceState.update(CsvEditorProvider.frozenPanesKey, map);
+  }
+
+  public static normalizeColumnSizes(raw: unknown): Record<string, number> {
+    const sizes: Record<string, number> = {};
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return sizes;
+    }
+    for (const [key, value] of Object.entries(raw)) {
+      const col = Number(key);
+      const width = Number(value);
+      if (!Number.isInteger(col) || col < 0 || !Number.isFinite(width) || width < 40) {
+        continue;
+      }
+      sizes[String(col)] = Math.round(width);
+    }
+    return sizes;
+  }
+
+  public static getColumnSizesForUri(context: vscode.ExtensionContext, uri: vscode.Uri): Record<string, number> {
+    const map = context.workspaceState.get<Record<string, unknown>>(CsvEditorProvider.columnSizesKey, {});
+    return CsvEditorProvider.normalizeColumnSizes(map[uri.toString()]);
+  }
+
+  public static async setColumnSizesForUri(context: vscode.ExtensionContext, uri: vscode.Uri, raw: unknown): Promise<void> {
+    const map = { ...context.workspaceState.get<Record<string, unknown>>(CsvEditorProvider.columnSizesKey, {}) };
+    const sizes = CsvEditorProvider.normalizeColumnSizes(raw);
+    if (Object.keys(sizes).length) {
+      map[uri.toString()] = sizes;
+    } else {
+      delete map[uri.toString()];
+    }
+    await context.workspaceState.update(CsvEditorProvider.columnSizesKey, map);
   }
 
   public static getSeparatorForUri(context: vscode.ExtensionContext, uri: vscode.Uri): string | undefined {

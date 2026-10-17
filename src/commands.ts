@@ -1,6 +1,11 @@
 import { getFonts } from 'font-list';
 import * as vscode from 'vscode';
 import { CsvEditorProvider } from './CsvEditorProvider';
+import { openLargeFilePreview } from './large-file-preview';
+import { toggleCsvEditor } from './editor-switch';
+import type { EditorSwitchRouting } from './editor-associations';
+import { compareFilesAsTable } from './table-comparison';
+import { saveActiveUntitledCsvEditor } from './untitled-editors';
 
 function displaySeparator(separator: string): string {
   return separator === '\t' ? '\\t' : separator;
@@ -19,11 +24,61 @@ async function toggleBooleanConfig(key: string, defaultVal: boolean, messagePref
   CsvEditorProvider.editors.forEach(ed => ed.refresh());
 }
 
-export function registerCsvCommands(context: vscode.ExtensionContext) {
+async function changeFrozenPaneCount(axis: 'rows' | 'columns') {
+  const active = CsvEditorProvider.getActiveProvider();
+  if (!active) {
+    vscode.window.showInformationMessage('Open a CSV/TSV/PSV file in the CSV editor.');
+    return;
+  }
+  const current = active.getCurrentFrozenPanes()[axis];
+  const input = await vscode.window.showInputBox({
+    prompt: `Number of leading visible ${axis} to freeze (0 unfreezes)`,
+    value: String(current),
+    validateInput: value => /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) ? undefined : 'Enter a non-negative whole number.'
+  });
+  if (input !== undefined && /^\d+$/.test(input) && Number.isSafeInteger(Number(input))) {
+    await active.setFrozenPanes({ [axis]: Number(input) });
+  }
+}
+
+async function toggleCsvEnabled(synchronizeRouting: () => Promise<void>): Promise<void> {
+  const config = vscode.workspace.getConfiguration('csv');
+  const inspected = config.inspect<boolean>('enabled');
+  const target = inspected?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+  const previous = target === vscode.ConfigurationTarget.Workspace ? inspected?.workspaceValue : inspected?.globalValue;
+  const next = !config.get<boolean>('enabled', true);
+  await config.update('enabled', next, target);
+  try {
+    await synchronizeRouting();
+  } catch (error) {
+    // Do not report Off while VS Code still routes searches into the custom view.
+    const current = config.inspect<boolean>('enabled');
+    const value = target === vscode.ConfigurationTarget.Workspace ? current?.workspaceValue : current?.globalValue;
+    if (value === next) {
+      await config.update('enabled', previous, target);
+      try { await synchronizeRouting(); } catch (restoreError) { console.error('CSV: routing rollback failed', restoreError); }
+    }
+    console.error('CSV: extension toggle was not applied', error);
+    return;
+  }
+  vscode.window.showInformationMessage(`CSV extension ${next ? 'enabled' : 'disabled'}.`);
+  CsvEditorProvider.editors.slice().forEach(ed => ed.refresh());
+}
+
+export function registerCsvCommands(context: vscode.ExtensionContext, synchronizeRouting: () => Promise<void> = async () => {}, prepareEditorRouting?: (uri: vscode.Uri, target: 'default' | 'csv.editor') => Promise<EditorSwitchRouting>) {
+  let pendingToggle: Promise<void> = Promise.resolve();
   context.subscriptions.push(
-    vscode.commands.registerCommand('csv.toggleExtension', () =>
-      toggleBooleanConfig('enabled', true, 'CSV extension')
-    ),
+    vscode.commands.registerCommand('csv.changeFrozenRows', () => changeFrozenPaneCount('rows')),
+    vscode.commands.registerCommand('csv.changeFrozenColumns', () => changeFrozenPaneCount('columns')),
+    vscode.commands.registerCommand('csv.openLargeFilePreview', openLargeFilePreview),
+    vscode.commands.registerCommand('csv.toggleEditor', () => toggleCsvEditor(prepareEditorRouting)),
+    vscode.commands.registerCommand('csv.compareFilesAsTable', (resource?: vscode.Uri, selected?: vscode.Uri[]) => compareFilesAsTable(context, resource, selected)),
+    vscode.commands.registerCommand('csv.saveUntitled', saveActiveUntitledCsvEditor),
+    vscode.commands.registerCommand('csv.toggleExtension', () => {
+      const next = pendingToggle.catch(() => {}).then(() => toggleCsvEnabled(synchronizeRouting));
+      pendingToggle = next;
+      return next;
+    }),
     vscode.commands.registerCommand('csv.toggleClickableLinks', () =>
       toggleBooleanConfig('clickableLinks', true, 'CSV clickable links')
     ),
@@ -114,23 +169,29 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
       const uri = active.getDocumentUri();
       const current = CsvEditorProvider.getHiddenRowsForUri(context, uri);
       const input = await vscode.window.showInputBox({
-        prompt: 'Hide first N rows (per file)',
+        prompt: 'Hide first N rows for this file (blank inherits csv.defaultIgnoreRows)',
         value: String(current),
-        validateInput: (val: string) => (/^\d+$/.test(val) ? undefined : 'Enter a non-negative integer')
+        validateInput: (val: string) => (val.trim() === '' || (/^\d+$/.test(val) && Number.isSafeInteger(Number(val))) ? undefined : 'Enter a non-negative integer or leave blank to inherit')
       });
       if (input === undefined) { return; }
-      const n = parseInt(input, 10);
+      if (input.trim() !== '' && (!/^\d+$/.test(input) || !Number.isSafeInteger(Number(input)))) { return; }
+      const n = input.trim() === '' ? undefined : Number(input);
       await CsvEditorProvider.setHiddenRowsForUri(context, uri, n);
       // Refresh only editors showing this URI
       CsvEditorProvider.editors
         .filter(ed => ed.getDocumentUri().toString() === uri.toString())
-        .forEach(ed => ed.refresh());
-      vscode.window.showInformationMessage(`CSV: Hiding first ${n} row(s) for this file.`);
+        .forEach(ed => ed.refreshViewSafely());
+      vscode.window.showInformationMessage(n === undefined ? 'CSV: Hidden rows now inherit csv.defaultIgnoreRows for this file.' : `CSV: Hiding first ${n} row(s) for this file.`);
     }),
-    vscode.commands.registerCommand('csv.changeEncoding', async () => {
+    vscode.commands.registerCommand('csv.changeEncoding', async (requestedUri?: vscode.Uri) => {
       const active = CsvEditorProvider.getActiveProvider();
-      if (!active) { vscode.window.showInformationMessage('Open a CSV/TSV/PSV file in the CSV editor.'); return; }
-      const uri = active.getDocumentUri();
+      const uri = requestedUri instanceof vscode.Uri ? requestedUri : active?.getDocumentUri();
+      if (!uri) { vscode.window.showInformationMessage('Open a CSV/TSV/PSV file in the CSV editor.'); return; }
+      if (uri.scheme === 'untitled') {
+        vscode.window.showInformationMessage('Save this document before changing its file encoding.');
+        return;
+      }
+
 
       // Close any existing tabs for this URI so we can reuse the slot cleanly
       try {
@@ -144,10 +205,14 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
         });
         if (toClose.length) {
           console.log(`[CSV(encoding)]: closing ${toClose.length} tab(s) for ${uri.fsPath}`);
-          await vscode.window.tabGroups.close(toClose);
+          const closed = await vscode.window.tabGroups.close(toClose);
+          if (!closed) {
+            return;
+          }
         }
       } catch (e) {
         console.warn('[CSV(encoding)]: failed to close existing tabs', e);
+        return;
       }
 
       // Open the default text editor in-place and invoke the built-in encoding picker

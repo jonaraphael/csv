@@ -6,7 +6,21 @@ try { document.body.focus({ preventScroll: true }); } catch { try { document.bod
 const vscode = acquireVsCodeApi();
 
 const root = document.getElementById('csv-root');
-const CSV_SEPARATOR = String.fromCodePoint(parseInt(root?.dataset?.sepcode || '44', 10)); // default ','
+let filterMetadata = {};
+try { filterMetadata = JSON.parse(document.getElementById('__csvFilters')?.textContent || '{}'); } catch {}
+const filterSession = filterMetadata.session;
+let visibleRowOrder = [];
+try { visibleRowOrder = JSON.parse(root?.dataset?.roworder || '[]'); } catch {}
+let headerSourceRow = Number(root?.dataset?.firstrow || '0');
+let filterEpoch = 0;
+let filterSnapshotPending = false;
+const adjacentVisibleRow = (row, direction) => {
+  if (!visibleRowOrder.length) return row + direction;
+  const index = visibleRowOrder.indexOf(row);
+  return visibleRowOrder[index + direction] ?? (row >= Number(root?.dataset?.realrowcount || '0') ? row + direction : row);
+};
+let frozenRowCount = Number(root?.dataset?.frozenrows || '0');
+let frozenColumnCount = Number(root?.dataset?.frozencolumns || '0');
 const parsePositiveNumber = value => {
   const parsed = typeof value === 'string' ? Number.parseFloat(value) : Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
@@ -28,12 +42,15 @@ let lastContextIsHeader = false;   // remembers whether we right-clicked a <th>
 let isUpdating = false, isSelecting = false, anchorCell = null, rangeEndCell = null, currentSelection = [];
 let startCell = null, endCell = null, selectionMode = "cell";
 let editingCell = null, originalCellValue = "";
+const failedCellDrafts = new Set();
+let discardingFailedDraft = false;
 // Edit mode:
 //  - 'quick': started by typing a character (not Enter)
 //  - 'detail': started by Enter or double-click
 let editMode = null; // 'quick' | 'detail' | null
 const DRAG_THRESHOLD_PX = 4;
 const RESIZE_HANDLE_PX = 6;
+const COLUMN_RESIZE_HANDLE_PX = 4;
 let resizeState = null;
 let reorderState = null;
 
@@ -46,6 +63,9 @@ dragIndicator.style.zIndex = '20000';
 dragIndicator.style.background = '#0a84ff';
 dragIndicator.style.display = 'none';
 document.body.appendChild(dragIndicator);
+const automaticColumnSizes = new WeakMap();
+let persistedColumnSizes = {};
+try { persistedColumnSizes = JSON.parse(root?.dataset?.columnsizes || '{}'); } catch {}
 let columnSizeState = {};
 let rowSizeState = {};
 
@@ -62,13 +82,24 @@ const normalizeSizeState = (raw, minSize) => {
   return out;
 };
 
+const setRenderedColumnWidth = (cell, px) => {
+  if (!automaticColumnSizes.has(cell)) {
+    automaticColumnSizes.set(cell, { width: cell.style.width, minWidth: cell.style.minWidth, maxWidth: cell.style.maxWidth, boxSizing: cell.style.boxSizing });
+  }
+  cell.style.boxSizing = 'border-box';
+  cell.style.width = `${px}px`;
+  cell.style.minWidth = `${px}px`;
+  cell.style.maxWidth = `${px}px`;
+};
+const persistColumnSizes = () => {
+  vscode.postMessage({ type: 'columnSizesChanged', columnSizes: { ...columnSizeState } });
+};
 const applySizeStateToRenderedCells = () => {
+  window.csvFrozenPanes?.schedule();
   for (const [col, width] of Object.entries(columnSizeState)) {
     const px = Math.max(40, Math.round(Number(width)));
     table.querySelectorAll(`[data-col="${col}"]`).forEach(cell => {
-      cell.style.width = `${px}px`;
-      cell.style.minWidth = `${px}px`;
-      cell.style.maxWidth = `${px}px`;
+      setRenderedColumnWidth(cell, px);
     });
   }
   for (const [row, height] of Object.entries(rowSizeState)) {
@@ -96,6 +127,8 @@ const setZoomScale = (nextScale, persist = true) => {
     return false;
   }
   zoomScale = normalized;
+  const menu = document.getElementById('contextMenu');
+  if (menu) { menu.style.display = 'none'; }
   document.body.style.fontSize = `${Math.max(1, BASE_FONT_SIZE_PX * zoomScale)}px`;
   applySizeStateToRenderedCells();
   if (persist) {
@@ -149,12 +182,79 @@ const persistState = () => {
   } catch {}
 };
 
+// Coalesce repeated navigation to the latest cell before paint. Native smooth
+// scrolling restarts on every key repeat and can leave selection offscreen.
+let pendingCellReveal = null;
+let cellRevealScheduled = false;
+const scheduleCellReveal = (cell, center = false) => {
+  pendingCellReveal = { cell, center };
+  if (cellRevealScheduled) return;
+  cellRevealScheduled = true;
+  requestAnimationFrame(() => {
+    cellRevealScheduled = false;
+    const request = pendingCellReveal;
+    pendingCellReveal = null;
+    if (!request?.cell?.isConnected || !scrollContainer) return;
+    const width = scrollContainer.clientWidth;
+    const height = scrollContainer.clientHeight;
+    if (width <= 0 || height <= 0) return;
+    const viewport = scrollContainer.getBoundingClientRect();
+    const viewportLeft = viewport.left + scrollContainer.clientLeft;
+    const viewportTop = viewport.top + scrollContainer.clientTop;
+    let left = Math.max(0, viewportLeft);
+    let top = Math.max(0, viewportTop);
+    const right = Math.min(window.innerWidth, viewportLeft + width);
+    const bottom = Math.min(window.innerHeight, viewportTop + height);
+    const target = request.cell;
+    let fixedTop = target.classList.contains('csv-frozen-row');
+    const fixedLeft = target.classList.contains('csv-frozen-column');
+
+    const filterBar = document.getElementById('filterStatus');
+    if (filterBar) top = Math.max(top, filterBar.getBoundingClientRect().bottom);
+    const headerCell = table.tHead?.rows[0]?.cells[0];
+    if (headerCell) {
+      const style = getComputedStyle(headerCell);
+      if (style.position === 'sticky' && style.top && style.top !== 'auto') {
+        top = Math.max(top, headerCell.getBoundingClientRect().bottom);
+        fixedTop = fixedTop || table.tHead.contains(target);
+      }
+    }
+    // Frozen panes are leading rows/columns. Read one representative per
+    // boundary, rather than scanning every rendered cell on each repeat.
+    for (const row of table.rows) {
+      const first = row.cells[0];
+      if (!first?.classList.contains('csv-frozen-row')) break;
+      top = Math.max(top, first.getBoundingClientRect().bottom);
+    }
+    for (const cell of table.rows[0]?.cells || []) {
+      if (!cell.classList.contains('csv-frozen-column')) break;
+      left = Math.max(left, cell.getBoundingClientRect().right);
+    }
+
+    const rect = target.getBoundingClientRect();
+    const revealDelta = (start, end, min, max) => {
+      if (max <= min) return 0;
+      // A cell larger than the available pane cannot fit; keep its leading
+      // edge usable instead of alternating between opposite edges.
+      if (end - start > max - min) return start - min;
+      if (request.center) return (start + end - min - max) / 2;
+      return start < min ? start - min : end > max ? end - max : 0;
+    };
+    const x = fixedLeft ? 0 : revealDelta(rect.left, rect.right, left, right);
+    const y = fixedTop ? 0 : revealDelta(rect.top, rect.bottom, top, bottom);
+    // Even zero delta cancels any native animation already in flight.
+    scrollContainer.scrollTo({ left: scrollContainer.scrollLeft + x, top: scrollContainer.scrollTop + y, behavior: 'instant' });
+    persistState();
+  });
+};
+
 const restoreState = () => {
+  if (document.activeElement?.closest?.('#filterStatus')) return;
   try {
     const st = vscode.getState() || {};
     const restoredZoom = parsePositiveNumber(st.zoomScale);
     setZoomScale(restoredZoom ?? 1, false);
-    columnSizeState = normalizeSizeState(st.columnSizes, 40);
+    columnSizeState = normalizeSizeState(st.columnSizes ?? persistedColumnSizes, 40);
     rowSizeState = normalizeSizeState(st.rowSizes, getMinRowHeight());
     applySizeStateToRenderedCells();
     if (typeof st.scrollX === 'number' && scrollContainer) {
@@ -179,14 +279,14 @@ const restoreState = () => {
       }
     }
     if (typeof st.anchorRow === 'number' && typeof st.anchorCol === 'number') {
-      const tag = (hasHeader && st.anchorRow === 0 ? 'th' : 'td');
-      let sel = table.querySelector(`${tag}[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"]`);
+      const selector = `td[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"], th[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"]`;
+      let sel = table.querySelector(selector);
       // If not present yet (due to chunking), load chunks until available or exhausted
       if (!sel && typeof window.__csvLoadNextChunk === 'function') {
         let guard = 100; // prevent infinite loops
         while (!sel && typeof window.__csvLoadNextChunk === 'function' && guard-- > 0) {
           if (!window.__csvLoadNextChunk()) break;
-          sel = table.querySelector(`${tag}[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"]`);
+          sel = table.querySelector(selector);
         }
       }
       applySizeStateToRenderedCells();
@@ -237,73 +337,46 @@ const requestRemoteChunk = () => {
   remoteChunkRequestInFlight = true;
   remoteChunkRequestedStart = remoteNextChunkStart;
   remoteChunkRequestSeq += 1;
-  vscode.postMessage({ type: 'requestChunk', start: remoteNextChunkStart, requestId: remoteChunkRequestSeq });
+  vscode.postMessage({ type: 'requestChunk', start: remoteNextChunkStart, requestId: remoteChunkRequestSeq, filterEpoch, session: filterSession });
 };
 
-if (csvChunks.length || remoteHasMoreChunks) {
+let chunkObserver = null;
+let chunkLoading = false;
+const primeChunks = () => {
+  chunkObserver?.disconnect();
+  const last = table.tBodies[0]?.querySelector('tr:last-child');
+  if (last && (csvChunks.length || remoteHasMoreChunks)) chunkObserver?.observe(last);
+};
+loadNextChunk = () => {
   const tbody = table.tBodies[0];
-  let loading = false;
-
-  loadNextChunk = () => {
-    if (loading || !tbody) return false;
-    if (!csvChunks.length) {
-      requestRemoteChunk();
-      return false;
+  if (chunkLoading || !tbody) return false;
+  if (!csvChunks.length) { requestRemoteChunk(); return false; }
+  chunkLoading = true;
+  try {
+    const html = csvChunks.shift();
+    if (html) {
+      tbody.insertAdjacentHTML('beforeend', html);
+      applySizeStateToRenderedCells();
+      window.dispatchEvent(new Event('csvChunkLoaded'));
     }
-    loading = true;
-    try {
-      const html = csvChunks.shift();
-      if (html) {
-        tbody.insertAdjacentHTML('beforeend', html);
-        applySizeStateToRenderedCells();
-        window.dispatchEvent(new Event('csvChunkLoaded'));
-      }
-      if (!csvChunks.length) {
-        requestRemoteChunk();
-      }
-      return !!html;
-    } finally {
-      loading = false;
-    }
-  };
-  // Expose for restoration logic
-  window.__csvLoadNextChunk = loadNextChunk;
-
-  nearBottom = () => {
-    if (!scrollContainer) return false;
-    const remain = scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight;
-    return remain < 300; // px threshold
-  };
-
-  const io = new IntersectionObserver((entries)=>{
-    if (entries[0] && entries[0].isIntersecting) {
-      loadNextChunk();
-      const last = tbody && tbody.querySelector('tr:last-child');
-      if (last) io.observe(last);
-    }
-  }, { root: scrollContainer || null, rootMargin: '0px 0px 300px 0px' });
-
-  const prime = () => {
-    const last = tbody && tbody.querySelector('tr:last-child');
-    if (last) { io.observe(last); }
-  };
-  prime();
-
-  // Fallback: scroll-driven loader to ensure progress even if IO misses
-  const scrollHandler = () => {
-    if (!csvChunks.length && !remoteHasMoreChunks) return;
-    if (nearBottom()) {
-      // Load until we create headroom or exhaust currently available chunks
-      let guard = 10;
-      while (nearBottom() && guard-- > 0) {
-        if (!loadNextChunk()) break;
-      }
-      prime();
-    }
-  };
-  if (scrollContainer) scrollContainer.addEventListener('scroll', scrollHandler, { passive: true });
-  else window.addEventListener('scroll', scrollHandler, { passive: true });
-}
+    if (!csvChunks.length) requestRemoteChunk();
+    primeChunks();
+    return !!html;
+  } finally { chunkLoading = false; }
+};
+window.__csvLoadNextChunk = loadNextChunk;
+nearBottom = () => !!scrollContainer && scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight < 300;
+chunkObserver = new IntersectionObserver(entries => {
+  if (entries[0]?.isIntersecting) loadNextChunk();
+}, { root: scrollContainer || null, rootMargin: '0px 0px 300px 0px' });
+primeChunks();
+const scrollChunkLoader = () => {
+  if (!csvChunks.length && !remoteHasMoreChunks) return;
+  let guard = 10;
+  while (nearBottom() && guard-- > 0) { if (!loadNextChunk()) break; }
+  primeChunks();
+};
+(scrollContainer || window).addEventListener('scroll', scrollChunkLoader, { passive: true });
 
 const ensureTargetStep = () => {
   if (!pendingEnsureTarget) return;
@@ -367,18 +440,28 @@ const handleZoomWheel = e => {
 };
 window.addEventListener('wheel', handleZoomWheel, { passive: false });
 
-const hasHeader = document.querySelector('thead') !== null;
+let hasHeader = document.querySelector('thead') !== null;
+let headerEnabled = root?.dataset?.headerenabled === '1';
 const getCellCoords = cell => ({ row: parseInt(cell.getAttribute('data-row')), col: parseInt(cell.getAttribute('data-col')) });
 const clearSelection = () => { currentSelection.forEach(c => c.classList.remove('selected')); currentSelection = []; };
 const contextMenu = document.getElementById('contextMenu');
 
 /* ──────── UPDATED showContextMenu ──────── */
+const changeFrozenPanes = change => {
+  frozenRowCount = change.rows ?? frozenRowCount;
+  frozenColumnCount = change.columns ?? frozenColumnCount;
+  window.csvFrozenPanes?.update(frozenRowCount, frozenColumnCount);
+  vscode.postMessage({ type: 'freezePanesChanged', rows: frozenRowCount, columns: frozenColumnCount });
+};
 const showContextMenu = (x, y, row, col) => {
   contextMenu.innerHTML = '';
   const item = (label, cb) => {
     const d = document.createElement('div');
     d.textContent = label;
-    d.addEventListener('click', () => { cb(); contextMenu.style.display = 'none'; });
+    d.addEventListener('click', () => {
+      if (!filterSnapshotPending) cb();
+      contextMenu.style.display = 'none';
+    });
     contextMenu.appendChild(d);
   };
   const divider = () => {
@@ -387,6 +470,49 @@ const showContextMenu = (x, y, row, col) => {
     d.style.margin = '1px 0';
     contextMenu.appendChild(d);
   };
+  if (col === -1) {
+    item('Hide serial index column', () => {
+      const anchor = anchorCell ? getCellCoords(anchorCell) : null;
+      if (!anchor || !Number.isFinite(anchor.col) || anchor.col < 0) {
+        const row = anchor && Number.isFinite(anchor.row) ? anchor.row : Number(root?.dataset?.firstrow || '0');
+        const surviving = table.querySelector(`td[data-row="${row}"][data-col="0"], th[data-row="${row}"][data-col="0"]`);
+        if (surviving) {
+          clearSelection();
+          surviving.classList.add('selected');
+          currentSelection.push(surviving);
+          anchorCell = surviving;
+          rangeEndCell = surviving;
+        }
+      }
+      persistState();
+      vscode.postMessage({ type: 'setSerialIndex', enabled: false });
+    });
+    divider();
+  }
+  if (row === Number(root?.dataset?.firstrow)) {
+    item(headerEnabled ? 'Treat first row as data' : 'Use first row as header', () => {
+      persistState();
+      vscode.postMessage({ type: 'setHeader', enabled: !headerEnabled });
+    });
+    divider();
+  }
+  if (Number.isInteger(col) && col >= 0) {
+    item('Filter this column…', () => window.csvColumnFilters?.add(col));
+    divider();
+  }
+  item('Cut', () => copySelectionToClipboard(true));
+  item('Copy', () => copySelectionToClipboard());
+  item('Paste', () => pasteFromClipboard());
+  divider();
+  if (Number.isInteger(row) && row >= Number(root?.dataset?.firstrow || '0') && row < Number(root?.dataset?.realrowcount || '0')) {
+    item('Freeze rows through this row', () => changeFrozenPanes({ rows: row - Number(root?.dataset?.firstrow || '0') + 1 }));
+  }
+  if (Number.isInteger(col) && col >= 0) {
+    item('Freeze columns through this column', () => changeFrozenPanes({ columns: col + 1 }));
+  }
+  if (frozenRowCount > 0) item('Unfreeze rows', () => changeFrozenPanes({ rows: 0 }));
+  if (frozenColumnCount > 0) item('Unfreeze columns', () => changeFrozenPanes({ columns: 0 }));
+  divider();
   // Derive multi-row/column selection counts
   const selectedIndexCells = currentSelection.filter(el => el && el.getAttribute && el.getAttribute('data-col') === '-1');
   const selectedRowIds = Array.from(new Set(selectedIndexCells.map(el => parseInt(el.getAttribute('data-row') || '-1', 10)).filter(n => !isNaN(n)))).sort((a,b)=>a-b);
@@ -400,9 +526,9 @@ const showContextMenu = (x, y, row, col) => {
 
   /* Header-only: SORT functionality */
   if (lastContextIsHeader) {
-    item('Sort: A-Z', () =>
+    item(root?.dataset?.filtered === '1' ? 'Sort matching rows: A-Z' : 'Sort: A-Z', () =>
       vscode.postMessage({ type: 'sortColumn', index: col, ascending: true }));
-    item('Sort: Z-A', () =>
+    item(root?.dataset?.filtered === '1' ? 'Sort matching rows: Z-A' : 'Sort: Z-A', () =>
       vscode.postMessage({ type: 'sortColumn', index: col, ascending: false }));
   }        
 
@@ -457,10 +583,25 @@ const showContextMenu = (x, y, row, col) => {
     });
   }
 
-  contextMenu.style.left = x + 'px';
-  contextMenu.style.top = y + 'px';
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const marginX = Math.min(8, viewportWidth / 4);
+  const marginY = Math.min(8, viewportHeight / 4);
+  contextMenu.style.maxWidth = `${Math.max(0, viewportWidth - 2 * marginX)}px`;
+  contextMenu.style.maxHeight = `${Math.max(0, viewportHeight - 2 * marginY)}px`;
+  // Measure all actions at their natural width, bounded by the viewport, before placing.
+  contextMenu.style.left = `${marginX}px`;
+  contextMenu.style.top = `${marginY}px`;
   contextMenu.style.display = 'block';
+  contextMenu.scrollTop = 0;
+  contextMenu.scrollLeft = 0;
+  const { width, height } = contextMenu.getBoundingClientRect();
+  const left = x + width <= viewportWidth - marginX ? x : x - width;
+  const top = y + height <= viewportHeight - marginY ? y : y - height;
+  contextMenu.style.left = `${clamp(left, marginX, Math.max(marginX, viewportWidth - marginX - width))}px`;
+  contextMenu.style.top = `${clamp(top, marginY, Math.max(marginY, viewportHeight - marginY - height))}px`;
 };
+window.addEventListener('resize', () => { contextMenu.style.display = 'none'; });
 
 const getElementTarget = target => {
   if (target instanceof Element) return target;
@@ -557,17 +698,60 @@ const getRowDropTarget = clientY => {
   return { beforeIndex, indicatorY };
 };
 const getResizeEdgeInfo = (target, e) => {
-  if (!target) return null;
-  if (isColumnHeaderCell(target)) {
-    const col = parseInt(target.getAttribute('data-col') || 'NaN', 10);
-    if (!Number.isNaN(col)) {
-      const rect = target.getBoundingClientRect();
-      const edgeDelta = rect.right - e.clientX;
-      if (edgeDelta >= 0 && edgeDelta <= RESIZE_HANDLE_PX) {
-        return { axis: 'column', index: col, rect };
-      }
+  if (editingCell || !Number.isFinite(e.clientX) || !Number.isFinite(e.clientY)) return null;
+  const element = getElementTarget(e.target);
+  if (element?.closest('a, .csv-link, input, textarea, select, button, [contenteditable="true"], [role="button"]')) return null;
+  const paintedCellAt = (x, y) => {
+    const hit = document.elementFromPoint(x, y);
+    return hit && table.contains(hit) ? getCellTarget(hit) : null;
+  };
+  const candidates = new Set();
+  const add = cell => { if (cell && table.contains(cell)) candidates.add(cell); };
+  if (target) {
+    add(target);
+    // A sticky seam can lie inside a partially covered scrolling cell's rect.
+    add(paintedCellAt(e.clientX - COLUMN_RESIZE_HANDLE_PX - 0.5, e.clientY));
+    const rect = target.getBoundingClientRect();
+    if (rect.width > 0 && Math.abs(e.clientX - rect.left) <= COLUMN_RESIZE_HANDLE_PX) {
+      // Hit the painted neighbor, which can differ from col-1 at a frozen seam.
+      add(paintedCellAt(rect.left - 0.5, e.clientY));
+      add(paintedCellAt(rect.left - 1, e.clientY));
+      add(target.previousElementSibling);
+    }
+  } else {
+    // Collapsed/fractional borders can target TR/TABLE rather than either cell.
+    for (const delta of [0, -0.5, 0.5, -1, 1]) {
+      add(paintedCellAt(e.clientX + delta, e.clientY));
     }
   }
+  let closest = null;
+  let closestDistance = Infinity;
+  for (const cell of candidates) {
+    const coords = getDataCellCoords(cell);
+    if (!coords) continue;
+    const rect = cell.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0 || e.clientY < rect.top - 0.5 || e.clientY > rect.bottom + 0.5 || Math.abs(e.clientX - rect.right) > COLUMN_RESIZE_HANDLE_PX + 0.75) continue;
+    const sampleY = clamp(e.clientY, rect.top + Math.min(0.5, rect.height / 4), rect.bottom - Math.min(0.5, rect.height / 4));
+    // A scrolled cell can share the frozen column's x coordinate while covered.
+    if (paintedCellAt(rect.right - Math.min(0.5, rect.width / 4), sampleY) !== cell) continue;
+    const neighbor = paintedCellAt(rect.right + 0.5, sampleY);
+    const next = neighbor && neighbor !== cell && neighbor.parentElement === cell.parentElement ? neighbor : cell.nextElementSibling;
+    const nextRect = next && getDataCellCoords(next) ? next.getBoundingClientRect() : null;
+    const adjacent = nextRect && nextRect.width > 0 && nextRect.left <= rect.right + 1.5 && nextRect.right > rect.right;
+    const contiguous = adjacent && Math.abs(nextRect.left - rect.right) <= 1.5;
+    const boundary = contiguous ? (rect.right + nextRect.left) / 2 : rect.right;
+    const leftCover = paintedCellAt(rect.left + Math.min(0.5, rect.width / 4), sampleY);
+    const visibleLeft = leftCover && leftCover !== cell ? Math.min(rect.right, Math.max(rect.left, leftCover.getBoundingClientRect().right)) : rect.left;
+    const nextWidth = adjacent ? nextRect.right - Math.max(nextRect.left, rect.right) : Infinity;
+    // Use the painted span at sticky seams so even partially covered cells retain a center.
+    const band = Math.min(COLUMN_RESIZE_HANDLE_PX, (rect.right - visibleLeft) / 4, nextWidth / 4);
+    const distance = Math.abs(e.clientX - boundary);
+    if (distance <= band && distance < closestDistance) {
+      closestDistance = distance;
+      closest = { axis: 'column', index: coords.col, rect };
+    }
+  }
+  if (closest) return closest;
   if (isRowIndexCell(target)) {
     const row = parseInt(target.getAttribute('data-row') || 'NaN', 10);
     if (!Number.isNaN(row)) {
@@ -581,23 +765,23 @@ const getResizeEdgeInfo = (target, e) => {
   return null;
 };
 const applyColumnWidth = (col, widthPx) => {
+  window.csvFrozenPanes?.schedule();
   const width = Math.max(40, Math.round(widthPx));
   columnSizeState[String(col)] = width;
   table.querySelectorAll(`[data-col="${col}"]`).forEach(cell => {
-    cell.style.width = `${width}px`;
-    cell.style.minWidth = `${width}px`;
-    cell.style.maxWidth = `${width}px`;
+    setRenderedColumnWidth(cell, width);
   });
 };
 const resetColumnWidth = col => {
+  window.csvFrozenPanes?.schedule();
   delete columnSizeState[String(col)];
   table.querySelectorAll(`[data-col="${col}"]`).forEach(cell => {
-    cell.style.width = '';
-    cell.style.minWidth = '';
-    cell.style.maxWidth = '';
+    const automatic = automaticColumnSizes.get(cell);
+    if (automatic) Object.assign(cell.style, automatic);
   });
 };
 const applyRowHeight = (row, heightPx) => {
+  window.csvFrozenPanes?.schedule();
   const height = Math.max(getMinRowHeight(), Math.round(heightPx));
   rowSizeState[String(row)] = height;
   table.querySelectorAll(`[data-row="${row}"]`).forEach(cell => {
@@ -606,6 +790,7 @@ const applyRowHeight = (row, heightPx) => {
   });
 };
 const resetRowHeight = row => {
+  window.csvFrozenPanes?.schedule();
   delete rowSizeState[String(row)];
   table.querySelectorAll(`[data-row="${row}"]`).forEach(cell => {
     cell.style.height = '';
@@ -640,7 +825,8 @@ const startReorderDrag = (target, e) => {
       startX: e.clientX,
       startY: e.clientY,
       active: false,
-      beforeIndex: null
+      beforeIndex: null,
+      headerOnlyOnClick: e.detail === 1 && selectionMode === 'column' && anchorCell === target && selected.length === 1 ? target : null
     };
     return true;
   }
@@ -695,20 +881,32 @@ const onGlobalDragMove = e => {
     showRowDropIndicator(target.indicatorY);
   }
 };
-const onGlobalDragEnd = () => {
+const onGlobalDragEnd = e => {
   if (resizeState) {
+    if (resizeState.axis === 'column') persistColumnSizes();
     resizeState = null;
     table.style.cursor = '';
     persistState();
+    window.csvFrozenPanes?.schedule();
   }
   if (!reorderState) return;
 
-  const { axis, indices, active, beforeIndex } = reorderState;
+  const { axis, indices, active, beforeIndex, headerOnlyOnClick } = reorderState;
   reorderState = null;
   hideDragIndicator();
   table.style.cursor = '';
 
-  if (!active || !Number.isFinite(beforeIndex)) return;
+  if (!active) {
+    // Keep selected columns available for dragging until an ordinary click ends.
+    // A real double-click has detail 2 and keeps the existing edit gesture.
+    if (headerOnlyOnClick && e.button === 0 && getCellTarget(e.target) === headerOnlyOnClick) {
+      selectionMode = 'cell';
+      startCell = endCell = headerOnlyOnClick;
+      setSingleSelection(headerOnlyOnClick);
+    }
+    return;
+  }
+  if (!Number.isFinite(beforeIndex)) return;
   if (axis === 'column') {
     vscode.postMessage({ type: 'reorderColumns', indices, beforeIndex });
   } else {
@@ -747,15 +945,16 @@ document.addEventListener('click', (e) => {
 /* ──────── UPDATED contextmenu listener ──────── */
 table.addEventListener('contextmenu', e => {
   const target = getCellTarget(e.target);
-  if (!target) return;
+  if (!target || editingCell) return;
   const colAttr = target.getAttribute('data-col');
   const rowAttr = target.getAttribute('data-row');
-  const col = parseInt(colAttr);
+  const serialCorner = target.hasAttribute('data-serial-index');
+  const col = serialCorner ? -1 : parseInt(colAttr);
   const row = parseInt(rowAttr);
-  if ((isNaN(col) || col === -1) && (isNaN(row) || row === -1)) return;
+  if (!serialCorner && (isNaN(col) || col === -1) && (isNaN(row) || row === -1)) return;
   e.preventDefault();
-  lastContextIsHeader = target.tagName === 'TH';
-  showContextMenu(e.pageX, e.pageY, row, col);
+  lastContextIsHeader = target.tagName === 'TH' && !serialCorner;
+  showContextMenu(e.clientX, e.clientY, row, col);
 });
 
 table.addEventListener('mousedown', e => {
@@ -766,6 +965,10 @@ table.addEventListener('mousedown', e => {
     return;
   }
   const target = getCellTarget(e.target);
+  if (e.button === 0 && startResizeDrag(target, e)) {
+    e.preventDefault();
+    return;
+  }
   if (!target) return;
 
   // Preserve selection on right-click; select target if outside current selection
@@ -784,10 +987,6 @@ table.addEventListener('mousedown', e => {
     return; // do not start drag selection on right-click
   }
   if (e.button !== 0) return;
-  if (!editingCell && startResizeDrag(target, e)) {
-    e.preventDefault();
-    return;
-  }
   if (!editingCell && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && startReorderDrag(target, e)) {
     e.preventDefault();
     return;
@@ -855,6 +1054,16 @@ table.addEventListener('mousedown', e => {
   
   selectionMode = (target.tagName === 'TH') ? "column" : (target.getAttribute('data-col') === '-1' ? "row" : "cell");
   startCell = target; endCell = target; rangeEndCell = target; isSelecting = true; e.preventDefault();
+  if (selectionMode === "column") {
+    const col = Number(target.getAttribute('data-col'));
+    selectFullColumnRange(col, col);
+  } else if (selectionMode === "row") {
+    const row = Number(target.getAttribute('data-row'));
+    selectFullRowRange(row, row);
+  } else {
+    const coords = getCellCoords(target);
+    selectRange(coords, coords);
+  }
   target.focus();
 });
 
@@ -894,10 +1103,6 @@ table.addEventListener('mousemove', e => {
     return;
   }
   const target = getCellTarget(e.target);
-  if (!target) {
-    table.style.cursor = '';
-    return;
-  }
   const edge = getResizeEdgeInfo(target, e);
   if (edge) {
     table.style.cursor = edge.axis === 'column' ? 'col-resize' : 'row-resize';
@@ -916,11 +1121,6 @@ table.addEventListener('mouseup', e => {
   if(!isSelecting) return;
   isSelecting = false;
   if(selectionMode === "cell"){
-    if(startCell === endCell){
-      clearSelection();
-      startCell.classList.add('selected');
-      currentSelection.push(startCell);
-    }
     anchorCell = startCell;
     rangeEndCell = endCell;
     persistState();
@@ -939,9 +1139,10 @@ const selectRange = (start, end) => {
   clearSelection();
   const minRow = Math.min(start.row, end.row), maxRow = Math.max(start.row, end.row);
   const minCol = Math.min(start.col, end.col), maxCol = Math.max(start.col, end.col);
-  for(let r = minRow; r <= maxRow; r++){
+  const selectedRows = visibleRowOrder.length ? visibleRowOrder.filter(row => row >= minRow && row <= maxRow) : Array.from({ length: maxRow - minRow + 1 }, (_, index) => minRow + index);
+  for (const r of selectedRows) {
     for(let c = minCol; c <= maxCol; c++){
-      const selector = (hasHeader && r === 0 ? 'th' : 'td') + '[data-row="'+r+'"][data-col="'+c+'"]';
+      const selector = (hasHeader && r === headerSourceRow ? 'th' : 'td') + '[data-row="'+r+'"][data-col="'+c+'"]';
       const selCell = table.querySelector(selector);
       if(selCell){ selCell.classList.add('selected'); currentSelection.push(selCell); }
     }
@@ -974,6 +1175,19 @@ const selectFullRowRange = (row1, row2) => {
   });
 };
 
+const extendSelectionTo = target => {
+  rangeEndCell = target;
+  const start = getCellCoords(anchorCell);
+  const end = getCellCoords(target);
+  if (isColumnHeaderCell(anchorCell)) {
+    selectFullColumnRange(start.col, end.col);
+  } else if (isRowIndexCell(anchorCell)) {
+    selectFullRowRange(start.row, end.row);
+  } else {
+    selectRange(start, end);
+  }
+};
+
 const getDataCellCoords = cell => {
   if (!cell || typeof cell.getAttribute !== 'function') return null;
   const coords = getCellCoords(cell);
@@ -994,7 +1208,8 @@ const getDataSelectionBounds = () => {
   const maxRow = Math.max(...rows);
   const minCol = Math.min(...cols);
   const maxCol = Math.max(...cols);
-  const expectedCount = (maxRow - minRow + 1) * (maxCol - minCol + 1);
+  const rowIds = [...new Set(rows)].sort((a, b) => a - b);
+  const expectedCount = rowIds.length * (maxCol - minCol + 1);
   const rectangular = keys.size === expectedCount;
   return { minRow, maxRow, minCol, maxCol, rectangular };
 };
@@ -1052,6 +1267,19 @@ const isFindWidgetTarget = target => {
   const el = getElementTarget(target);
   return !!(el && el.closest('#findReplaceWidget'));
 };
+const isGridControlTarget = target => isFindWidgetTarget(target) || !!getElementTarget(target)?.closest('#filterStatus');
+const preventPendingGridAction = event => {
+  if (!filterSnapshotPending || isGridControlTarget(event.target)) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+};
+for (const type of ['keydown', 'copy', 'cut', 'paste']) {
+  document.addEventListener(type, preventPendingGridAction, true);
+}
+for (const type of ['mousedown', 'mouseup', 'dblclick', 'contextmenu', 'beforeinput']) {
+  table.addEventListener(type, preventPendingGridAction, true);
+}
+
 const clearFindHighlights = () => {
   document.querySelectorAll('.highlight, .active-match').forEach(el => {
     el.classList.remove('highlight');
@@ -1165,7 +1393,7 @@ const setActiveFindMatch = (index, shouldScroll = true) => {
     cell.classList.add('highlight');
     cell.classList.add('active-match');
     if (shouldScroll) {
-      cell.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+      scheduleCellReveal(cell, true);
     }
   }
   updateFindStatus();
@@ -1234,6 +1462,7 @@ const replaceInText = (text, replaceAllMatches) => {
   return text.replace(regex, matched => preserveReplacementCase(replacementText, matched));
 };
 const replaceCurrentMatch = () => {
+  if (filterSnapshotPending) return;
   if (!findMatches.length || findReplaceState.invalidRegex) return;
   const match = findMatches[currentMatchIndex];
   if (!match) {
@@ -1254,6 +1483,7 @@ const replaceCurrentMatch = () => {
   runFind(true);
 };
 const replaceAllMatches = () => {
+  if (filterSnapshotPending) return;
   if (findReplaceState.invalidRegex || !findInput.value || !findMatches.length) return;
   const seen = new Set();
   if (!findMatches.length) return;
@@ -1313,41 +1543,46 @@ const closeFindReplace = () => {
 
 findInput.addEventListener('input', () => scheduleFind(false));
 findInput.addEventListener('keydown', e => {
-  e.stopPropagation();
   if (e.key === 'Escape') {
     e.preventDefault();
+    e.stopPropagation();
     closeFindReplace();
     return;
   }
   if (e.key === 'Enter') {
     e.preventDefault();
+    e.stopPropagation();
     navigateFind(e.shiftKey);
     return;
   }
   if (e.key === 'F3') {
     e.preventDefault();
+    e.stopPropagation();
     navigateFind(e.shiftKey);
     return;
   }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') {
     e.preventDefault();
+    e.stopPropagation();
     navigateFind(e.shiftKey);
   }
 });
 replaceInput.addEventListener('keydown', e => {
-  e.stopPropagation();
   if (e.key === 'Escape') {
     e.preventDefault();
+    e.stopPropagation();
     closeFindReplace();
     return;
   }
   if (e.key === 'F3') {
     e.preventDefault();
+    e.stopPropagation();
     navigateFind(e.shiftKey);
     return;
   }
   if (e.key === 'Enter') {
     e.preventDefault();
+    e.stopPropagation();
     replaceCurrentMatch();
   }
 });
@@ -1414,9 +1649,9 @@ window.addEventListener('csvChunkLoaded', () => {
   }
 });
 
-// Capture-phase handler to intercept Cmd/Ctrl + Arrow and move to extremes
+// Handle modified arrow jumps once; Shift extends the existing selection.
 document.addEventListener('keydown', e => {
-  if (isFindWidgetTarget(e.target)) {
+  if (isGridControlTarget(e.target) || isTextInputTarget(e.target)) {
     return;
   }
   const isArrowKey = (k) => ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Up','Down','Left','Right','Home','End'].includes(k);
@@ -1425,38 +1660,26 @@ document.addEventListener('keydown', e => {
     e.stopImmediatePropagation();
     e.stopPropagation();
 
-    const sc = document.querySelector('.table-container');
-    if (sc) {
-      if (['ArrowLeft','Left','Home'].includes(e.key))  sc.scrollTo({ left: 0, behavior: 'smooth' });
-      if (['ArrowRight','Right','End'].includes(e.key)) sc.scrollTo({ left: sc.scrollWidth, behavior: 'smooth' });
-      if (['ArrowUp','Up'].includes(e.key))    sc.scrollTo({ top: 0, behavior: 'smooth' });
-      if (['ArrowDown','Down'].includes(e.key))  sc.scrollTo({ top: sc.scrollHeight, behavior: 'smooth' });
-    } else {
-      if (['ArrowUp','Up'].includes(e.key)) {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }
-      if (['ArrowDown','Down'].includes(e.key)) {
-        const h = Math.max(
-          document.body.scrollHeight,
-          document.documentElement.scrollHeight
-        );
-        window.scrollTo({ top: h, behavior: 'smooth' });
-      }
+    // Select All has no fixed cell anchor; preserve the complete selection.
+    if (e.shiftKey && !anchorCell && currentSelection.length > 1) {
+      return;
     }
 
-    const ref = anchorCell || currentSelection[0] || document.querySelector('td.selected, th.selected') || document.querySelector('td, th');
+    const fixedAnchor = anchorCell || currentSelection.find(cell => {
+      const { row, col } = getCellCoords(cell);
+      return Number.isInteger(row) && Number.isInteger(col);
+    }) || table.querySelector('td[data-row][data-col], th[data-row][data-col]');
+    const ref = e.shiftKey && anchorCell ? (rangeEndCell || fixedAnchor) : fixedAnchor;
     let target = null;
     if (ref) {
       const { row, col } = getCellCoords(ref);
       if (['ArrowLeft','Left','Home'].includes(e.key)) {
-        const tag = (hasHeader && row === 0 ? 'th' : 'td');
-        const rowCells = Array.from(table.querySelectorAll(tag + '[data-row="'+row+'"]'))
+        const rowCells = Array.from(table.querySelectorAll('td[data-row="'+row+'"], th[data-row="'+row+'"]'))
           .filter(el => el.getAttribute('data-col') !== null && el.getAttribute('data-col') !== '-1');
         const min = rowCells.reduce((acc, el) => Math.min(acc, parseInt(el.getAttribute('data-col'))), Infinity);
         target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === min) || ref;
       } else if (['ArrowRight','Right','End'].includes(e.key)) {
-        const tag = (hasHeader && row === 0 ? 'th' : 'td');
-        const rowCells = Array.from(table.querySelectorAll(tag + '[data-row="'+row+'"]'))
+        const rowCells = Array.from(table.querySelectorAll('td[data-row="'+row+'"], th[data-row="'+row+'"]'))
           .filter(el => el.getAttribute('data-col') !== null && el.getAttribute('data-col') !== '-1');
         const max = rowCells.reduce((acc, el) => Math.max(acc, parseInt(el.getAttribute('data-col'))), -1);
         target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === max) || ref;
@@ -1470,39 +1693,41 @@ document.addEventListener('keydown', e => {
     }
 
     if (target) {
-      clearSelection();
-      target.classList.add('selected');
-      currentSelection.push(target);
-      anchorCell = target;
-      rangeEndCell = target;
-      persistState();
-      target.focus({preventScroll:true});
-      if (['ArrowUp','Up'].includes(e.key)) {
-        const topRow = getFirstDataRow();
-        const below = table.querySelector('td[data-row="'+topRow+'"][data-col="'+getCellCoords(target).col+'"]');
-        if (below) {
-          below.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
-        } else {
-          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
-        }
+      if (e.shiftKey && fixedAnchor) {
+        anchorCell = fixedAnchor;
+        extendSelectionTo(target);
       } else {
-        target.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
+        clearSelection();
+        target.classList.add('selected');
+        currentSelection.push(target);
+        anchorCell = target;
+        rangeEndCell = target;
       }
+      persistState();
+      (e.shiftKey ? anchorCell : target).focus({preventScroll:true});
+      scheduleCellReveal(target);
     }
   }
 }, true);
 
 document.addEventListener('keydown', e => {
+  if (getElementTarget(e.target)?.closest('#filterStatus')) return;
   if (maybeHandleZoomShortcut(e)) {
     return;
   }
   const key = typeof e.key === 'string' ? e.key.toLowerCase() : '';
-  if ((e.ctrlKey || e.metaKey) && key === 'f') {
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && key === 's') {
+    e.preventDefault();
+    if (editingCell) { editingCell.blur(); }
+    vscode.postMessage({ type: 'save' });
+    return;
+  }
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && key === 'f') {
     e.preventDefault();
     openFindReplace(false);
     return;
   }
-  if ((e.ctrlKey || e.metaKey) && key === 'h') {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && key === 'h') {
     e.preventDefault();
     openFindReplace(true);
     return;
@@ -1522,14 +1747,15 @@ document.addEventListener('keydown', e => {
     closeFindReplace();
     return;
   }
-  if (isFindWidgetTarget(e.target)) {
+  if (isGridControlTarget(e.target)) {
     return;
   }
   if ((e.ctrlKey || e.metaKey) && e.key === 'a' && !editingCell) {
     e.preventDefault(); selectAllCells(); return;
   }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'c' && currentSelection.length > 0) {
-    e.preventDefault(); copySelectionToClipboard(); return;
+  if ((e.ctrlKey || e.metaKey) && !editingCell && !isTextInputTarget(e.target) &&
+      (key === 'c' || key === 'x') && currentSelection.length > 0) {
+    e.preventDefault(); copySelectionToClipboard(key === 'x'); return;
   }
 
   // Clear contents of selected cells when not editing
@@ -1545,61 +1771,6 @@ document.addEventListener('keydown', e => {
       // Persist change to extension
       vscode.postMessage({ type: 'editCell', row, col, value: '' });
     });
-    return;
-  }
-
-  const isArrowKey = (k) => ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Up','Down','Left','Right','Home','End'].includes(k);
-  if (!editingCell && (e.ctrlKey || e.metaKey) && isArrowKey(e.key)) {
-    e.preventDefault();
-    const sc = document.querySelector('.table-container');
-    if (sc) {
-      if (['ArrowLeft','Left','Home'].includes(e.key))  sc.scrollTo({ left: 0, behavior: 'smooth' });
-      if (['ArrowRight','Right','End'].includes(e.key)) sc.scrollTo({ left: sc.scrollWidth, behavior: 'smooth' });
-      if (['ArrowUp','Up'].includes(e.key))    sc.scrollTo({ top: 0, behavior: 'smooth' });
-      if (['ArrowDown','Down'].includes(e.key))  sc.scrollTo({ top: sc.scrollHeight, behavior: 'smooth' });
-    }
-
-    let refCell = anchorCell;
-    if (!refCell) {
-      refCell = currentSelection[0] || document.querySelector('td.selected, th.selected');
-    }
-    let target = null;
-    if (refCell) {
-      const { row, col } = getCellCoords(refCell);
-      if (['ArrowLeft','Left','Home'].includes(e.key)) {
-        const tag = (hasHeader && row === 0 ? 'th' : 'td');
-        const rowCells = Array.from(table.querySelectorAll(tag + '[data-row="'+row+'"]'))
-          .filter(el => el.getAttribute('data-col') !== null && el.getAttribute('data-col') !== '-1');
-        const min = rowCells.reduce((acc, el) => Math.min(acc, parseInt(el.getAttribute('data-col'))), Infinity);
-        target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === min) || refCell;
-      } else if (['ArrowRight','Right','End'].includes(e.key)) {
-        const tag = (hasHeader && row === 0 ? 'th' : 'td');
-        const rowCells = Array.from(table.querySelectorAll(tag + '[data-row="'+row+'"]'))
-          .filter(el => el.getAttribute('data-col') !== null && el.getAttribute('data-col') !== '-1');
-        const max = rowCells.reduce((acc, el) => Math.max(acc, parseInt(el.getAttribute('data-col'))), -1);
-        target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === max) || refCell;
-      } else if (['ArrowUp','Up'].includes(e.key)) {
-        if (hasHeader) {
-          target = table.querySelector('th[data-row="0"][data-col="'+col+'"]') || refCell;
-        } else {
-          target = table.querySelector('td[data-row="0"][data-col="'+col+'"]') || refCell;
-        }
-      } else if (['ArrowDown','Down'].includes(e.key)) {
-        const colCells = Array.from(table.querySelectorAll('td[data-col="'+col+'"]'));
-        target = (colCells.length ? colCells[colCells.length - 1] : null) || refCell;
-      }
-    }
-
-    if (target) {
-      clearSelection();
-      target.classList.add('selected');
-      currentSelection.push(target);
-      anchorCell = target;
-      rangeEndCell = target;
-      persistState();
-      target.focus({preventScroll:true});
-      target.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
-    }
     return;
   }
 
@@ -1619,13 +1790,13 @@ document.addEventListener('keydown', e => {
     let targetRow = coords.row;
     let targetCol = coords.col + (isBackward ? -1 : 1);
     if (!isBackward && targetCol > maxCol) {
-      targetRow += 1;
+      targetRow = adjacentVisibleRow(targetRow, 1);
       targetCol = minCol;
     } else if (isBackward && targetCol < minCol) {
       if (targetRow <= firstDataRow) {
         return;
       }
-      targetRow -= 1;
+      targetRow = adjacentVisibleRow(targetRow, -1);
       targetCol = maxCol;
     }
     const nextCell = ensureRenderedCellByCoords(targetRow, targetCol);
@@ -1666,21 +1837,19 @@ document.addEventListener('keydown', e => {
     const { row, col } = getCellCoords(rangeEndCell || anchorCell);
     let targetRow = row, targetCol = col;
     switch(e.key){
-      case 'ArrowUp':   targetRow = row - 1; break;
-      case 'ArrowDown': targetRow = row + 1; break;
+      case 'ArrowUp':   targetRow = adjacentVisibleRow(row, -1); break;
+      case 'ArrowDown': targetRow = adjacentVisibleRow(row, 1); break;
       case 'ArrowLeft': targetCol = col - 1; break;
       case 'ArrowRight':targetCol = col + 1; break;
     }
-    if(targetRow < 0 || targetCol < 0) return;
-    const tag = (hasHeader && targetRow === 0 ? 'th' : 'td');
-    const nextCell = table.querySelector(`${tag}[data-row="${targetRow}"][data-col="${targetCol}"]`);
+    if(targetRow < 0 || targetCol < (isRowIndexCell(anchorCell) ? -1 : 0)) return;
+    const nextCell = ensureRenderedCellByCoords(targetRow, targetCol);
     if(nextCell){
       e.preventDefault();
-      rangeEndCell = nextCell;
-      selectRange(getCellCoords(anchorCell), getCellCoords(rangeEndCell));
+      extendSelectionTo(nextCell);
       persistState();
       anchorCell.focus({preventScroll:true});
-      rangeEndCell.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
+      scheduleCellReveal(rangeEndCell);
     }
     return;
   }
@@ -1689,14 +1858,14 @@ document.addEventListener('keydown', e => {
     const { row, col } = getCellCoords(anchorCell);
     let targetRow = row, targetCol = col;
     switch(e.key){
-      case 'ArrowUp':   targetRow = row - 1; break;
-      case 'ArrowDown': targetRow = row + 1; break;
+      case 'ArrowUp':   targetRow = adjacentVisibleRow(row, -1); break;
+      case 'ArrowDown': targetRow = adjacentVisibleRow(row, 1); break;
       case 'ArrowLeft': targetCol = col - 1; break;
       case 'ArrowRight':targetCol = col + 1; break;
     }
     if(targetRow < 0 || targetCol < 0) return;
-    const tag = (hasHeader && targetRow === 0 ? 'th' : 'td');
-    const nextCell = table.querySelector(`${tag}[data-row="${targetRow}"][data-col="${targetCol}"]`);
+    const tag = (hasHeader && targetRow === headerSourceRow ? 'th' : 'td');
+    const nextCell = ensureRenderedCellByCoords(targetRow, targetCol);
     if(nextCell){
       e.preventDefault();
       clearSelection();
@@ -1706,7 +1875,7 @@ document.addEventListener('keydown', e => {
       rangeEndCell = nextCell;
       persistState();
       nextCell.focus({preventScroll:true});
-      nextCell.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
+      scheduleCellReveal(nextCell);
     }
     return;
   }
@@ -1717,14 +1886,14 @@ document.addEventListener('keydown', e => {
     const { row, col } = getCellCoords(editingCell);
     let targetRow = row, targetCol = col;
     switch(e.key){
-      case 'ArrowUp':   targetRow = row - 1; break;
-      case 'ArrowDown': targetRow = row + 1; break;
+      case 'ArrowUp':   targetRow = adjacentVisibleRow(row, -1); break;
+      case 'ArrowDown': targetRow = adjacentVisibleRow(row, 1); break;
       case 'ArrowLeft': targetCol = col - 1; break;
       case 'ArrowRight':targetCol = col + 1; break;
     }
     if (targetRow >= 0 && targetCol >= 0) {
-      const tag = (hasHeader && targetRow === 0 ? 'th' : 'td');
-      const nextCell = table.querySelector(`${tag}[data-row="${targetRow}"][data-col="${targetCol}"]`);
+      const tag = (hasHeader && targetRow === headerSourceRow ? 'th' : 'td');
+      const nextCell = ensureRenderedCellByCoords(targetRow, targetCol);
       if (nextCell) {
         const commitAndMove = () => {
           clearSelection();
@@ -1734,7 +1903,7 @@ document.addEventListener('keydown', e => {
           rangeEndCell = nextCell;
           persistState();
           nextCell.focus({preventScroll:true});
-          nextCell.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
+          scheduleCellReveal(nextCell);
         };
         const cellRef = editingCell;
         cellRef && cellRef.blur();
@@ -1758,11 +1927,6 @@ document.addEventListener('keydown', e => {
     return;
   }
 
-  if (editingCell && ((e.ctrlKey || e.metaKey) && e.key === 's')) {
-    e.preventDefault();
-    editingCell.blur();
-    vscode.postMessage({ type: 'save' });
-  }
   if (editingCell && e.key === 'Enter') {
     e.preventDefault();
     if (e.shiftKey) {
@@ -1773,7 +1937,7 @@ document.addEventListener('keydown', e => {
     }
     const { row, col } = getCellCoords(editingCell);
     editingCell.blur();
-    const targetRow = row + 1;
+    const targetRow = adjacentVisibleRow(row, 1);
     // Editing Enter commits and moves selection down (no auto-edit).
     const nextCell = ensureRenderedCellByCoords(targetRow, col);
     if (nextCell) {
@@ -1798,13 +1962,13 @@ document.addEventListener('keydown', e => {
     if (bounds) {
       targetCol = col + (isBackward ? -1 : 1);
       if (!isBackward && targetCol > bounds.maxCol) {
-        targetRow += 1;
+        targetRow = adjacentVisibleRow(targetRow, 1);
         targetCol = bounds.minCol;
       } else if (isBackward && targetCol < bounds.minCol) {
         if (targetRow <= firstDataRow) {
           canMove = false;
         } else {
-          targetRow -= 1;
+          targetRow = adjacentVisibleRow(targetRow, -1);
           targetCol = bounds.maxCol;
         }
       }
@@ -1819,15 +1983,46 @@ document.addEventListener('keydown', e => {
     }
   }
   if (editingCell && e.key === 'Escape') {
-    e.preventDefault(); editingCell.innerText = originalCellValue; editingCell.blur();
+    e.preventDefault();
+    const { row, col } = getCellCoords(editingCell);
+    if (failedCellDrafts.has(`${row}:${col}`)) {
+      discardingFailedDraft = true;
+      editingCell.blur();
+      discardingFailedDraft = false;
+      vscode.postMessage({ type: 'discardCellDraft', row, col });
+    } else {
+      editingCell.textContent = originalCellValue;
+      editingCell.blur();
+    }
   }
   if (!editingCell && e.key === 'Escape') {
     clearSelection();
   }
 });
 
+const isTextInputTarget = target => {
+  const el = getElementTarget(target);
+  return !!(el && (el.closest('input, textarea, select') || el.isContentEditable));
+};
+const pasteFromClipboard = () => {
+  if (editingCell) return;
+  const anchor = getPasteAnchorCoords();
+  if (!anchor) return;
+  vscode.postMessage({
+    type: 'pasteFromClipboard',
+    anchorRow: anchor.row,
+    anchorCol: anchor.col,
+    selection: getDataSelectionBounds() || undefined
+  });
+};
+for (const type of ['copy', 'cut']) {
+  document.addEventListener(type, e => {
+    if (editingCell || isTextInputTarget(e.target) || isGridControlTarget(e.target)) return;
+    if (copySelectionToClipboard(type === 'cut')) e.preventDefault();
+  });
+}
 document.addEventListener('paste', e => {
-  if (isFindWidgetTarget(e.target)) {
+  if (isTextInputTarget(e.target) || isGridControlTarget(e.target)) {
     return;
   }
   if (editingCell) {
@@ -1858,10 +2053,10 @@ document.addEventListener('paste', e => {
 
 const selectAllCells = () => { clearSelection(); document.querySelectorAll('td, th').forEach(cell => { cell.classList.add('selected'); currentSelection.push(cell); }); };
 
-const setCursorToEnd = cell => { setTimeout(() => { 
+const setCursorToEnd = cell => {
   const range = document.createRange(); range.selectNodeContents(cell); range.collapse(false);
   const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
-}, 10); };
+};
 
 const setCursorToStart = cell => { setTimeout(() => {
   const range = document.createRange(); range.selectNodeContents(cell); range.collapse(true);
@@ -1894,7 +2089,7 @@ const setSingleSelection = cell => {
   rangeEndCell = cell;
   persistState();
   try { cell.focus({ preventScroll: true }); } catch { try { cell.focus(); } catch {} }
-  cell.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+  scheduleCellReveal(cell);
 };
 
 const NEWLINE_SENTINEL_ATTR = 'data-csv-newline-sentinel';
@@ -1907,11 +2102,9 @@ const placeCaretBeforeSentinel = sentinel => {
   const sel = window.getSelection();
   if (!sel) return;
   const range = document.createRange();
-  if (sentinel.firstChild) {
-    range.setStart(sentinel.firstChild, 0);
-  } else {
-    range.setStartBefore(sentinel);
-  }
+  // Keep typed text outside the disposable placeholder. A text-bearing span
+  // would absorb new input and delete that input when the placeholder is removed.
+  range.setStartBefore(sentinel);
   range.collapse(true);
   sel.removeAllRanges();
   sel.addRange(range);
@@ -1919,9 +2112,8 @@ const placeCaretBeforeSentinel = sentinel => {
 
 const appendVisibleNewlineAtEnd = cell => {
   removeNewlineSentinels(cell);
-  const sentinel = document.createElement('span');
+  const sentinel = document.createElement('br');
   sentinel.setAttribute(NEWLINE_SENTINEL_ATTR, 'true');
-  sentinel.textContent = '\u200B';
   cell.appendChild(document.createTextNode('\n'));
   cell.appendChild(sentinel);
   placeCaretBeforeSentinel(sentinel);
@@ -1944,9 +2136,8 @@ const insertNewlineAtCaret = cell => {
   const atEnd = range.collapsed && isRangeAtEndOfCell(cell, range);
   range.deleteContents();
   if (atEnd) {
-    const sentinel = document.createElement('span');
+    const sentinel = document.createElement('br');
     sentinel.setAttribute(NEWLINE_SENTINEL_ATTR, 'true');
-    sentinel.textContent = '\u200B';
     const fragment = document.createDocumentFragment();
     fragment.appendChild(document.createTextNode('\n'));
     fragment.appendChild(sentinel);
@@ -1969,6 +2160,7 @@ const editCell = (cell, event, mode = 'detail') => {
   cell.classList.remove('selected');
   originalCellValue = cell.textContent;
   editingCell = cell;
+  vscode.postMessage({ type: 'cellEditStarted' });
   editMode = mode;
   cell.classList.add('editing');
   cell.setAttribute('contenteditable', 'true');
@@ -1977,7 +2169,9 @@ const editCell = (cell, event, mode = 'detail') => {
     removeNewlineSentinels(cell);
     const value = cell.textContent;
     const coords = getCellCoords(cell);
-    vscode.postMessage({ type: 'editCell', row: coords.row, col: coords.col, value: value });
+    if (!discardingFailedDraft) {
+      vscode.postMessage({ type: 'editCell', row: coords.row, col: coords.col, value: value });
+    }
     cell.removeAttribute('contenteditable');
     cell.classList.remove('editing');
     editingCell = null;
@@ -1996,6 +2190,7 @@ table.addEventListener('dblclick', e => {
     e.stopPropagation();
     if (edge.axis === 'column') {
       resetColumnWidth(edge.index);
+      persistColumnSizes();
     } else {
       resetRowHeight(edge.index);
     }
@@ -2017,32 +2212,48 @@ table.addEventListener('dblclick', e => {
   editCell(target, e);
 });
 
-const copySelectionToClipboard = () => {
-  if (currentSelection.length === 0) return;
-
-  // Only copy real data/header columns; skip serial index column (col === -1)
-  const coords = currentSelection
-    .map(cell => getCellCoords(cell))
-    .filter(c => !isNaN(c.row) && !isNaN(c.col) && c.col >= 0);
-  if (coords.length === 0) return;
-  const minRow = Math.min(...coords.map(c => c.row)), maxRow = Math.max(...coords.map(c => c.row));
-  const minCol = Math.min(...coords.map(c => c.col)), maxCol = Math.max(...coords.map(c => c.col));
-  let csv = '';
-  for(let r = minRow; r <= maxRow; r++){
-    let rowVals = [];
-    for(let c = minCol; c <= maxCol; c++){
-      const selector = (hasHeader && r === 0 ? 'th' : 'td') + '[data-row="'+r+'"][data-col="'+c+'"]';
-      const cell = table.querySelector(selector);
-      rowVals.push(cell ? cell.innerText : '');
+const copySelectionToClipboard = (cut = false) => {
+  const bounds = getDataSelectionBounds();
+  if (!bounds) return false;
+  const { minCol, maxCol } = bounds;
+  const realRowCount = Number(root.dataset.realrowcount);
+  // The append row is an editor affordance, never clipboard data. Consume an
+  // append-only gesture without a host write or native empty clipboard copy.
+  if (!Number.isSafeInteger(realRowCount) || realRowCount < 0) { return true; }
+  const matrix = [];
+  const rowIds = [...new Set(currentSelection.map(getDataCellCoords).filter(Boolean).map(coords => coords.row))]
+    .filter(row => row < realRowCount).sort((a, b) => a - b);
+  if (!rowIds.length) { return true; }
+  for (const row of rowIds) {
+    const values = [];
+    for (let col = minCol; col <= maxCol; col++) {
+      const cell = getRenderedCellByCoords(row, col);
+      values.push(cell ? cell.textContent : '');
     }
-    csv += rowVals.join(CSV_SEPARATOR) + '\n';
+    matrix.push(values);
   }
-  vscode.postMessage({ type: 'copyToClipboard', text: csv.trimEnd() });
+  vscode.postMessage({ type: 'copyCells', matrix, rowIds, startCol: minCol, cut });
+  return true;
 };
 
 window.addEventListener('message', event => {
   const message = event.data;
-  if(message.type === 'focus'){
+  if (message.type === 'prepareViewRefresh') {
+    if (editingCell) { editingCell.blur(); }
+    persistState();
+    vscode.postMessage({ type: 'viewRefreshReady', requestId: message.requestId, session: filterSession, filterDraft: window.csvColumnFilters?.captureDraft() });
+  } else if (message.type === 'columnFiltersResult') {
+    applyColumnFiltersResult(message);
+  } else if (message.type === 'frozenPanes') {
+    frozenRowCount = Number(message.rows);
+    frozenColumnCount = Number(message.columns);
+    window.csvFrozenPanes?.update(frozenRowCount, frozenColumnCount);
+  } else if (message.type === 'editCellFailed') {
+    failedCellDrafts.add(`${message.row}:${message.col}`);
+    const cell = table.querySelector(`[data-row="${message.row}"][data-col="${message.col}"]`);
+    if (message.retry && cell && !editingCell) { editCell(cell, undefined, 'detail'); }
+  } else if(message.type === 'focus'){
+    if (document.activeElement?.closest?.('#filterStatus')) return;
     if (anchorCell) {
       try { anchorCell.focus({ preventScroll: true }); } catch { try { anchorCell.focus(); } catch {} }
     } else {
@@ -2051,6 +2262,7 @@ window.addEventListener('message', event => {
   } else if (message.type === 'chunkData') {
     const requestId = Number(message.requestId);
     const start = Number(message.start);
+    if (message.session !== filterSession || Number(message.filterEpoch) !== filterEpoch) return;
     if (remoteChunkRequestInFlight) {
       if (!Number.isInteger(requestId) || requestId !== remoteChunkRequestSeq) {
         return;
@@ -2074,6 +2286,7 @@ window.addEventListener('message', event => {
       remoteNextChunkStart = -1;
       remoteHasMoreChunks = false;
     }
+    window.csvFrozenPanes?.schedule();
     if (csvChunks.length && pendingEnsureTarget) {
       ensureTargetStep();
     } else if (csvChunks.length && nearBottom()) {
@@ -2082,8 +2295,9 @@ window.addEventListener('message', event => {
   } else if(message.type === 'updateCell'){
     isUpdating = true;
     const { row, col, value, rendered } = message;
+    failedCellDrafts.delete(`${row}:${col}`);
     const cell = table.querySelector('td[data-row="'+row+'"][data-col="'+col+'"], th[data-row="'+row+'"][data-col="'+col+'"]');
-    if (cell) {
+    if (cell && cell !== editingCell) {
       if (typeof rendered === 'string') {
         cell.innerHTML = rendered;
       } else {
@@ -2095,6 +2309,7 @@ window.addEventListener('message', event => {
       scheduleFind(true);
     }
   } else if (message.type === 'pasteApplied') {
+    if (filterSnapshotPending || document.activeElement?.closest?.('#filterStatus')) return;
     const startRow = Number(message.startRow);
     const startCol = Number(message.startCol);
     const endRow = Number(message.endRow);
@@ -2116,7 +2331,7 @@ window.addEventListener('message', event => {
     selectRange({ row: startRow, col: startCol }, { row: endRow, col: endCol });
     persistState();
     try { startCell.focus({ preventScroll: true }); } catch { try { startCell.focus(); } catch {} }
-    endCell.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
+    scheduleCellReveal(endCell);
   } else if (message.type === 'findMatchesResult') {
     if (!findReplaceState.open) {
       return;
@@ -2162,10 +2377,11 @@ window.addEventListener('message', event => {
 
 // After initial restoreState, if there's a pending edit request, perform it
 const maybeResumePendingEdit = () => {
+  if (document.activeElement?.closest?.('#filterStatus')) return;
   try {
     const st = vscode.getState() || {};
     if (st && typeof st.anchorRow === 'number' && typeof st.anchorCol === 'number' && st.pendingEdit === 'detail') {
-      const tag = (hasHeader && st.anchorRow === 0 ? 'th' : 'td');
+      const tag = (hasHeader && st.anchorRow === headerSourceRow ? 'th' : 'td');
       const sel = table.querySelector(`${tag}[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"]`);
       if (sel) {
         editCell(sel, undefined, 'detail');
@@ -2180,14 +2396,149 @@ const maybeResumePendingEdit = () => {
 
 // Try after load and after visibility/focus restores
 setTimeout(maybeResumePendingEdit, 0);
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(maybeResumePendingEdit, 0); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    setTimeout(maybeResumePendingEdit, 0);
+  } else if (editingCell) {
+    editingCell.blur();
+  }
+});
+window.addEventListener('blur', () => {
+  if (editingCell) editingCell.blur();
+});
 window.addEventListener('focus', () => { setTimeout(maybeResumePendingEdit, 0); }, { passive: true });
 
 document.addEventListener('keydown', e => {
-  if (findReplaceState.open) {
+  if (findReplaceState.open || isGridControlTarget(e.target)) {
     return;
   }
   if(!editingCell && e.key === 'Escape'){
     clearSelection();
   }
 });
+
+// A partial filter redraw keeps the delegated table and focused controls alive.
+const initializeFrozenPanes = () => {
+  window.csvFrozenPanes?.dispose();
+  if (typeof window.createFrozenPaneManager !== 'function') return;
+  window.csvFrozenPanes = window.createFrozenPaneManager({
+    table,
+    firstRow: Number(root?.dataset?.firstrow || '0'),
+    realRowCount: Number(root?.dataset?.realrowcount || '0'),
+    rowOrder: visibleRowOrder,
+    topInset: () => document.getElementById('filterStatus')?.getBoundingClientRect().height || 0,
+    onNeedRows: () => loadNextChunk()
+  });
+  window.csvFrozenPanes.update(frozenRowCount, frozenColumnCount);
+};
+initializeFrozenPanes();
+window.addEventListener('csvChunkLoaded', () => window.csvFrozenPanes?.schedule());
+window.addEventListener('resize', () => window.csvFrozenPanes?.schedule());
+window.addEventListener('pagehide', () => window.csvFrozenPanes?.dispose(), { once: true });
+const invalidateFilterFind = () => {
+  clearTimeout(findDebounce);
+  latestFindRequestId = ++findRequestSeq;
+  pendingFindRequests.clear();
+  clearFindHighlights();
+  findMatches = [];
+  findMatchKeySet = new Set();
+  currentMatchIndex = -1;
+  updateFindStatus();
+  updateFindControls();
+};
+const setFilterPending = pending => {
+  filterSnapshotPending = pending;
+  table.toggleAttribute('inert', pending);
+  table.setAttribute('aria-busy', String(pending));
+  if (pending) {
+    pendingCellReveal = null;
+    if (editingCell) editingCell.blur();
+    invalidateFilterFind();
+  }
+};
+const submitColumnFilters = snapshot => {
+  if (editingCell) editingCell.blur();
+  vscode.postMessage({ type: 'updateColumnFilters', ...snapshot, session: filterSession });
+};
+const applyColumnFiltersResult = message => {
+  if (message.session !== filterSession || !window.csvColumnFilters || message.revision !== window.csvColumnFilters.latestRevision) return;
+  // A newly started draft must reach the host before any replacement render.
+  if (editingCell) {
+    editingCell.blur();
+    window.csvColumnFilters.retry();
+    return;
+  }
+  if (!window.csvColumnFilters.receive(message)) return;
+  if (failedCellDrafts.size) { setFilterPending(false); return; }
+  const epoch = Number(message.filterEpoch);
+  if (typeof message.tableHtml === 'string' && Number.isSafeInteger(epoch) && epoch >= 0 &&
+      (!(message.error || message.errors?.length) || epoch !== filterEpoch)) {
+    const parsed = document.createElement('template');
+    parsed.innerHTML = message.tableHtml;
+    const replacement = parsed.content.querySelector('table');
+    if (!replacement) return;
+    const priorAnchor = anchorCell ? getCellCoords(anchorCell) : null;
+    clearSelection();
+    anchorCell = rangeEndCell = startCell = endCell = null;
+    isSelecting = false;
+    selectionMode = 'cell';
+    resizeState = reorderState = null;
+    table.style.cursor = '';
+    hideDragIndicator();
+    pendingEnsureTarget = null;
+    pendingCellReveal = null;
+    invalidateFilterFind();
+    chunkObserver?.disconnect();
+    remoteChunkRequestInFlight = false;
+    remoteChunkRequestedStart = -1;
+    remoteChunkRequestSeq += 1;
+    filterEpoch = epoch;
+    table.replaceChildren(...Array.from(replacement.childNodes));
+    hasHeader = !!table.tHead;
+    headerEnabled = message.headerEnabled === true;
+    root.dataset.headerenabled = headerEnabled ? '1' : '0';
+    headerSourceRow = Number(message.firstVisibleRow);
+    root.dataset.firstrow = String(message.firstVisibleRow);
+    root.dataset.realrowcount = String(message.realRowCount);
+    visibleRowOrder.length = 0;
+    for (const row of Array.isArray(message.visibleRowIds) ? message.visibleRowIds : []) visibleRowOrder.push(row);
+    root.dataset.roworder = JSON.stringify(visibleRowOrder);
+    root.dataset.filtered = message.filters?.length ? '1' : '0';
+    try { csvChunks = JSON.parse(message.chunksJson || '[]'); } catch { csvChunks = []; }
+    remoteNextChunkStart = Number.isInteger(message.nextChunkStart) ? message.nextChunkStart : -1;
+    remoteHasMoreChunks = !!message.hasRemoteChunks && remoteNextChunkStart >= 0;
+    root.dataset.nextchunkstart = remoteNextChunkStart >= 0 ? String(remoteNextChunkStart) : '';
+    root.dataset.hasmorechunks = remoteHasMoreChunks ? '1' : '0';
+    if (chunkTemplate) chunkTemplate.textContent = JSON.stringify(csvChunks);
+    const colors = document.getElementById('__csvColumnColors');
+    if (colors && typeof message.colorCss === 'string') colors.textContent = message.colorCss;
+    if (priorAnchor) {
+      const cell = getRenderedCellByCoords(priorAnchor.row, priorAnchor.col);
+      if (cell) { cell.classList.add('selected'); currentSelection.push(cell); anchorCell = rangeEndCell = cell; }
+    }
+    applySizeStateToRenderedCells();
+    initializeFrozenPanes();
+    primeChunks();
+    persistState();
+    replaceAll.title = message.filters?.length ? 'Replace All in matching filtered rows' : 'Replace All';
+  }
+  setFilterPending(false);
+  if (findReplaceState.open && findInput.value) runFind(true);
+};
+const filterStatus = document.getElementById('filterStatus');
+if (filterStatus && typeof window.createColumnFilterControls === 'function') {
+  window.csvColumnFilters = window.createColumnFilterControls({
+    root: filterStatus,
+    metadata: filterMetadata,
+    onChange: submitColumnFilters,
+    onActivity: () => vscode.postMessage({ type: 'filterDraftChanged', session: filterSession }),
+    onPending: setFilterPending,
+    onLayout: () => window.csvFrozenPanes?.schedule()
+  });
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => window.csvFrozenPanes?.schedule()).observe(filterStatus);
+}
+for (const button of [replaceOne, replaceAll]) button.addEventListener('click', event => {
+  if (filterSnapshotPending) { event.preventDefault(); event.stopImmediatePropagation(); }
+}, true);
+// The host may be waiting to commit a draft while this webview initializes.
+vscode.postMessage({ type: 'webviewReady' });

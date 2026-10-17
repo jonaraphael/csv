@@ -1,8 +1,32 @@
 # Changelog
 
-All notable changes to the "CSV" extension will be documented in this file.
+## [1.4.2] - 2026-10-17
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+This release combines the editing, navigation, and table tools developed since the public 1.3 release.
+
+### Editing and file integrity
+
+- Preserve multiline drafts through repeated line breaks, blur, saves, tab changes, and table/text switches. Failed edits remain available for retry or explicit discard.
+- Preserve existing CSV quoting and line endings during cell edits, structural paste, and row/column moves. Copy and Cut quote each value only when necessary, retain real empty fields, and exclude the extra append row.
+- Add saved-file table/text replacement with unsaved-edit preservation and explicit Save As support for untitled CSV/TSV tables that retain their native owner.
+- Keep native Find in Files destinations in text after an explicit local-file Text choice, including restart and Off/On. Restore only owned routing preferences on return to Table and preserve intervening user choices.
+- Preserve the active document through multi-file Off/On changes. Serialize native handoffs and request a fresh acknowledgment for cell or filter activity made while waiting.
+- Improve encoding guidance without guessing or silently changing the source encoding.
+
+### Table navigation and views
+
+- Add contextual first-row header and serial-index actions, frozen leading rows/columns, remembered manual widths, and a configurable default for hidden leading metadata.
+- Fix column resize hit testing at fractional borders and frozen seams, retain usable narrow-column centers, and make dragged widths follow the pointer. Automatic sizing accounts for multiline values.
+- Show selection immediately on mouse-down. Support a second separate header click for header-only selection, anchored Ctrl/Cmd+Shift+Arrow ranges, and viewport following during held-arrow navigation.
+- Keep modified native Find/Replace shortcuts outside the table overlay. Position context menus using available viewport space, with scrolling in small panes.
+- Paint frozen-row divider seams without changing row geometry. Preserve the chosen datatype palette or theme foreground mode across light, dark, and high-contrast themes.
+
+### Filtering, preview, and comparison
+
+- Add inline live column filters with multiple AND conditions, including repeated conditions on one column; inferred number/date/boolean comparisons; Does Not Contain; and RE2 regular expressions. Preserve input focus, invalid drafts, source row identities, and the full source when saving.
+- Add a bounded, paginated read-only preview for large saved UTF-8 files. The direct Explorer/command path avoids opening a full text document first; malformed or oversized records produce errors instead of truncation.
+- Add explicit read-only table comparison with record alignment, changed-cell highlighting, synchronized panes, change navigation, and bounded display/alignment work. Native Git/PR custom-editor diff remains a separate limitation.
+- Document privacy and data handling, including remote extension hosts, clipboard/link actions, diagnostic logs, and saved filter values.
 
 ## [1.2.1] - 2025-08-20
 - Fixed: Scrolling freeze at 1000 rows when header was enabled by making chunking consistent across modes and using a safe JSON transport to the webview.

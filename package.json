@@ -2,13 +2,13 @@
   "name": "csv",
   "displayName": "CSV",
   "publisher": "ReprEng",
-  "description": "Seamlessly Display and Edit CSVs",
+  "description": "View and edit CSV, TSV, TAB, and PSV files as tables.",
   "icon": "images/icon.jpg",
   "repository": {
     "type": "git",
     "url": "https://github.com/jonaraphael/csv.git"
   },
-  "version": "1.3.0",
+  "version": "1.4.2",
   "engines": {
     "vscode": "^1.70.0",
     "node": ">=14"
@@ -19,9 +19,15 @@
     "Other"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onLanguage:csv",
     "onLanguage:tsv",
     "onCommand:csv.toggleExtension",
+    "onCommand:csv.openLargeFilePreview",
+    "onCommand:csv.compareFilesAsTable",
+    "onCustomEditor:csv.largeFilePreview",
+    "onCommand:csv.toggleEditor",
+    "onCommand:csv.saveUntitled",
     "onCommand:csv.toggleHeader",
     "onCommand:csv.toggleSerialIndex",
     "onCommand:csv.changeSeparator",
@@ -29,7 +35,9 @@
     "onCommand:csv.changeFontFamily",
     "onCommand:csv.changeIgnoreRows",
     "onCommand:csv.changeEncoding",
-    "onCommand:csv.toggleClickableLinks"
+    "onCommand:csv.toggleClickableLinks",
+    "onCommand:csv.changeFrozenRows",
+    "onCommand:csv.changeFrozenColumns"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -65,6 +73,25 @@
     ],
     "commands": [
       {
+        "command": "csv.openLargeFilePreview",
+        "title": "CSV: Open Large File Preview (Read-only)"
+      },
+      {
+        "command": "csv.toggleEditor",
+        "title": "CSV: Switch Between Table and Text",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "csv.compareFilesAsTable",
+        "title": "CSV: Compare Files as Table"
+      },
+      {
+        "command": "csv.saveUntitled",
+        "title": "CSV: Save Untitled Document As\u2026",
+        "icon": "$(save)",
+        "enablement": "activeWebviewPanelId == csv.untitledEditor"
+      },
+      {
         "command": "csv.toggleExtension",
         "title": "CSV: Toggle Extension On/Off"
       },
@@ -99,8 +126,48 @@
       {
         "command": "csv.toggleClickableLinks",
         "title": "CSV: Toggle Clickable Links"
+      },
+      {
+        "command": "csv.changeFrozenRows",
+        "title": "CSV: Freeze Leading Rows"
+      },
+      {
+        "command": "csv.changeFrozenColumns",
+        "title": "CSV: Freeze Leading Columns"
       }
     ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "csv.toggleEditor",
+          "when": "!isInDiffEditor && (activeCustomEditorId == csv.editor || activeWebviewPanelId == csv.untitledEditor || (activeEditor == workbench.editors.files.textFileEditor && resourceScheme != untitled && resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i) || (activeEditor == workbench.editors.textResourceEditor && resourceScheme == untitled && editorLangId =~ /^(csv|tsv)$/))",
+          "group": "navigation"
+        },
+        {
+          "command": "csv.saveUntitled",
+          "when": "activeWebviewPanelId == csv.untitledEditor",
+          "group": "navigation@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "csv.saveUntitled",
+          "when": "activeWebviewPanelId == csv.untitledEditor"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "csv.compareFilesAsTable",
+          "when": "resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i && config.csv.enabled",
+          "group": "navigation"
+        },
+        {
+          "command": "csv.openLargeFilePreview",
+          "when": "resourceScheme == file && resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i && config.csv.enabled",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "type": "object",
       "title": "CSV Extension Configuration",
@@ -113,7 +180,7 @@
         "csv.fontFamily": {
           "type": "string",
           "default": "",
-          "description": "Font family used by the CSV custom editor. Leave empty to inherit ‘editor.fontFamily’.",
+          "description": "Font family used by the CSV custom editor. Leave empty to inherit \u2018editor.fontFamily\u2019.",
           "scope": "application"
         },
         "csv.fontSize": {
@@ -207,10 +274,36 @@
           "default": 10,
           "minimum": 0,
           "description": "Soft max size in MB for opening files in CSV view. 0 disables the limit. When exceeded, CSV prompts to cancel, continue this time, or disable the limit."
+        },
+        "csv.defaultIgnoreRows": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "scope": "resource",
+          "description": "Default number of initial metadata rows to hide without deleting them. Per-file Hide First N Rows values override this default; leave that command blank to inherit again."
+        },
+        "csv.largeFilePreviewRows": {
+          "type": "integer",
+          "default": 1000,
+          "minimum": 1,
+          "maximum": 10000,
+          "scope": "resource",
+          "description": "Maximum records per read-only Large File Preview page. Byte/cell safety limits can produce smaller pages."
         }
       }
     },
     "customEditors": [
+      {
+        "viewType": "csv.largeFilePreview",
+        "displayName": "CSV Large File Preview (Read-only)",
+        "priority": "option",
+        "selector": [
+          { "filenamePattern": "*.csv" },
+          { "filenamePattern": "*.tsv" },
+          { "filenamePattern": "*.tab" },
+          { "filenamePattern": "*.psv" }
+        ]
+      },
       {
         "viewType": "csv.editor",
         "displayName": "CSV",
@@ -240,7 +333,8 @@
   },
   "dependencies": {
     "font-list": "^1.5.1",
-    "papaparse": "^5.5.3"
+    "papaparse": "^5.5.3",
+    "re2js": "1.3.3"
   },
   "devDependencies": {
     "@types/node": "^20.11.19",
@@ -250,6 +344,8 @@
     "@typescript-eslint/parser": "^7.9.0",
     "@vscode/vsce": "^3.7.1",
     "eslint": "^8.57.0",
+    "iconv-lite": "^0.6.3",
+    "jsdom": "^26.1.0",
     "typescript": "^4.4.3",
     "vscode": "^1.1.37"
   }

@@ -13,7 +13,7 @@ describe('Webview size persistence', () => {
   });
 
   it('restores and reapplies size state after render/chunk loads', () => {
-    assert.ok(source.includes('columnSizeState = normalizeSizeState(st.columnSizes, 40);'));
+    assert.ok(source.includes('columnSizeState = normalizeSizeState(st.columnSizes ?? persistedColumnSizes, 40);'));
     assert.ok(source.includes('rowSizeState = normalizeSizeState(st.rowSizes, getMinRowHeight());'));
     assert.ok(source.includes('setZoomScale(restoredZoom ?? 1, false);'));
     assert.ok(source.includes('applySizeStateToRenderedCells();'));
