@@ -33,14 +33,16 @@ export async function toggleCsvEditor(): Promise<void> {
     await showActiveUntitledCsvSource();
     return;
   }
-  const activeDocument = vscode.window.activeTextEditor?.document;
-  const activeInput = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
-  if (activeDocument && isUntitledCsv(activeDocument) && activeInput instanceof vscode.TabInputText &&
-    activeInput.uri.toString() === activeDocument.uri.toString()) {
-    await openUntitledCsvEditor(activeDocument, vscode.window.tabGroups.activeTabGroup.viewColumn);
+  const group = vscode.window.tabGroups.activeTabGroup;
+  const activeInput = group.activeTab?.input;
+  const activeDocument = activeInput instanceof vscode.TabInputText
+    ? vscode.window.visibleTextEditors.find(editor => editor.viewColumn === group.viewColumn &&
+      editor.document.uri.toString() === activeInput.uri.toString())?.document
+    : undefined;
+  if (activeDocument && isUntitledCsv(activeDocument)) {
+    await openUntitledCsvEditor(activeDocument, group.viewColumn);
     return;
   }
-  const group = vscode.window.tabGroups.activeTabGroup;
   const tab = group.activeTab;
   if (!tab) {
     return;
