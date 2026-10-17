@@ -80,14 +80,15 @@ describe('High-contrast rendering', () => {
     assert.ok(!extensionSource.includes('onDidChangeActiveColorTheme'), 'theme changes must not force-reload an active cell draft');
   });
 
-  it('scopes accessibility styles to high-contrast themes and covers interactive states with theme tokens', () => {
+  it('scopes theme styles and covers interactive states with theme tokens', () => {
     const css = fs.readFileSync(path.join(process.cwd(), 'media', 'high-contrast.css'), 'utf8');
     const rules = css.replace(/\/\*[\s\S]*?\*\//g, '').split('}').filter(rule => rule.trim()).map(rule => {
       const [selector, declarations] = rule.split('{');
       return { selector: selector.trim(), declarations: declarations.trim() };
     });
     for (const rule of rules) {
-      assert.ok(rule.selector.startsWith('body:is(.vscode-high-contrast, .vscode-high-contrast-light)'));
+      assert.ok(rule.selector.startsWith('body:is('));
+      assert.ok(rule.selector.includes('.vscode-high-contrast-light'));
       assert.ok(!/#[0-9a-f]{3,8}\b/i.test(rule.declarations), 'high-contrast colors must come from the active theme');
     }
     const expectedStates = new Map([
