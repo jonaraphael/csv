@@ -136,16 +136,11 @@ export function validateColumnFilterInput(operator: ColumnFilterOperator, value:
   }
 }
 
-export function formatColumnFilter(filter: ColumnFilter): string {
-  const label = operatorChoices.find(choice => choice.operator === filter.operator)?.label ?? 'Invalid Filter';
-  return filter.operator === 'empty' || filter.operator === 'notEmpty' ? label : `${label} ${JSON.stringify(filter.value)}`;
-}
-
 export function normalizeColumnFilters(raw: unknown, columnCount = Infinity): ColumnFilter[] {
   if (!Array.isArray(raw)) {
     return [];
   }
-  const byColumn = new Map<number, ColumnFilter>();
+  const normalized: ColumnFilter[] = [];
   for (const item of raw.slice(0, MAX_COLUMN_FILTERS)) {
     if (!item || typeof item !== 'object') {
       continue;
@@ -155,9 +150,9 @@ export function normalizeColumnFilters(raw: unknown, columnCount = Infinity): Co
       continue;
     }
     // Invalid query syntax remains visible and removable; compilation fails closed.
-    byColumn.set(column, { column, operator: operator!, value, ...(dataType === undefined ? {} : { dataType }) });
+    normalized.push({ column, operator: operator!, value, ...(dataType === undefined ? {} : { dataType }) });
   }
-  return [...byColumn.values()].sort((a, b) => a.column - b.column);
+  return normalized;
 }
 
 export function compileColumnFilters(filters: readonly ColumnFilter[]): CompiledColumnFilters {
@@ -197,8 +192,6 @@ export function visibleSourceRows(data: readonly string[][], hiddenRows: number,
 
 // new column index -> original index; -1 denotes an inserted empty column.
 export function remapColumnFilters(filters: readonly ColumnFilter[], columnOrder: readonly number[]): ColumnFilter[] {
-  return columnOrder.flatMap((oldColumn, column) => {
-    const filter = filters.find(item => item.column === oldColumn);
-    return filter ? [{ ...filter, column }] : [];
-  });
+  return filters.flatMap(filter => columnOrder.flatMap((oldColumn, column) =>
+    oldColumn === filter.column ? [{ ...filter, column }] : []));
 }

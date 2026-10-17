@@ -2,7 +2,7 @@ import Papa from 'papaparse';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { parseClipboardMatrix, serializeClipboardMatrix } from './clipboard';
-import { ColumnFilter, normalizeColumnFilters, compileColumnFilters, visibleSourceRows, remapColumnFilters, getFilterOperatorChoices, validateColumnFilterInput, formatColumnFilter, MAX_COLUMN_FILTERS } from './column-filters';
+import { ColumnFilter, normalizeColumnFilters, compileColumnFilters, visibleSourceRows, remapColumnFilters, getFilterOperatorChoices, validateColumnFilterInput, MAX_COLUMN_FILTERS, MAX_FILTER_VALUE_LENGTH } from './column-filters';
 import { FilterDataType, parseFilterDate } from './filter-values';
 
 type FrozenPanes = { rows: number; columns: number };
@@ -54,6 +54,25 @@ type ChunkRenderState = {
   isDark: boolean;
   serialIndexWidthCh: number;
 };
+type FilterColumn = { column: number; label: string; dataType: FilterDataType; operators: ReturnType<typeof getFilterOperatorChoices> };
+type FilterDraft = {
+  session: string;
+  filterColumnsRevision: number;
+  rows: Array<{ column: number; operator: ColumnFilter['operator']; value: string; composing?: boolean }>;
+  columns: Array<{ column: number; label: string }>;
+  focus?: {
+    row: number;
+    field: 'column' | 'operator' | 'value' | 'remove';
+    selectionStart?: number;
+    selectionEnd?: number;
+    selectionDirection?: 'forward' | 'backward' | 'none';
+  };
+};
+type FilterRender = {
+  tableHtml: string; chunksJson: string; colorCss: string; nextChunkStart: number; hasRemoteChunks: boolean;
+  visibleRowIds: number[]; matchedRows: number; totalRows: number; filters: ColumnFilter[]; columns: FilterColumn[];
+  firstVisibleRow: number; realRowCount: number; headerEnabled: boolean; chunkState: ChunkRenderState | undefined;
+};
 type ChunkResponse = {
   html: string;
   nextStart: number;
@@ -92,6 +111,13 @@ class CsvEditorController {
   private isDiffContext = false;
   private currentHeader = false;
   private chunkRenderState: ChunkRenderState | undefined;
+  private currentFilterView: FilterRender | undefined;
+  private latestFilterRevision = 0;
+  private filterEpoch = 0;
+  private filterSession = '';
+  private filterSessionUri = '';
+  private filterColumnsRevision = 0;
+  private pendingFilterDraft: { uri: string; draft: FilterDraft } | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -153,6 +179,13 @@ class CsvEditorController {
     });
 
     webviewPanel.webview.onDidReceiveMessage(e => {
+      if (e.type === 'filterDraftChanged') {
+        if (e.session === this.filterSession) { this.draftActivityRevision += 1; }
+        return;
+      }
+      if (e.type === 'updateColumnFilters' && e.session === this.filterSession && Number.isSafeInteger(e.revision) && e.revision > this.latestFilterRevision) {
+        this.latestFilterRevision = e.revision;
+      }
       const mutatesTable = ['replaceCells', 'pasteCells', 'insertColumn', 'insertColumns', 'deleteColumn', 'deleteColumns',
         'insertRow', 'insertRows', 'deleteRow', 'deleteRows', 'reorderColumns', 'reorderRows', 'sortColumn', 'pasteFromClipboard'].includes(e.type) || (e.type === 'copyCells' && e.cut === true);
       // Observe new drafts immediately, even while an earlier queued edit awaits
@@ -176,6 +209,7 @@ class CsvEditorController {
           break;
         }
         case 'viewRefreshReady': {
+          if (e.session !== this.filterSession) { break; }
           if (this.viewCommitRequested && e.requestId !== this.viewCommitSequence) {
             break;
           }
@@ -188,6 +222,7 @@ class CsvEditorController {
             this.postViewCommitRequest();
             break;
           }
+          this.captureFilterDraft(e.filterDraft);
           await this.finishViewCommit();
           break;
         }
@@ -204,7 +239,7 @@ class CsvEditorController {
           await this.pasteCells(e.text, e.anchorRow, e.anchorCol, e.selection);
           break;
         case 'requestChunk':
-          await this.requestChunk(e.start, e.requestId);
+          await this.requestChunk(e.start, e.requestId, e.filterEpoch, e.session);
           break;
         case 'findMatches':
           await this.findMatches(e.requestId, e.query, e.options);
@@ -216,14 +251,8 @@ class CsvEditorController {
             await this.handleSave();
           }
           break;
-        case 'configureColumnFilter':
-          await this.configureColumnFilter(e.column);
-          break;
-        case 'clearColumnFilter':
-          await this.setColumnFilters(CsvEditorProvider.getColumnFiltersForUri(this.context, this.document.uri).filter(filter => filter.column !== Number(e.column)));
-          break;
-        case 'clearAllFilters':
-          await this.setColumnFilters([]);
+        case 'updateColumnFilters':
+          await this.updateColumnFilters(e.revision, e.filters, e.session);
           break;
         case 'freezePanesChanged':
           await this.setFrozenPanes({ rows: e.rows, columns: e.columns });
@@ -323,6 +352,7 @@ class CsvEditorController {
       saveDocumentSubscription.dispose();
       CsvEditorProvider.editors = CsvEditorProvider.editors.filter(ed => ed !== this);
       this.currentWebviewPanel = undefined;
+      this.pendingFilterDraft = undefined;
       this.pendingViewAction = undefined;
       this.pendingDocumentReference = undefined;
       this.viewCommitRequested = false;
@@ -710,71 +740,169 @@ class CsvEditorController {
     );
   }
 
-  private async setColumnFilters(filters: ColumnFilter[]): Promise<void> {
-    await CsvEditorProvider.setColumnFiltersForUri(this.context, this.document.uri, filters);
-    this.refreshViewSafely();
+  private getFilterColumns(data: string[][]): FilterColumn[] {
+    const offset = Math.min(Math.max(0, this.getHiddenRows()), data.length);
+    const header = this.getEffectiveHeader(data, offset);
+    const body = data.slice(offset + (header ? 1 : 0));
+    const count = Math.max(1, data.reduce((max, row) => Math.max(max, row.length), 0));
+    return Array.from({ length: count }, (_, column) => {
+      const values = body.map(row => row[column] ?? '');
+      const inferred = this.estimateColumnDataType(values);
+      let dataType: FilterDataType = inferred === 'integer' || inferred === 'float' ? 'number'
+        : inferred === 'date' || inferred === 'boolean' ? inferred : 'string';
+      if (inferred === 'string') {
+        const nonblank = values.filter(value => value.trim() !== '');
+        if (nonblank.length && nonblank.every(value => parseFilterDate(value) !== undefined)) {
+          dataType = 'date';
+        }
+      }
+      return { column, label: (header ? data[offset]?.[column] : '') || `Column ${column + 1}`, dataType, operators: getFilterOperatorChoices(dataType) };
+    });
   }
 
-  private async configureColumnFilter(rawColumn: unknown): Promise<void> {
-    const column = Number(rawColumn);
+  private filterResponse(): Record<string, unknown> {
+    if (!this.currentFilterView) { return { filterEpoch: this.filterEpoch }; }
+    const { chunkState, ...payload } = this.currentFilterView;
+    return { ...payload, filterEpoch: this.filterEpoch };
+  }
+
+  private async updateColumnFilters(rawRevision: unknown, rawFilters: unknown, session: unknown): Promise<void> {
+    const panel = this.currentWebviewPanel;
+    if (!panel || session !== this.filterSession) { return; }
+    const reply = (extra: Record<string, unknown>) => {
+      if (session !== this.filterSession || panel !== this.currentWebviewPanel) { return; }
+      void panel.webview.postMessage({ type: 'columnFiltersResult', session: this.filterSession, revision: rawRevision, ...this.filterResponse(), ...extra });
+    };
+    if (typeof rawRevision !== 'number' || !Number.isSafeInteger(rawRevision) || rawRevision <= 0) {
+      reply({ error: 'Filter revisions must be positive safe integers.' });
+      return;
+    }
+    if (rawRevision !== this.latestFilterRevision || rawRevision <= this.filterEpoch) { return; }
+    if (this.failedCellEdits.size) {
+      reply({ error: 'Retry the failed cell edit before changing filters.' });
+      return;
+    }
+    if (this.pendingDocumentReference || this.viewCommitRequested) {
+      reply({ error: 'Finish the current editor change before changing filters.' });
+      return;
+    }
+    if (!Array.isArray(rawFilters) || rawFilters.length > MAX_COLUMN_FILTERS) {
+      reply({ error: `Provide at most ${MAX_COLUMN_FILTERS} filter conditions.` });
+      return;
+    }
     const data = this.trimTrailingEmptyRows(Papa.parse<string[]>(this.document.getText(), { delimiter: this.getSeparator() }).data);
-    const columnCount = data.reduce((max, row) => Math.max(max, row.length), 0);
-    if (!Number.isInteger(column) || column < 0 || column >= columnCount) {
-      return;
-    }
-    const filters = CsvEditorProvider.getColumnFiltersForUri(this.context, this.document.uri);
-    const existing = filters.find(filter => filter.column === column);
-    if (!existing && filters.length >= MAX_COLUMN_FILTERS) {
-      void vscode.window.showInformationMessage(`CSV: Clear a column filter before adding another (maximum ${MAX_COLUMN_FILTERS}).`);
-      return;
-    }
-    const offset = Math.min(Math.max(0, this.getHiddenRows()), data.length);
-    const bodyStart = offset + (this.getEffectiveHeader(data, offset) ? 1 : 0);
-    const originalValues = data.slice(bodyStart).map(row => row[column] ?? '');
-    const inferred = this.estimateColumnDataType(originalValues);
-    let dataType: FilterDataType = inferred === 'integer' || inferred === 'float' ? 'number'
-      : inferred === 'date' || inferred === 'boolean' ? inferred : 'string';
-    if (inferred === 'string') {
-      const nonblank = originalValues.filter(value => value.trim() !== '');
-      if (nonblank.length && nonblank.every(value => parseFilterDate(value) !== undefined)) {
-        dataType = 'date';
-      }
-    }
-    const typeLabel = dataType === 'string' ? 'text' : dataType;
-    const choices = getFilterOperatorChoices(dataType);
-    const selected = await vscode.window.showQuickPick([...choices], { placeHolder: `Filter column ${column + 1} (inferred ${typeLabel})` });
-    if (!selected) {
-      return;
-    }
-    const choice = choices.find(item => item.operator === selected.operator);
-    if (!choice) {
-      return;
-    }
-    const typedComparison = !['contains', 'notContains', 'regex', 'empty', 'notEmpty'].includes(choice.operator);
-    const comparisonType = typedComparison && dataType !== 'string' ? dataType : undefined;
-    const validate = (text: string) => validateColumnFilterInput(choice.operator, text, comparisonType);
-    let value = '';
-    if (choice.operator !== 'empty' && choice.operator !== 'notEmpty') {
-      const guidance = choice.operator === 'regex' ? 'Plain patterns ignore case; /pattern/flags accepts i, m and s.'
-        : comparisonType === 'date' ? 'Use an explicit date/time; timezone-less values use UTC.'
-        : comparisonType === 'boolean' ? 'Use true/false, yes/no, on/off, t/f, y/n or 1/0.'
-        : comparisonType === 'number' ? 'Enter a finite number.' : 'Text matching ignores case.';
-      const input = await vscode.window.showInputBox({
-        prompt: `Column ${column + 1} (${typeLabel}): ${choice.label.toLowerCase()}. ${guidance}`,
-        value: existing?.value ?? '',
-        validateInput: validate
-      });
-      if (input === undefined || validate(input) !== undefined) {
+    const columns = this.getFilterColumns(data);
+    const filters: ColumnFilter[] = [];
+    const errors: Array<{ index: number; message: string }> = [];
+    rawFilters.forEach((raw: unknown, index: number) => {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        errors.push({ index, message: 'Provide a valid filter condition.' });
         return;
       }
-      value = input;
+      const item = raw as Record<string, unknown>;
+      if (Object.keys(item).some(key => !['column', 'operator', 'value', 'dataType'].includes(key)) ||
+          typeof item.column !== 'number' || !Number.isSafeInteger(item.column) || item.column < 0 || item.column >= columns.length ||
+          typeof item.operator !== 'string' || typeof item.value !== 'string' || item.value.length > MAX_FILTER_VALUE_LENGTH ||
+          (item.dataType !== undefined && (typeof item.dataType !== 'string' || !['string', 'number', 'date', 'boolean'].includes(item.dataType)))) {
+        errors.push({ index, message: 'Provide a valid column, operator, type and filter value.' });
+        return;
+      }
+      const column = columns[item.column];
+      const choice = column.operators.find(operator => operator.operator === item.operator);
+      if (!choice) {
+        errors.push({ index, message: `Choose an operator supported by this ${column.dataType} column.` });
+        return;
+      }
+      const typed = !['contains', 'notContains', 'regex', 'empty', 'notEmpty'].includes(choice.operator);
+      const dataType = typed && column.dataType !== 'string' ? column.dataType : undefined;
+      // Empty text boxes remain local drafts, including incomplete typed queries.
+      if (choice.operator !== 'empty' && choice.operator !== 'notEmpty' && item.value.length === 0) { return; }
+      const error = validateColumnFilterInput(choice.operator, item.value, dataType);
+      if (error) { errors.push({ index, message: error }); return; }
+      filters.push({ column: item.column, operator: choice.operator, value: item.value, ...(dataType ? { dataType } : {}) });
+    });
+    if (errors.length) { reply({ errors, columns }); return; }
+    const view = this.buildFilterView(data, filters);
+    if (session !== this.filterSession || rawRevision !== this.latestFilterRevision) { return; }
+    const previous = CsvEditorProvider.getColumnFiltersForUri(this.context, this.document.uri);
+    try {
+      await CsvEditorProvider.setColumnFiltersForUri(this.context, this.document.uri, filters);
+      if (session !== this.filterSession || rawRevision !== this.latestFilterRevision) {
+        await CsvEditorProvider.setColumnFiltersForUri(this.context, this.document.uri, previous);
+        return;
+      }
+    } catch {
+      reply({ error: 'The filter conditions could not be saved. Try again.' });
+      return;
     }
-    await this.setColumnFilters([...filters.filter(filter => filter.column !== column), {
-      column, operator: choice.operator, value, ...(comparisonType ? { dataType: comparisonType } : {})
-    }]);
+    this.chunkRenderState = view.chunkState;
+    this.currentFilterView = view;
+    this.currentHeader = view.headerEnabled;
+    this.filterEpoch = rawRevision;
+    reply({});
+  }
+
+  private captureFilterDraft(raw: unknown): void {
+    this.pendingFilterDraft = undefined;
+    const columns = this.currentFilterView?.columns;
+    if (!columns || !raw || typeof raw !== 'object' || Array.isArray(raw)) { return; }
+    const item = raw as Record<string, unknown>;
+    if (item.session !== this.filterSession || item.filterColumnsRevision !== this.filterColumnsRevision ||
+        !Array.isArray(item.rows) || item.rows.length > MAX_COLUMN_FILTERS ||
+        !Array.isArray(item.columns) || item.columns.length !== columns.length) { return; }
+    if (!item.columns.every((column: unknown, index: number) => {
+      if (!column || typeof column !== 'object' || Array.isArray(column)) { return false; }
+      const identity = column as Record<string, unknown>;
+      return identity.column === columns[index].column && identity.label === columns[index].label;
+    })) { return; }
+    const rows: FilterDraft['rows'] = [];
+    for (const rawRow of item.rows as unknown[]) {
+      if (!rawRow || typeof rawRow !== 'object' || Array.isArray(rawRow)) { return; }
+      const row = rawRow as Record<string, unknown>;
+      const operator = getFilterOperatorChoices('number').find(choice => choice.operator === row.operator)?.operator;
+      if (typeof row.column !== 'number' || !Number.isSafeInteger(row.column) || row.column < 0 || row.column >= columns.length ||
+          !operator || typeof row.value !== 'string' || row.value.length > MAX_FILTER_VALUE_LENGTH ||
+          (row.composing !== undefined && typeof row.composing !== 'boolean')) { return; }
+      // Preserve blank and invalid queries as drafts; only submission validates their meaning.
+      rows.push({ column: row.column, operator, value: row.value, ...(row.composing ? { composing: true } : {}) });
+    }
+    const draft: FilterDraft = {
+      session: this.filterSession,
+      filterColumnsRevision: this.filterColumnsRevision,
+      rows,
+      columns: columns.map(column => ({ column: column.column, label: column.label }))
+    };
+    if (item.focus !== undefined) {
+      if (!item.focus || typeof item.focus !== 'object' || Array.isArray(item.focus)) { return; }
+      const focus = item.focus as Record<string, unknown>;
+      if (typeof focus.row !== 'number' || !Number.isSafeInteger(focus.row) || focus.row < 0 || focus.row >= rows.length ||
+          (focus.field !== 'column' && focus.field !== 'operator' && focus.field !== 'value' && focus.field !== 'remove')) { return; }
+      draft.focus = { row: focus.row, field: focus.field };
+      if (focus.selectionStart !== undefined || focus.selectionEnd !== undefined || focus.selectionDirection !== undefined) {
+        if (focus.field !== 'value' || typeof focus.selectionStart !== 'number' || typeof focus.selectionEnd !== 'number' ||
+            !Number.isSafeInteger(focus.selectionStart) || !Number.isSafeInteger(focus.selectionEnd) ||
+            focus.selectionStart < 0 || focus.selectionEnd < focus.selectionStart || focus.selectionEnd > rows[focus.row].value.length ||
+            (focus.selectionDirection !== 'forward' && focus.selectionDirection !== 'backward' && focus.selectionDirection !== 'none')) { return; }
+        Object.assign(draft.focus, { selectionStart: focus.selectionStart, selectionEnd: focus.selectionEnd, selectionDirection: focus.selectionDirection });
+      }
+    }
+    this.pendingFilterDraft = { uri: this.filterSessionUri, draft };
+  }
+
+  private consumeFilterDraft(columns: FilterColumn[]): FilterDraft | undefined {
+    const pending = this.pendingFilterDraft;
+    this.pendingFilterDraft = undefined;
+    if (!pending || pending.uri !== this.document.uri.toString() || pending.draft.filterColumnsRevision !== this.filterColumnsRevision ||
+        pending.draft.columns.length !== columns.length || pending.draft.columns.some((column, index) =>
+          column.column !== columns[index].column || column.label !== columns[index].label)) { return undefined; }
+    return pending.draft;
   }
 
   private async remapFilters(columnOrder: number[]): Promise<void> {
+    if (columnOrder.length !== this.currentFilterView?.columns.length || columnOrder.some((column, index) => column !== index)) {
+      this.filterColumnsRevision++;
+      this.pendingFilterDraft = undefined;
+    }
     await CsvEditorProvider.setColumnFiltersForUri(this.context, this.document.uri,
       remapColumnFilters(CsvEditorProvider.getColumnFiltersForUri(this.context, this.document.uri), columnOrder));
   }
@@ -1284,14 +1412,16 @@ class CsvEditorController {
     return { html: '', nextStart: -1, done: true };
   }
 
-  private async requestChunk(rawStart: unknown, requestId: unknown): Promise<void> {
-    if (!this.currentWebviewPanel || !this.chunkRenderState) {
+  private async requestChunk(rawStart: unknown, requestId: unknown, filterEpoch: unknown, session: unknown): Promise<void> {
+    if (!this.currentWebviewPanel || !this.chunkRenderState || filterEpoch !== this.filterEpoch || session !== this.filterSession) {
       return;
     }
     const start = Number(rawStart);
     if (!Number.isInteger(start) || start < 0) {
       this.currentWebviewPanel.webview.postMessage({
         type: 'chunkData',
+        session: this.filterSession,
+        filterEpoch: this.filterEpoch,
         requestId,
         start: -1,
         html: '',
@@ -1303,6 +1433,8 @@ class CsvEditorController {
     const response = this.renderChunkFromState(this.chunkRenderState, start);
     this.currentWebviewPanel.webview.postMessage({
       type: 'chunkData',
+      session: this.filterSession,
+      filterEpoch: this.filterEpoch,
       requestId,
       start,
       html: response.html,
@@ -1891,10 +2023,8 @@ class CsvEditorController {
 
     const webview = this.currentWebviewPanel.webview;
     const config = vscode.workspace.getConfiguration('csv', this.document.uri);
-    const addSerialIndex = CsvEditorProvider.getSerialIndexForUri(this.context, this.document.uri);
     const separator = this.getSeparator();
     this.renderedSeparator = separator;
-    const hiddenRows = this.getHiddenRows();
 
     let parsed;
     try {
@@ -1916,35 +2046,18 @@ class CsvEditorController {
     const cellPadding = config.get<number>('cellPadding', 4);
     const data = this.trimTrailingEmptyRows((parsed.data || []) as string[][]);
     const filters = normalizeColumnFilters(CsvEditorProvider.getColumnFiltersForUri(this.context, this.document.uri), data.reduce((max, row) => Math.max(max, row.length), 0));
-    const treatHeader = this.getEffectiveHeader(data, hiddenRows);
-    this.currentHeader = treatHeader;
-    const clickableLinks = config.get<boolean>('clickableLinks', true);
-    const configuredColumnColorMode = config.get<string>('columnColorMode', 'type');
-    const diffUseThemeForeground = config.get<boolean>('diffUseThemeForeground', true);
-    const columnColorMode = CsvEditorController.resolveEffectiveColumnColorMode(
-      configuredColumnColorMode,
-      this.isDiffContext,
-      diffUseThemeForeground
-    );
-    const columnColorPalette = config.get<string>('columnColorPalette', 'default');
-    const showTrailingEmptyRow = config.get<boolean>('showTrailingEmptyRow', true);
+    const view = this.buildFilterView(data, filters);
+    const filterDraft = this.consumeFilterDraft(view.columns);
+    this.currentHeader = view.headerEnabled;
+    this.chunkRenderState = view.chunkState;
+    this.currentFilterView = view;
+    this.latestFilterRevision = 0;
+    this.filterEpoch = 0;
+    this.filterSession = this.getNonce();
+    this.filterSessionUri = this.document.uri.toString();
     const mouseWheelZoomEnabled = config.get<boolean>('mouseWheelZoom', true);
     const mouseWheelZoomInvert = config.get<boolean>('mouseWheelZoomInvert', false);
-
-    const { tableHtml, chunksJson, colorCss, nextChunkStart, hasRemoteChunks, chunkState } =
-      this.generateTableAndChunks(
-        data,
-        treatHeader,
-        addSerialIndex,
-        hiddenRows,
-        clickableLinks,
-        columnColorMode,
-        columnColorPalette,
-        showTrailingEmptyRow,
-        /* maxSerializedChunks */ 0,
-      filters
-      );
-    this.chunkRenderState = chunkState;
+    const { tableHtml, chunksJson, colorCss, nextChunkStart, hasRemoteChunks } = view;
 
     const nonce = this.getNonce();
 
@@ -1960,19 +2073,34 @@ class CsvEditorController {
       extraColumnColorCss: colorCss,
       nextChunkStart,
       hasRemoteChunks,
-      headerEnabled: treatHeader,
-      firstVisibleRow: Math.min(Math.max(0, hiddenRows), data.length),
+      headerEnabled: view.headerEnabled,
+      firstVisibleRow: view.firstVisibleRow,
       mouseWheelZoomEnabled,
       mouseWheelZoomInvert,
       columnSizes: CsvEditorProvider.getColumnSizesForUri(this.context, this.document.uri),
       frozenPanes: this.getCurrentFrozenPanes(),
       realRowCount: data.length,
-      visibleRowIds: filters.length ? [...visibleSourceRows(data, hiddenRows, treatHeader, filters), data.length] : [],
-      filters,
-      matchedRows: visibleSourceRows(data, hiddenRows, false, filters).filter(row => !(treatHeader && row === hiddenRows)).length,
-      totalFilterRows: Math.max(0, data.length - hiddenRows - (treatHeader ? 1 : 0)),
-      filterHeader: treatHeader ? data[hiddenRows] : undefined
+      visibleRowIds: view.visibleRowIds,
+      filterMetadata: { session: this.filterSession, filterColumnsRevision: this.filterColumnsRevision, filters, columns: view.columns, matchedRows: view.matchedRows, totalRows: view.totalRows, maxFilters: MAX_COLUMN_FILTERS, revision: 0, ...(filterDraft ? { filterDraft } : {}) }
     });
+  }
+
+  private buildFilterView(data: string[][], filters: ColumnFilter[]): FilterRender {
+    const config = vscode.workspace.getConfiguration('csv', this.document.uri);
+    const hiddenRows = Math.min(Math.max(0, this.getHiddenRows()), data.length);
+    const headerEnabled = this.getEffectiveHeader(data, hiddenRows);
+    const columnColorMode = CsvEditorController.resolveEffectiveColumnColorMode(
+      config.get<string>('columnColorMode', 'type'), this.isDiffContext, config.get<boolean>('diffUseThemeForeground', true));
+    const render = this.generateTableAndChunks(data, headerEnabled,
+      CsvEditorProvider.getSerialIndexForUri(this.context, this.document.uri), hiddenRows,
+      config.get<boolean>('clickableLinks', true), columnColorMode, config.get<string>('columnColorPalette', 'default'),
+      config.get<boolean>('showTrailingEmptyRow', true), 0, filters);
+    const visible = visibleSourceRows(data, hiddenRows, headerEnabled, filters);
+    return { ...render, filters, columns: this.getFilterColumns(data), headerEnabled,
+      firstVisibleRow: hiddenRows, realRowCount: data.length,
+      visibleRowIds: filters.length ? [...visible, data.length] : [],
+      matchedRows: visible.filter(row => !(headerEnabled && row === hiddenRows)).length,
+      totalRows: Math.max(0, data.length - hiddenRows - (headerEnabled ? 1 : 0)) };
   }
 
   private generateTableAndChunks(
@@ -2239,12 +2367,9 @@ class CsvEditorController {
     firstVisibleRow: number;
     realRowCount: number;
     visibleRowIds: number[];
-    filters: ColumnFilter[];
-    matchedRows: number;
-    totalFilterRows: number;
-    filterHeader: string[] | undefined;
+    filterMetadata: { session: string; filterColumnsRevision: number; filters: ColumnFilter[]; columns: FilterColumn[]; matchedRows: number; totalRows: number; maxFilters: number; revision: number; filterDraft?: FilterDraft };
   }): string {
-    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, headerEnabled, mouseWheelZoomEnabled, mouseWheelZoomInvert, columnSizes, frozenPanes, firstVisibleRow, realRowCount, visibleRowIds, filters, matchedRows, totalFilterRows, filterHeader } = args;
+    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, headerEnabled, mouseWheelZoomEnabled, mouseWheelZoomInvert, columnSizes, frozenPanes, firstVisibleRow, realRowCount, visibleRowIds, filterMetadata } = args;
     const themeKind = vscode.window.activeColorTheme.kind;
     const isDark = themeKind === vscode.ColorThemeKind.Dark || themeKind === vscode.ColorThemeKind.HighContrast;
     // Build script URI using file path for compatibility (older APIs may lack Uri.joinPath)
@@ -2252,6 +2377,8 @@ class CsvEditorController {
       vscode.Uri.file(path.join(this.context.extensionPath, 'media', 'main.js'))
     );
 
+    const filterScriptUri = webview.asWebviewUri(vscode.Uri.file(path.join(this.context.extensionPath, 'media', 'column-filters.js')));
+    const filterMetadataJson = JSON.stringify(filterMetadata).replace(/[<>&\u2028\u2029]/g, character => '\\u' + character.charCodeAt(0).toString(16).padStart(4, '0'));
     const frozenPanesScriptUri = webview.asWebviewUri(
       vscode.Uri.file(path.join(this.context.extensionPath, 'media', 'frozen-panes.js'))
     );
@@ -2504,22 +2631,29 @@ class CsvEditorController {
       #csv-root .csv-frozen-row.active-match, #csv-root .csv-frozen-column.active-match {
         background-image: linear-gradient(var(--vscode-editor-findMatchBackground, transparent), var(--vscode-editor-findMatchBackground, transparent));
       }
-      #filterStatus { position: sticky; top: 0; left: 0; z-index: 6; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; max-height: 25vh; overflow: auto; padding: 6px; background: var(--vscode-editorWidget-background, ${isDark ? '#252526' : '#ffffff'}); color: var(--vscode-editorWidget-foreground, inherit); border-bottom: 1px solid var(--vscode-editorWidget-border, ${isDark ? '#555' : '#ccc'}); }
+      #filterStatus { position: sticky; top: 0; left: 0; z-index: 6; display: flex; flex-direction: column; gap: 8px; align-items: stretch; max-height: 25vh; overflow: auto; padding: 6px; background: var(--vscode-editorWidget-background, ${isDark ? '#252526' : '#ffffff'}); color: var(--vscode-editorWidget-foreground, inherit); border-bottom: 1px solid var(--vscode-editorWidget-border, ${isDark ? '#555' : '#ccc'}); }
+      #filterStatus[hidden] { display: none; }
       #filterStatus button { color: inherit; background: transparent; border: 1px solid var(--vscode-button-border, currentColor); border-radius: 3px; cursor: pointer; }
-      #filterStatus [data-clear-filter] { max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .column-filter-toolbar, .column-filter-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+      .column-filter-conditions { display: flex; flex-direction: column; gap: 6px; }
+      .column-filter-row select, .column-filter-row input { max-width: 100%; min-width: 0; box-sizing: border-box; font: inherit; color: var(--vscode-input-foreground, inherit); background: var(--vscode-input-background, transparent); border: 1px solid var(--vscode-input-border, var(--vscode-editorWidget-border, currentColor)); }
+      .column-filter-row input { flex: 1 1 18ch; }
+      .column-filter-error { color: var(--vscode-errorForeground, inherit); flex-basis: 100%; }
+      .column-filter-type, .column-filter-and { font-size: 0.9em; }
       th[data-filter-column="active"]::after { content: " ⏷"; }
       #filterStatus button:focus-visible { outline: 2px solid var(--vscode-focusBorder); }
       /* Per-column computed colors */
-      ${extraColumnColorCss}
     </style>
+    <style id="__csvColumnColors" nonce="${nonce}">${extraColumnColorCss}</style>
     <link rel="stylesheet" href="${contrastStyleUri}">
   </head>
   <body>
-    <div id="csv-root" data-headerenabled="${headerEnabled ? '1' : '0'}" data-roworder="${this.escapeHtml(JSON.stringify(visibleRowIds))}" data-filtered="${filters.length ? '1' : '0'}" data-frozenrows="${frozenPanes.rows}" data-frozencolumns="${frozenPanes.columns}" data-firstrow="${firstVisibleRow}" data-realrowcount="${realRowCount}" data-columnsizes="${this.escapeHtml(JSON.stringify(columnSizes))}" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
-      ${filters.length ? `<div id="filterStatus" role="status" title="Sort and Replace All affect matching rows; saving keeps every source row."><span>Filtered: ${matchedRows} of ${totalFilterRows} rows</span><button type="button" id="clearAllFilters">Clear all filters</button>${filters.map(filter => `<button type="button" data-clear-filter="${filter.column}" title="Remove this column filter">${this.escapeHtml(filterHeader?.[filter.column] || `Column ${filter.column + 1}`)}: ${this.escapeHtml(formatColumnFilter(filter))} ×</button>`).join('')}</div>` : ''}
+    <div id="csv-root" data-headerenabled="${headerEnabled ? '1' : '0'}" data-roworder="${this.escapeHtml(JSON.stringify(visibleRowIds))}" data-filtered="${filterMetadata.filters.length ? '1' : '0'}" data-filterepoch="0" data-frozenrows="${frozenPanes.rows}" data-frozencolumns="${frozenPanes.columns}" data-firstrow="${firstVisibleRow}" data-realrowcount="${realRowCount}" data-columnsizes="${this.escapeHtml(JSON.stringify(columnSizes))}" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
+      <div id="filterStatus" aria-label="Column filters"${filterMetadata.filters.length ? '' : ' hidden'}></div>
       ${tableHtml}
     </div>
 
+    <script id="__csvFilters" type="application/json" nonce="${nonce}">${filterMetadataJson}</script>
     <script id="__csvChunks" type="application/json" nonce="${nonce}">${chunksJson}</script>
 
     <div id="findReplaceWidget" class="replace-collapsed" role="group" aria-label="Find and Replace">
@@ -2552,7 +2686,7 @@ class CsvEditorController {
           </div>
           <div class="fr-actions">
             <button id="replaceOne" class="fr-action-btn" type="button" aria-label="Replace" title="Replace" disabled>↵</button>
-            <button id="replaceAll" class="fr-action-btn" type="button" aria-label="Replace All" title="${filters.length ? 'Replace All in matching filtered rows' : 'Replace All'}" disabled>⇅</button>
+            <button id="replaceAll" class="fr-action-btn" type="button" aria-label="Replace All" title="${filterMetadata.filters.length ? 'Replace All in matching filtered rows' : 'Replace All'}" disabled>⇅</button>
           </div>
         </div>
         <div id="findOverflowMenu" class="fr-overflow-menu" role="menu" aria-label="Find Options">
@@ -2565,6 +2699,7 @@ class CsvEditorController {
     <div id="contextMenu"></div>
 
     <script nonce="${nonce}" src="${frozenPanesScriptUri}"></script>
+    <script nonce="${nonce}" src="${filterScriptUri}"></script>
     <script nonce="${nonce}" src="${scriptUri}"></script>
   </body>
 </html>`;

@@ -2,7 +2,7 @@ import assert from 'assert';
 import { describe, it } from 'node:test';
 import { RE2JS } from 're2js';
 import {
-  ColumnFilter, ColumnFilterOperator, FilterDataType, compileColumnFilters, formatColumnFilter,
+  ColumnFilter, ColumnFilterOperator, FilterDataType, compileColumnFilters,
   getFilterOperatorChoices, normalizeColumnFilters, rowMatchesFilters, visibleSourceRows,
   remapColumnFilters, validateColumnFilterInput, MAX_COLUMN_FILTERS, MAX_FILTER_VALUE_LENGTH
 } from '../column-filters';
@@ -155,8 +155,6 @@ describe('Column filter predicates and identities', () => {
       assert.deepStrictEqual(choices.map(choice => choice.operator), [...universal.slice(0, 5), ...ordered, ...universal.slice(5)]);
       assert.ok(choices.every(choice => choice.label.length > 0));
     }
-    assert.strictEqual(formatColumnFilter(filter('notContains', 'A"B\nC')), 'Does Not Contain "A\\"B\\nC"');
-    assert.strictEqual(formatColumnFilter(filter('empty', '')), 'Is Empty');
   });
 
   it('keeps absolute row identities, a real header, and excludes hidden preambles', () => {
@@ -184,7 +182,7 @@ describe('Column filter predicates and identities', () => {
       { column: 2, operator: 'equals', value: '1', dataType: 'unknown' },
       { column: 2, operator: 'contains', value: 'a'.repeat(MAX_FILTER_VALUE_LENGTH + 1) }, invalidQuery
     ], 3);
-    assert.deepStrictEqual(normalized, [invalidQuery, { column: 1, operator: 'contains', value: '<literal.*>' }]);
+    assert.deepStrictEqual(normalized, [{ column: 1, operator: 'equals', value: 'before', dataType: 'boolean' }, { column: 1, operator: 'contains', value: '<literal.*>' }, invalidQuery]);
     assert.deepStrictEqual(visibleSourceRows([['metadata'], ['Header'], ['invalid number'], ['1']], 1, true, normalized), [1]);
     assert.strictEqual(normalizeColumnFilters(Array.from({ length: MAX_COLUMN_FILTERS + 10 }, (_, column) => ({ column, operator: 'empty', value: '' }))).length, MAX_COLUMN_FILTERS);
     assert.deepStrictEqual(normalizeColumnFilters(null), []);
@@ -192,11 +190,29 @@ describe('Column filter predicates and identities', () => {
     assert.ok(!compileColumnFilters(Array.from({ length: MAX_COLUMN_FILTERS + 1 }, () => filter('contains', '')))(['anything']));
   });
 
+  it('retains every same-column AND condition through persistence and structural remapping', () => {
+    const conditions: ColumnFilter[] = [
+      filter('greaterThan', '2', 'number'),
+      { column: 1, operator: 'equals', value: 'keep' },
+      filter('lessThan', '10', 'number'),
+      filter('notEquals', '5', 'number')
+    ];
+    assert.deepStrictEqual(normalizeColumnFilters(conditions), conditions, 'condition order and duplicate columns survive storage');
+    const source = [['Amount', 'State'], ['2', 'keep'], ['3', 'keep'], ['5', 'keep'], ['9', 'keep'], ['10', 'keep'], ['7', 'drop']];
+    assert.deepStrictEqual(visibleSourceRows(source, 0, true, normalizeColumnFilters(conditions)), [0, 2, 4]);
+    assert.deepStrictEqual(remapColumnFilters(conditions, [-1, 1, 0]), conditions.map(item => ({ ...item, column: item.column === 0 ? 2 : 1 })));
+    assert.deepStrictEqual(remapColumnFilters(conditions, [1]), [{ column: 0, operator: 'equals', value: 'keep' }]);
+    const withoutMiddleBound = conditions.filter((_item, index) => index !== 2);
+    assert.deepStrictEqual(visibleSourceRows(source, 0, true, withoutMiddleBound), [0, 2, 4, 5]);
+    const contradictions = [filter('contains', 'a'), filter('notContains', 'a')];
+    assert.deepStrictEqual(visibleSourceRows([['Header'], ['alpha'], ['beta'], ['']], 0, true, contradictions), [0]);
+  });
+
   it('moves and duplicates typed predicates with their columns and removes deleted ones', () => {
     const filters = [filter('greaterThanOrEqual', '1,000', 'number'), { column: 2, operator: 'empty' as const, value: '' }];
     assert.deepStrictEqual(remapColumnFilters(filters, [2, -1, 0, 1, 0]), [
-      { column: 0, operator: 'empty', value: '' }, { column: 2, operator: 'greaterThanOrEqual', value: '1,000', dataType: 'number' },
-      { column: 4, operator: 'greaterThanOrEqual', value: '1,000', dataType: 'number' }
+      { column: 2, operator: 'greaterThanOrEqual', value: '1,000', dataType: 'number' },
+      { column: 4, operator: 'greaterThanOrEqual', value: '1,000', dataType: 'number' }, { column: 0, operator: 'empty', value: '' }
     ]);
     assert.deepStrictEqual(remapColumnFilters(filters, [1, 2]), [{ column: 1, operator: 'empty', value: '' }]);
   });
@@ -229,7 +245,6 @@ describe('Bounded RE2 column filters', () => {
     }
     const persisted = normalizeColumnFilters([filter('regex', '(?=a)')]);
     assert.strictEqual(persisted.length, 1);
-    assert.strictEqual(formatColumnFilter(persisted[0]), 'Regular Expression "(?=a)"');
     assert.deepStrictEqual(visibleSourceRows([['header'], ['a'], ['aa']], 0, true, persisted), [0]);
   });
 

@@ -9,7 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 Integration candidate; final contents remain subject to review. No release has been published.
 
 - Added: Context actions for first-row header state and serial-index visibility, using the existing per-file preferences.
-- Added: Column filters with inferred number/date comparisons, Does Not Contain and regular expressions, matching-row counts, per-file persistence, and full-source saves.
+- Added: Inline column filters that update matching rows as you type, with multiple AND conditions (including on the same column), inferred number/date comparisons, Does Not Contain, regular expressions, per-file persistence, and full-source saves.
 - Added: Frozen leading rows and columns, plus a configurable default for hidden metadata rows.
 - Added: Bounded, paginated read-only preview for large saved UTF-8 files.
 - Added: Table/text switching and untitled CSV/TSV editing with explicit Save As support.

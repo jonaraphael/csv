@@ -171,12 +171,13 @@ describe('High-contrast rendering', () => {
           document.querySelector('table').append(serializedBody);
           assertCellColors(document, expected, mode);
           serializedBody.remove();
-          await view.receive({ type: 'requestChunk', start: 1000, requestId: 'palette' });
+          const filterSession = JSON.parse(document.getElementById('__csvFilters').textContent).session;
+          await view.receive({ type: 'requestChunk', start: 1000, requestId: 'palette', filterEpoch: 0, session: filterSession });
           const chunk = view.messages.find(message => message.type === 'chunkData');
           assert.ok(chunk?.html, 'remote URI provider returns requested rows');
           document.querySelector('tbody').insertAdjacentHTML('beforeend', chunk.html);
           if (!chunk.done) {
-            await view.receive({ type: 'requestChunk', start: chunk.nextStart, requestId: 'append' });
+            await view.receive({ type: 'requestChunk', start: chunk.nextStart, requestId: 'append', filterEpoch: 0, session: filterSession });
             const append = view.messages.find(message => message.requestId === 'append');
             assert.ok(append?.done);
             document.querySelector('tbody').insertAdjacentHTML('beforeend', append.html);

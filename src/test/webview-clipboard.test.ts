@@ -41,6 +41,7 @@ function createWebview() {
     removeEventListener() {}
     setAttribute(name: string, value: string) { this.attributes.set(name, value); }
     getAttribute(name: string) { return this.attributes.get(name) ?? null; }
+    get tBodies() { return this.children.filter(child => child.tagName === 'TBODY'); }
     hasAttribute(name: string) { return this.attributes.has(name); }
     appendChild(child: Element) { child.parentElement = this; this.children.push(child); }
     contains(other: Element): boolean { return other === this || this.children.some(child => child.contains(other)); }
@@ -48,6 +49,9 @@ function createWebview() {
     scrollIntoView() {}
     getBoundingClientRect() { return { width: 200, height: 300 }; }
     matches(selector: string): boolean {
+      if (selector.endsWith(':last-child')) {
+        return this === this.parentElement?.children[this.parentElement.children.length - 1] && this.matches(selector.slice(0, -':last-child'.length));
+      }
       if (selector.includes(' ')) {
         const [ancestor, child] = selector.split(' ');
         return this.matches(child) && !!this.parentElement?.closest(ancestor);
@@ -92,7 +96,9 @@ function createWebview() {
   const root = byId('csv-root');
   const table = new Element('TABLE');
   const head = new Element('THEAD');
+  const body = new Element('TBODY');
   table.appendChild(head);
+  table.appendChild(body);
   root.appendChild(table);
   byId('__csvChunks').textContent = '[]';
   const widget = byId('findReplaceWidget');
@@ -106,8 +112,15 @@ function createWebview() {
   window.innerWidth = 1024;
   window.innerHeight = 768;
   const messages: any[] = [];
+  class IntersectionObserver {
+    private readonly observed = new Set<Element>();
+    observe(target: Element) { this.observed.add(target); }
+    unobserve(target: Element) { this.observed.delete(target); }
+    disconnect() { this.observed.clear(); }
+    takeRecords() { return []; }
+  }
   const context = vm.createContext({
-    document, window, Element, Node: Element,
+    document, window, Element, Node: Element, IntersectionObserver,
     acquireVsCodeApi: () => ({ getState: () => ({}), setState: () => {}, postMessage: (message: any) => messages.push(JSON.parse(JSON.stringify(message))) }),
     setTimeout: () => 0, clearTimeout: () => {}, requestAnimationFrame: () => 0,
     console
@@ -116,12 +129,19 @@ function createWebview() {
   vm.runInContext(fs.readFileSync(path.join(process.cwd(), 'media', 'main.js'), 'utf8'), context);
   // Interaction assertions begin after the independent initialization handshake.
   messages.length = 0;
+  const rows = new Map<string, Element>();
   const cell = (row: number, col: number, value: string, header = false) => {
     const el = new Element(header ? 'TH' : 'TD');
     el.setAttribute('data-row', String(row));
     el.setAttribute('data-col', String(col));
     el.textContent = value;
-    (header ? head : table).appendChild(el);
+    const key = `${header}:${row}`;
+    if (!rows.has(key)) {
+      const tr = new Element('TR');
+      (header ? head : body).appendChild(tr);
+      rows.set(key, tr);
+    }
+    rows.get(key)!.appendChild(el);
     return el;
   };
   const dispatch = (target: Element, type: string, options: any = {}) => {

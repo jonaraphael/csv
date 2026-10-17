@@ -119,10 +119,13 @@ describe('Serial index context action', () => {
 
   it('hides an empty/header-off serial column and accepts a boolean restore idempotently', async () => {
     const host = await createEditorHarness({ rows: [], header: false });
-    const view = createWebviewDom(host.panel.webview.html);
+    let view = createWebviewDom(host.panel.webview.html);
     try {
       await applySerialIndex(host, view, chooseHide(view, view.cell(0, -1)));
       assert.ok(!host.panel.webview.html.includes('data-col="-1"'));
+      // A full refresh creates a new webview session; its script owns the next ACK.
+      view.close();
+      view = createWebviewDom(host.panel.webview.html);
       await applySerialIndex(host, view, { type: 'setSerialIndex', enabled: true });
       const restored = createWebviewDom(host.panel.webview.html);
       try { assert.ok(restored.cell(0, -1)); } finally { restored.close(); }
@@ -241,8 +244,12 @@ describe('Serial index context action', () => {
       await applySerialIndex(host, view, chooseHide(view, view.cell(1050, -1)));
       assert.strictEqual(view.window.acquireVsCodeApi().getState().anchorRow, 1050);
       assert.strictEqual(view.window.acquireVsCodeApi().getState().anchorCol, 0);
-      await host.receive({ type: 'requestChunk', start: 1001, requestId: 99 });
+      const metadataMatch = /<script id="__csvFilters"[^>]*>([\s\S]*?)<\/script>/.exec(host.panel.webview.html);
+      assert.ok(metadataMatch);
+      const metadata = JSON.parse(metadataMatch[1]);
+      await host.receive({ type: 'requestChunk', start: 1001, requestId: 99, session: metadata.session, filterEpoch: metadata.revision });
       const response = host.messages.slice().reverse().find((message: any) => message.type === 'chunkData' && message.requestId === 99);
+      assert.ok(response);
       assert.ok(!response.html.includes('data-col="-1"'));
       assert.deepStrictEqual(host.rows(), data);
       assert.strictEqual(host.document.version, 1);

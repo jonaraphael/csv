@@ -343,13 +343,15 @@ export function createWebviewDom(html: string) {
       const rect = cell.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0 && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
     }) ?? null;
-  window.IntersectionObserver = class { observe() {} };
+  window.IntersectionObserver = class { observe() {} disconnect() {} };
   const source = fs.readFileSync(path.join(process.cwd(), 'media', 'main.js'), 'utf8');
   const freezeSource = fs.readFileSync(path.join(process.cwd(), 'media', 'frozen-panes.js'), 'utf8');
   window.eval(freezeSource);
+  window.eval(fs.readFileSync(path.join(process.cwd(), 'media', 'column-filters.js'), 'utf8'));
   window.eval(`${source}\nwindow.editingTestApi = { editCell, setSingleSelection, selectRange, selectFullRowRange };`);
   return {
     window, messages,
+    state: () => state,
     close() { window.close(); },
     cell(row = 1, col = 0) {
       return window.document.querySelector(`[data-row="${row}"][data-col="${col}"]`);

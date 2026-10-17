@@ -4,6 +4,12 @@ import { describe, it } from 'node:test';
 import { createEditorHarness, createWebviewDom } from './edit-integrity-harness';
 
 const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+function currentFilterSession(host: Awaited<ReturnType<typeof createEditorHarness>>): string {
+  const metadata = /<script id="__csvFilters"[^>]*>(.*?)<\/script>/s.exec(host.panel.webview.html);
+  assert.ok(metadata);
+  return JSON.parse(metadata[1]).session;
+}
+
 function sendPrepare(host: Awaited<ReturnType<typeof createEditorHarness>>, view: ReturnType<typeof createWebviewDom>) {
   const request = host.messages.filter(message => message.type === 'prepareViewRefresh').at(-1);
   assert.ok(request);
@@ -109,13 +115,13 @@ describe('untitled controller and webview draft lifecycle', () => {
     const request = host.messages.at(-1);
     await host.receive({ type: 'webviewReady' });
     assert.deepStrictEqual(host.messages.at(-1), request);
-    await host.receive({ type: 'viewRefreshReady', requestId: request.requestId - 1 });
+    await host.receive({ type: 'viewRefreshReady', session: currentFilterSession(host), requestId: request.requestId - 1 });
     assert.strictEqual(host.panel.webview.html, original);
     assert.strictEqual(host.getCurrentSeparator(), ',');
-    await host.receive({ type: 'viewRefreshReady', requestId: request.requestId });
+    await host.receive({ type: 'viewRefreshReady', session: currentFilterSession(host), requestId: request.requestId });
     assert.strictEqual(host.getCurrentSeparator(), '\t');
     const current = host.panel.webview.html;
-    await host.receive({ type: 'viewRefreshReady', requestId: request.requestId });
+    await host.receive({ type: 'viewRefreshReady', session: currentFilterSession(host), requestId: request.requestId });
     assert.strictEqual(host.panel.webview.html, current);
   });
 

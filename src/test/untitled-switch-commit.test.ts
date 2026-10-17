@@ -3,6 +3,12 @@ import { describe, it } from 'node:test';
 import { createEditorHarness, createWebviewDom, flushViewCommits } from './edit-integrity-harness';
 
 const turn = () => new Promise(resolve => setImmediate(resolve));
+function currentFilterSession(host: Awaited<ReturnType<typeof createEditorHarness>>): string {
+  const metadata = /<script id="__csvFilters"[^>]*>(.*?)<\/script>/s.exec(host.panel.webview.html);
+  assert.ok(metadata);
+  return JSON.parse(metadata[1]).session;
+}
+
 function deliver(host: Awaited<ReturnType<typeof createEditorHarness>>, view: ReturnType<typeof createWebviewDom>) {
   const request = host.messages.filter(message => message.type === 'prepareViewRefresh').at(-1);
   assert.ok(request);
@@ -80,7 +86,7 @@ describe('awaitable untitled draft commit', () => {
     host.panel.dispose();
     assert.strictEqual(await commit, false);
     assert.strictEqual(await host.commitPendingDraft(), false);
-    await host.receive({ type: 'viewRefreshReady', requestId: request.requestId });
+    await host.receive({ type: 'viewRefreshReady', session: currentFilterSession(host), requestId: request.requestId });
     assert.deepStrictEqual(host.sourceReveals, []);
   });
 
