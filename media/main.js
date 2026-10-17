@@ -6,6 +6,8 @@ try { document.body.focus({ preventScroll: true }); } catch { try { document.bod
 const vscode = acquireVsCodeApi();
 
 const root = document.getElementById('csv-root');
+let frozenRowCount = Number(root?.dataset?.frozenrows || '0');
+let frozenColumnCount = Number(root?.dataset?.frozencolumns || '0');
 const parsePositiveNumber = value => {
   const parsed = typeof value === 'string' ? Number.parseFloat(value) : Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
@@ -77,6 +79,7 @@ const persistColumnSizes = () => {
   vscode.postMessage({ type: 'columnSizesChanged', columnSizes: { ...columnSizeState } });
 };
 const applySizeStateToRenderedCells = () => {
+  window.csvFrozenPanes?.schedule();
   for (const [col, width] of Object.entries(columnSizeState)) {
     const px = Math.max(40, Math.round(Number(width)));
     table.querySelectorAll(`[data-col="${col}"]`).forEach(cell => {
@@ -385,6 +388,12 @@ const clearSelection = () => { currentSelection.forEach(c => c.classList.remove(
 const contextMenu = document.getElementById('contextMenu');
 
 /* ──────── UPDATED showContextMenu ──────── */
+const changeFrozenPanes = change => {
+  frozenRowCount = change.rows ?? frozenRowCount;
+  frozenColumnCount = change.columns ?? frozenColumnCount;
+  window.csvFrozenPanes?.update(frozenRowCount, frozenColumnCount);
+  vscode.postMessage({ type: 'freezePanesChanged', rows: frozenRowCount, columns: frozenColumnCount });
+};
 const showContextMenu = (x, y, row, col) => {
   contextMenu.innerHTML = '';
   const item = (label, cb) => {
@@ -402,6 +411,15 @@ const showContextMenu = (x, y, row, col) => {
   item('Cut', () => copySelectionToClipboard(true));
   item('Copy', () => copySelectionToClipboard());
   item('Paste', () => pasteFromClipboard());
+  divider();
+  if (Number.isInteger(row) && row >= Number(root?.dataset?.firstrow || '0') && row < Number(root?.dataset?.realrowcount || '0')) {
+    item('Freeze rows through this row', () => changeFrozenPanes({ rows: row - Number(root?.dataset?.firstrow || '0') + 1 }));
+  }
+  if (Number.isInteger(col) && col >= 0) {
+    item('Freeze columns through this column', () => changeFrozenPanes({ columns: col + 1 }));
+  }
+  if (frozenRowCount > 0) item('Unfreeze rows', () => changeFrozenPanes({ rows: 0 }));
+  if (frozenColumnCount > 0) item('Unfreeze columns', () => changeFrozenPanes({ columns: 0 }));
   divider();
   // Derive multi-row/column selection counts
   const selectedIndexCells = currentSelection.filter(el => el && el.getAttribute && el.getAttribute('data-col') === '-1');
@@ -602,6 +620,7 @@ const getResizeEdgeInfo = (target, e) => {
   return null;
 };
 const applyColumnWidth = (col, widthPx) => {
+  window.csvFrozenPanes?.schedule();
   const width = Math.max(40, Math.round(widthPx));
   columnSizeState[String(col)] = width;
   table.querySelectorAll(`[data-col="${col}"]`).forEach(cell => {
@@ -609,6 +628,7 @@ const applyColumnWidth = (col, widthPx) => {
   });
 };
 const resetColumnWidth = col => {
+  window.csvFrozenPanes?.schedule();
   delete columnSizeState[String(col)];
   table.querySelectorAll(`[data-col="${col}"]`).forEach(cell => {
     const automatic = automaticColumnSizes.get(cell);
@@ -616,6 +636,7 @@ const resetColumnWidth = col => {
   });
 };
 const applyRowHeight = (row, heightPx) => {
+  window.csvFrozenPanes?.schedule();
   const height = Math.max(getMinRowHeight(), Math.round(heightPx));
   rowSizeState[String(row)] = height;
   table.querySelectorAll(`[data-row="${row}"]`).forEach(cell => {
@@ -624,6 +645,7 @@ const applyRowHeight = (row, heightPx) => {
   });
 };
 const resetRowHeight = row => {
+  window.csvFrozenPanes?.schedule();
   delete rowSizeState[String(row)];
   table.querySelectorAll(`[data-row="${row}"]`).forEach(cell => {
     cell.style.height = '';
@@ -719,6 +741,7 @@ const onGlobalDragEnd = () => {
     resizeState = null;
     table.style.cursor = '';
     persistState();
+    window.csvFrozenPanes?.schedule();
   }
   if (!reorderState) return;
 
@@ -2079,7 +2102,15 @@ const copySelectionToClipboard = (cut = false) => {
 
 window.addEventListener('message', event => {
   const message = event.data;
-  if(message.type === 'focus'){
+  if (message.type === 'prepareHiddenRowsRefresh') {
+    if (editingCell) editingCell.blur();
+    persistState();
+    vscode.postMessage({ type: 'hiddenRowsRefreshReady' });
+  } else if (message.type === 'frozenPanes') {
+    frozenRowCount = Number(message.rows);
+    frozenColumnCount = Number(message.columns);
+    window.csvFrozenPanes?.update(frozenRowCount, frozenColumnCount);
+  } else if(message.type === 'focus'){
     if (anchorCell) {
       try { anchorCell.focus({ preventScroll: true }); } catch { try { anchorCell.focus(); } catch {} }
     } else {
@@ -2111,6 +2142,7 @@ window.addEventListener('message', event => {
       remoteNextChunkStart = -1;
       remoteHasMoreChunks = false;
     }
+    window.csvFrozenPanes?.schedule();
     if (csvChunks.length && pendingEnsureTarget) {
       ensureTargetStep();
     } else if (csvChunks.length && nearBottom()) {
@@ -2237,3 +2269,17 @@ document.addEventListener('keydown', e => {
     clearSelection();
   }
 });
+
+// Freeze layout never replaces cells or moves focus, including during a live edit.
+if (typeof window.createFrozenPaneManager === 'function') {
+  window.csvFrozenPanes = window.createFrozenPaneManager({
+    table,
+    firstRow: Number(root?.dataset?.firstrow || '0'),
+    realRowCount: Number(root?.dataset?.realrowcount || '0'),
+    onNeedRows: () => loadNextChunk()
+  });
+  window.csvFrozenPanes.update(frozenRowCount, frozenColumnCount);
+  window.addEventListener('csvChunkLoaded', () => window.csvFrozenPanes.schedule());
+  window.addEventListener('resize', () => window.csvFrozenPanes.schedule());
+  window.addEventListener('pagehide', () => window.csvFrozenPanes.dispose(), { once: true });
+}

@@ -19,8 +19,27 @@ async function toggleBooleanConfig(key: string, defaultVal: boolean, messagePref
   CsvEditorProvider.editors.forEach(ed => ed.refresh());
 }
 
+async function changeFrozenPaneCount(axis: 'rows' | 'columns') {
+  const active = CsvEditorProvider.getActiveProvider();
+  if (!active) {
+    vscode.window.showInformationMessage('Open a CSV/TSV/PSV file in the CSV editor.');
+    return;
+  }
+  const current = active.getCurrentFrozenPanes()[axis];
+  const input = await vscode.window.showInputBox({
+    prompt: `Number of leading visible ${axis} to freeze (0 unfreezes)`,
+    value: String(current),
+    validateInput: value => /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) ? undefined : 'Enter a non-negative whole number.'
+  });
+  if (input !== undefined && /^\d+$/.test(input) && Number.isSafeInteger(Number(input))) {
+    await active.setFrozenPanes({ [axis]: Number(input) });
+  }
+}
+
 export function registerCsvCommands(context: vscode.ExtensionContext) {
   context.subscriptions.push(
+    vscode.commands.registerCommand('csv.changeFrozenRows', () => changeFrozenPaneCount('rows')),
+    vscode.commands.registerCommand('csv.changeFrozenColumns', () => changeFrozenPaneCount('columns')),
     vscode.commands.registerCommand('csv.toggleExtension', () =>
       toggleBooleanConfig('enabled', true, 'CSV extension')
     ),
@@ -114,18 +133,19 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
       const uri = active.getDocumentUri();
       const current = CsvEditorProvider.getHiddenRowsForUri(context, uri);
       const input = await vscode.window.showInputBox({
-        prompt: 'Hide first N rows (per file)',
+        prompt: 'Hide first N rows for this file (blank inherits csv.defaultIgnoreRows)',
         value: String(current),
-        validateInput: (val: string) => (/^\d+$/.test(val) ? undefined : 'Enter a non-negative integer')
+        validateInput: (val: string) => (val.trim() === '' || (/^\d+$/.test(val) && Number.isSafeInteger(Number(val))) ? undefined : 'Enter a non-negative integer or leave blank to inherit')
       });
       if (input === undefined) { return; }
-      const n = parseInt(input, 10);
+      if (input.trim() !== '' && (!/^\d+$/.test(input) || !Number.isSafeInteger(Number(input)))) { return; }
+      const n = input.trim() === '' ? undefined : Number(input);
       await CsvEditorProvider.setHiddenRowsForUri(context, uri, n);
       // Refresh only editors showing this URI
       CsvEditorProvider.editors
         .filter(ed => ed.getDocumentUri().toString() === uri.toString())
-        .forEach(ed => ed.refresh());
-      vscode.window.showInformationMessage(`CSV: Hiding first ${n} row(s) for this file.`);
+        .forEach(ed => ed.refreshHiddenRows());
+      vscode.window.showInformationMessage(n === undefined ? 'CSV: Hidden rows now inherit csv.defaultIgnoreRows for this file.' : `CSV: Hiding first ${n} row(s) for this file.`);
     }),
     vscode.commands.registerCommand('csv.changeEncoding', async (requestedUri?: vscode.Uri) => {
       const active = CsvEditorProvider.getActiveProvider();

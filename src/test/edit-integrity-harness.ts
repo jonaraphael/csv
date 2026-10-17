@@ -47,7 +47,10 @@ const vscodeStub = {
     }
   },
   workspace: {
-    getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'maxFileSizeMB' ? 0 : fallback }),
+    getConfiguration: (_section: string, resource?: TestUri) => {
+      if (activeHarness) { activeHarness.configurationRequests.push(resource); }
+      return { get: (key: string, fallback: unknown) => key === 'maxFileSizeMB' ? 0 : (key === 'defaultIgnoreRows' ? (activeHarness.resourceDefaults[resource?.toString() ?? ''] ?? activeHarness.defaultIgnoreRows) : fallback) };
+    },
     applyEdit: (edit: { text: string }) => activeHarness.applyEdit(edit.text),
     onDidChangeTextDocument: (listener: (event: unknown) => void) => {
       activeHarness.changeListeners.push(listener);
@@ -77,6 +80,10 @@ export async function createEditorHarness(options: {
   separator?: string;
   header?: boolean;
   remote?: boolean;
+  frozenRows?: number;
+  frozenColumns?: number;
+  hiddenRows?: number;
+  defaultIgnoreRows?: number;
 } = {}) {
   const separator = options.separator ?? ',';
   let text = options.text ?? Papa.unparse(options.rows ?? [['name', 'value'], ['one', 'two']], { delimiter: separator });
@@ -114,6 +121,10 @@ export async function createEditorHarness(options: {
     }
   };
   await CsvEditorProvider.setHeaderForUri(context as any, uri as any, options.header ?? true);
+  if (options.hiddenRows !== undefined) {
+    await CsvEditorProvider.setHiddenRowsForUri(context as any, uri as any, options.hiddenRows);
+  }
+  await CsvEditorProvider.setFrozenPanesForUri(context as any, uri as any, { rows: options.frozenRows, columns: options.frozenColumns });
   const panel = {
     active: true,
     visible: true,
@@ -143,6 +154,10 @@ export async function createEditorHarness(options: {
       const { registerCsvCommands } = require('../commands') as typeof import('../commands');
       registerCsvCommands(context as any);
     },
+    context,
+    defaultIgnoreRows: options.defaultIgnoreRows ?? 0,
+    resourceDefaults: {} as Record<string, number>,
+    configurationRequests: [] as Array<TestUri | undefined>,
     get diskText() { return diskText; },
     get pendingEdits() { return delayedEdits.length; },
     deferEdits() { deferEdits = true; },
@@ -189,6 +204,8 @@ export function createWebviewDom(html: string) {
   window.HTMLElement.prototype.scrollIntoView = () => {};
   window.IntersectionObserver = class { observe() {} };
   const source = fs.readFileSync(path.join(process.cwd(), 'media', 'main.js'), 'utf8');
+  const freezeSource = fs.readFileSync(path.join(process.cwd(), 'media', 'frozen-panes.js'), 'utf8');
+  window.eval(freezeSource);
   window.eval(`${source}\nwindow.editingTestApi = { editCell, setSingleSelection };`);
   return {
     window, messages,
