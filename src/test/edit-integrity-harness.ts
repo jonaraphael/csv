@@ -21,7 +21,10 @@ const vscodeStub = {
   ColorThemeKind: { Dark: 1 },
   window: { activeColorTheme: { kind: 1 } },
   workspace: {
-    getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'maxFileSizeMB' ? 0 : fallback }),
+    getConfiguration: (_section: string, resource?: TestUri) => {
+      if (activeHarness) { activeHarness.configurationRequests.push(resource); }
+      return { get: (key: string, fallback: unknown) => key === 'maxFileSizeMB' ? 0 : (key === 'defaultIgnoreRows' ? (activeHarness.resourceDefaults[resource?.toString() ?? ''] ?? activeHarness.defaultIgnoreRows) : fallback) };
+    },
     applyEdit: (edit: { text: string }) => activeHarness.applyEdit(edit.text),
     onDidChangeTextDocument: (listener: (event: unknown) => void) => {
       activeHarness.changeListeners.push(listener);
@@ -52,6 +55,7 @@ export async function createEditorHarness(options: {
   frozenRows?: number;
   frozenColumns?: number;
   hiddenRows?: number;
+  defaultIgnoreRows?: number;
 } = {}) {
   const separator = options.separator ?? ',';
   let text = Papa.unparse(options.rows ?? [['name', 'value'], ['one', 'two']], { delimiter: separator });
@@ -108,6 +112,9 @@ export async function createEditorHarness(options: {
   };
   const harness = {
     document, panel, messages, changeListeners, saveListeners, context,
+    defaultIgnoreRows: options.defaultIgnoreRows ?? 0,
+    resourceDefaults: {} as Record<string, number>,
+    configurationRequests: [] as Array<TestUri | undefined>,
     get diskText() { return diskText; },
     get pendingEdits() { return delayedEdits.length; },
     deferEdits() { deferEdits = true; },

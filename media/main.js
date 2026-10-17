@@ -2102,7 +2102,11 @@ const copySelectionToClipboard = (cut = false) => {
 
 window.addEventListener('message', event => {
   const message = event.data;
-  if (message.type === 'frozenPanes') {
+  if (message.type === 'prepareHiddenRowsRefresh') {
+    if (editingCell) editingCell.blur();
+    persistState();
+    vscode.postMessage({ type: 'hiddenRowsRefreshReady' });
+  } else if (message.type === 'frozenPanes') {
     frozenRowCount = Number(message.rows);
     frozenColumnCount = Number(message.columns);
     window.csvFrozenPanes?.update(frozenRowCount, frozenColumnCount);

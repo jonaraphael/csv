@@ -151,6 +151,9 @@ class CsvEditorController {
         case 'save':
           await this.handleSave();
           break;
+        case 'hiddenRowsRefreshReady':
+          this.updateWebviewContent();
+          break;
         case 'freezePanesChanged':
           await this.setFrozenPanes({ rows: e.rows, columns: e.columns });
           break;
@@ -420,6 +423,14 @@ class CsvEditorController {
       CsvEditorController.normalizeFontSize(editorFontSize) ??
       14
     );
+  }
+
+  public refreshHiddenRows(): void {
+    if (this.currentWebviewPanel?.visible) {
+      this.currentWebviewPanel.webview.postMessage({ type: 'prepareHiddenRowsRefresh' });
+    } else {
+      this.refresh();
+    }
   }
 
   public getCurrentFrozenPanes(): FrozenPanes {
@@ -2602,18 +2613,28 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     return CsvEditorProvider.currentActive || CsvEditorProvider.editors.find(ed => ed.isActive());
   }
 
-  public static getHiddenRowsForUri(context: vscode.ExtensionContext, uri: vscode.Uri): number {
+  public static hasHiddenRowsOverride(context: vscode.ExtensionContext, uri: vscode.Uri): boolean {
     const map = context.workspaceState.get<Record<string, number>>(CsvEditorProvider.hiddenRowsKey, {});
-    const n = map[uri.toString()] ?? 0;
-    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+    const saved = map[uri.toString()];
+    return Object.prototype.hasOwnProperty.call(map, uri.toString()) && typeof saved === 'number' && Number.isFinite(saved);
   }
 
-  public static async setHiddenRowsForUri(context: vscode.ExtensionContext, uri: vscode.Uri, n: number): Promise<void> {
-    const map = { ...(context.workspaceState.get<Record<string, number>>(CsvEditorProvider.hiddenRowsKey, {})) };
-    if (!Number.isFinite(n) || n <= 0) {
+  public static getHiddenRowsForUri(context: vscode.ExtensionContext, uri: vscode.Uri): number {
+    const map = context.workspaceState.get<Record<string, number>>(CsvEditorProvider.hiddenRowsKey, {});
+    const saved = map[uri.toString()];
+    if (Object.prototype.hasOwnProperty.call(map, uri.toString()) && typeof saved === 'number' && Number.isFinite(saved)) {
+      return Math.max(0, Math.floor(saved));
+    }
+    const configured = vscode.workspace.getConfiguration('csv', uri).get<number>('defaultIgnoreRows', 0);
+    return typeof configured === 'number' && Number.isFinite(configured) ? Math.max(0, Math.floor(configured)) : 0;
+  }
+
+  public static async setHiddenRowsForUri(context: vscode.ExtensionContext, uri: vscode.Uri, n: number | undefined): Promise<void> {
+    const map = { ...context.workspaceState.get<Record<string, number>>(CsvEditorProvider.hiddenRowsKey, {}) };
+    if (n === undefined || !Number.isFinite(n)) {
       delete map[uri.toString()];
     } else {
-      map[uri.toString()] = Math.floor(n);
+      map[uri.toString()] = Math.max(0, Math.floor(n));
     }
     await context.workspaceState.update(CsvEditorProvider.hiddenRowsKey, map);
   }
