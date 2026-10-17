@@ -61,6 +61,19 @@ async function createEditor(initial: string, extension = 'csv') {
 }
 
 describe('Provider system clipboard integration', () => {
+  it('writes an ordinary cell without CSV wrapper quotes and pastes it without changing source quoting', async () => {
+    for (const extension of ['csv', 'tsv']) {
+      const delimiter = extension === 'csv' ? ',' : '\t';
+      const source = `name${delimiter}value\nhello world${delimiter}before`;
+      const editor = await createEditor(source, extension);
+      await editor.receive({ type: 'copyCells', matrix: [['hello world']], rowIds: [1], startRow: 1, startCol: 0, cut: false });
+      assert.deepStrictEqual(editor.clipboardWrites, ['hello world']);
+      assert.strictEqual(editor.text, source);
+      await editor.receive({ type: 'pasteFromClipboard', anchorRow: 1, anchorCol: 1 });
+      assert.strictEqual(editor.text, `name${delimiter}value\nhello world${delimiter}hello world`);
+    }
+  });
+
   it('writes quoted CSV/TSV to the system clipboard and round-trips paste through the document', async () => {
     for (const extension of ['csv', 'tsv']) {
       const delimiter = extension === 'csv' ? ',' : '\t';
