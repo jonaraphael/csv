@@ -825,7 +825,8 @@ const startReorderDrag = (target, e) => {
       startX: e.clientX,
       startY: e.clientY,
       active: false,
-      beforeIndex: null
+      beforeIndex: null,
+      headerOnlyOnClick: e.detail === 1 && selectionMode === 'column' && anchorCell === target && selected.length === 1 ? target : null
     };
     return true;
   }
@@ -880,7 +881,7 @@ const onGlobalDragMove = e => {
     showRowDropIndicator(target.indicatorY);
   }
 };
-const onGlobalDragEnd = () => {
+const onGlobalDragEnd = e => {
   if (resizeState) {
     if (resizeState.axis === 'column') persistColumnSizes();
     resizeState = null;
@@ -890,12 +891,22 @@ const onGlobalDragEnd = () => {
   }
   if (!reorderState) return;
 
-  const { axis, indices, active, beforeIndex } = reorderState;
+  const { axis, indices, active, beforeIndex, headerOnlyOnClick } = reorderState;
   reorderState = null;
   hideDragIndicator();
   table.style.cursor = '';
 
-  if (!active || !Number.isFinite(beforeIndex)) return;
+  if (!active) {
+    // Keep selected columns available for dragging until an ordinary click ends.
+    // A real double-click has detail 2 and keeps the existing edit gesture.
+    if (headerOnlyOnClick && e.button === 0 && getCellTarget(e.target) === headerOnlyOnClick) {
+      selectionMode = 'cell';
+      startCell = endCell = headerOnlyOnClick;
+      setSingleSelection(headerOnlyOnClick);
+    }
+    return;
+  }
+  if (!Number.isFinite(beforeIndex)) return;
   if (axis === 'column') {
     vscode.postMessage({ type: 'reorderColumns', indices, beforeIndex });
   } else {
@@ -1711,12 +1722,12 @@ document.addEventListener('keydown', e => {
     vscode.postMessage({ type: 'save' });
     return;
   }
-  if ((e.ctrlKey || e.metaKey) && key === 'f') {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && key === 'f') {
     e.preventDefault();
     openFindReplace(false);
     return;
   }
-  if ((e.ctrlKey || e.metaKey) && key === 'h') {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && key === 'h') {
     e.preventDefault();
     openFindReplace(true);
     return;
@@ -2205,8 +2216,14 @@ const copySelectionToClipboard = (cut = false) => {
   const bounds = getDataSelectionBounds();
   if (!bounds) return false;
   const { minCol, maxCol } = bounds;
+  const realRowCount = Number(root.dataset.realrowcount);
+  // The append row is an editor affordance, never clipboard data. Consume an
+  // append-only gesture without a host write or native empty clipboard copy.
+  if (!Number.isSafeInteger(realRowCount) || realRowCount < 0) { return true; }
   const matrix = [];
-  const rowIds = [...new Set(currentSelection.map(getDataCellCoords).filter(Boolean).map(coords => coords.row))].sort((a, b) => a - b);
+  const rowIds = [...new Set(currentSelection.map(getDataCellCoords).filter(Boolean).map(coords => coords.row))]
+    .filter(row => row < realRowCount).sort((a, b) => a - b);
+  if (!rowIds.length) { return true; }
   for (const row of rowIds) {
     const values = [];
     for (let col = minCol; col <= maxCol; col++) {

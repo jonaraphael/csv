@@ -94,6 +94,7 @@ function createWebview() {
   };
   document.getElementById = byId;
   const root = byId('csv-root');
+  root.dataset.realrowcount = '2';
   const table = new Element('TABLE');
   const head = new Element('THEAD');
   const body = new Element('TBODY');
