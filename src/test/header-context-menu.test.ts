@@ -45,19 +45,19 @@ async function applyHeader(host: Host, view: View, message: unknown) {
 describe('File header context action', () => {
   for (const separator of [',', '\t']) {
     for (const header of [false, true]) {
-      it(`toggles the file header from either column (${JSON.stringify(separator)}, header ${header})`, async () => {
+      it(`toggles the file header from either first-row column (${JSON.stringify(separator)}, header ${header})`, async () => {
         for (const column of [0, 1]) {
           const host = await createEditorHarness({ rows, separator, header });
           const view = createWebviewDom(host.panel.webview.html);
           const source = host.document.getText();
           const version = host.document.version;
           try {
-            await applyHeader(host, view, chooseHeader(view, 1, column, !header));
+            await applyHeader(host, view, chooseHeader(view, 0, column, !header));
             const next = createWebviewDom(host.panel.webview.html);
             try {
               assert.strictEqual(!!next.window.document.querySelector('thead'), !header);
               const reverse = header ? 'Use first row as header' : 'Treat first row as data';
-              assert.ok(openMenu(next, 1, column).some(item => item.textContent === reverse));
+              assert.ok(openMenu(next, 0, column).some(item => item.textContent === reverse));
             } finally { next.close(); }
             assert.strictEqual(host.document.getText(), source);
             assert.strictEqual(host.document.version, version);
@@ -79,7 +79,7 @@ describe('File header context action', () => {
       const view = createWebviewDom(host.panel.webview.html);
       try {
         assert.strictEqual(view.window.document.querySelector('thead'), null);
-        await applyHeader(host, view, chooseHeader(view, 1, 1, true));
+        await applyHeader(host, view, chooseHeader(view, 0, 1, true));
         assert.strictEqual(CsvEditorProvider.getHeaderForUri(context, host.document.uri as any), true);
         assert.strictEqual(CsvEditorProvider.hasHeaderOverride(context, host.document.uri as any), true);
         const next = createWebviewDom(host.panel.webview.html);
@@ -93,7 +93,7 @@ describe('File header context action', () => {
     const view = createWebviewDom(host.panel.webview.html);
     const other = await createEditorHarness({ rows, separator: '\t', header: true });
     try {
-      await applyHeader(host, view, chooseHeader(view, 1, 1, false));
+      await applyHeader(host, view, chooseHeader(view, 0, 1, false));
       const next = createWebviewDom(host.panel.webview.html);
       const untouched = createWebviewDom(other.panel.webview.html);
       try {
@@ -163,13 +163,39 @@ describe('File header context action', () => {
     } finally { view.close(); }
   });
 
-  it('offers the same action on header, body, serial-index and append cells', async () => {
+  it('keeps the first displayed row actionable when hidden metadata exceeds the file length', async () => {
     const host = await createEditorHarness({ rows, header: true });
-    const view = createWebviewDom(host.panel.webview.html);
+    const initial = createWebviewDom(host.panel.webview.html);
+    const controller = CsvEditorProvider.getActiveProvider()!;
+    const context = (controller as any).context;
     try {
-      for (const [row, column] of [[0, 1], [1, 0], [1, -1], [3, 1]]) {
-        assert.ok(openMenu(view, row, column).some(item => item.textContent === 'Treat first row as data'));
-      }
-    } finally { view.close(); }
+      await CsvEditorProvider.setHiddenRowsForUri(context, host.document.uri as any, 10);
+      controller.refresh();
+      await finishRefresh(host, initial);
+      const view = createWebviewDom(host.panel.webview.html);
+      try {
+        await applyHeader(host, view, chooseHeader(view, rows.length, 0, false));
+        assert.strictEqual(CsvEditorProvider.getHeaderForUri(context, host.document.uri as any), false);
+        assert.deepStrictEqual(host.rows(), rows);
+      } finally { view.close(); }
+    } finally { initial.close(); }
+  });
+
+  it('only offers the header action on first-row cells, with headers on or off', async () => {
+    for (const header of [true, false]) {
+      const host = await createEditorHarness({ rows, header });
+      const view = createWebviewDom(host.panel.webview.html);
+      try {
+        const label = header ? 'Treat first row as data' : 'Use first row as header';
+        for (const column of [0, 1]) {
+          assert.ok(openMenu(view, 0, column).some(item => item.textContent === label));
+        }
+        for (const [row, column] of [[1, 0], [1, -1], [2, 1], [3, 1]]) {
+          const items = openMenu(view, row, column);
+          assert.ok(!items.some(item => item.textContent === label));
+          assert.ok(items.some(item => item.textContent === 'Copy'), 'later cells retain normal context actions');
+        }
+      } finally { view.close(); }
+    }
   });
 });

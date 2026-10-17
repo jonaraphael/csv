@@ -1462,6 +1462,7 @@ class CsvEditorController {
       nextChunkStart,
       hasRemoteChunks,
       headerEnabled: treatHeader,
+      firstVisibleRow: Math.min(Math.max(0, hiddenRows), data.length),
       mouseWheelZoomEnabled,
       mouseWheelZoomInvert
     });
@@ -1715,10 +1716,11 @@ class CsvEditorController {
     nextChunkStart: number;
     hasRemoteChunks: boolean;
     headerEnabled: boolean;
+    firstVisibleRow: number;
     mouseWheelZoomEnabled: boolean;
     mouseWheelZoomInvert: boolean;
   }): string {
-    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, headerEnabled, mouseWheelZoomEnabled, mouseWheelZoomInvert } = args;
+    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, headerEnabled, firstVisibleRow, mouseWheelZoomEnabled, mouseWheelZoomInvert } = args;
     const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
     // Build script URI using file path for compatibility (older APIs may lack Uri.joinPath)
     const scriptUri = webview.asWebviewUri(
@@ -1930,7 +1932,7 @@ class CsvEditorController {
     </style>
   </head>
   <body>
-    <div id="csv-root" class="table-container" data-headerenabled="${headerEnabled ? '1' : '0'}" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
+    <div id="csv-root" class="table-container" data-firstrow="${firstVisibleRow}" data-headerenabled="${headerEnabled ? '1' : '0'}" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
       ${tableHtml}
     </div>
 
