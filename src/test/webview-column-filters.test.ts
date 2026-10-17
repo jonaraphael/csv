@@ -29,7 +29,7 @@ const fixture = async (options: Parameters<typeof createEditorHarness>[0] = {}) 
     const pending = view.messages.slice(cursor);
     cursor = view.messages.length;
     for (const message of pending) {
-      if (['editCell', 'updateColumnFilters', 'findMatches'].includes(message.type)) {
+      if (['editCell', 'updateColumnFilters', 'findMatches', 'filterDraftChanged'].includes(message.type)) {
         await host.receive(message);
       }
     }
@@ -131,10 +131,18 @@ describe('Inline column filters', () => {
     const f = await fixture();
     try {
       const input = f.add();
+      const beforeTyping = f.view.messages.length;
       f.change(input, 'a');
+      const immediate = f.view.messages.slice(beforeTyping);
+      assert.strictEqual(immediate[0]?.type, 'filterDraftChanged', 'typing reports activity synchronously before debounce');
+      assert.strictEqual(typeof immediate[0]?.session, 'string');
+      assert.strictEqual(immediate.some(message => message.type === 'updateColumnFilters'), false);
       const first = await f.submit();
+      const beforeComposition = f.view.messages.length;
       input.dispatchEvent(new f.view.window.CompositionEvent('compositionstart', { bubbles: true }));
+      assert.strictEqual(f.view.messages[beforeComposition]?.type, 'filterDraftChanged', 'composition start reports activity immediately');
       f.change(input, 'アルファ');
+      assert.strictEqual(f.view.messages[beforeComposition + 1]?.type, 'filterDraftChanged', 'each composing input reports its own activity');
       const count = f.view.messages.filter(message => message.type === 'updateColumnFilters').length;
       await wait();
       assert.strictEqual(f.view.messages.filter(message => message.type === 'updateColumnFilters').length, count);
@@ -326,4 +334,147 @@ describe('Inline column filters', () => {
       } finally { f.view.close(); }
     }
   });
+  it('hands off blank and invalid raw drafts, focus and caret without persisting their text', async () => {
+    const f = await fixture({ filters: [{ column: 0, operator: 'contains', value: 'alpha' }] });
+    let restored: ReturnType<typeof createWebviewDom> | undefined;
+    try {
+      const input = f.input();
+      f.change(f.conditions()[0].querySelector('[data-filter-operator]'), 'regex', 'change');
+      f.change(input, 'volatile-invalid-[');
+      f.document.querySelector('#addColumnFilter').click();
+      input.focus();
+      input.setSelectionRange(2, 8, 'backward');
+      f.deliver({ type: 'prepareViewRefresh' });
+      const ack = f.view.messages.filter(message => message.type === 'viewRefreshReady').slice(-1)[0];
+      assert.strictEqual(ack.session, ack.filterDraft.session);
+      assert.deepStrictEqual(Array.from(ack.filterDraft.rows, (row: any) => row.value), ['volatile-invalid-[', '']);
+      assert.deepStrictEqual(JSON.parse(JSON.stringify(ack.filterDraft.focus)), { row: 0, field: 'value', selectionStart: 2, selectionEnd: 8, selectionDirection: 'backward' });
+      assert.ok(!JSON.stringify(f.view.state()).includes('volatile-invalid-['));
+      assert.ok(!JSON.stringify(f.host.context.workspaceState.values).includes('volatile-invalid-['));
+      await f.host.receive(ack);
+      restored = createWebviewDom(f.host.panel.webview.html);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const inputs = Array.from(restored.window.document.querySelectorAll('[data-filter-value]')) as any[];
+      assert.strictEqual(inputs.length, 2);
+      assert.strictEqual(inputs[0].value, 'volatile-invalid-[');
+      assert.strictEqual(inputs[1].value, '');
+      assert.strictEqual(restored.window.document.activeElement, inputs[0]);
+      assert.deepStrictEqual([inputs[0].selectionStart, inputs[0].selectionEnd, inputs[0].selectionDirection], [2, 8, 'backward']);
+      await wait();
+      const retry = restored.messages.filter(message => message.type === 'updateColumnFilters').slice(-1)[0];
+      assert.ok(retry);
+      assert.notStrictEqual(retry.session, ack.session);
+      assert.strictEqual(retry.filters.length, 1, 'blank condition remains a local draft');
+      assert.strictEqual(retry.filters[0].value, 'volatile-invalid-[');
+      await f.host.receive(retry);
+      const result = f.host.messages.filter(message => message.type === 'columnFiltersResult' && message.session === retry.session).slice(-1)[0];
+      restored.window.dispatchEvent(new restored.window.MessageEvent('message', { data: result }));
+      assert.strictEqual(inputs[0].getAttribute('aria-invalid'), 'true');
+      assert.ok(!JSON.stringify(f.host.context.workspaceState.values).includes('volatile-invalid-['));
+      assert.ok(!JSON.stringify(restored.state()).includes('volatile-invalid-['));
+    } finally { restored?.close(); f.view.close(); }
+  });
+
+  it('keeps the latest raw query when a deferred membership edit refreshes after a newer host filter was accepted', async () => {
+    const f = await fixture({ rows: [['Name', 'Score'], ['one', '10'], ['two', '20']], filters: [{ column: 0, operator: 'contains', value: 'one' }] });
+    let restored: ReturnType<typeof createWebviewDom> | undefined;
+    try {
+      f.host.deferEdits();
+      const cell = f.view.cell(1, 0);
+      f.view.start(cell);
+      cell.textContent = 'changed';
+      const input = f.input();
+      f.change(input, 'ch');
+      input.focus();
+      input.setSelectionRange(1, 2);
+      const edit = f.view.messages.find(message => message.type === 'editCell');
+      const writing = f.host.receive(edit);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.strictEqual(f.host.pendingEdits, 1);
+      await wait();
+      const request = f.view.messages.filter(message => message.type === 'updateColumnFilters').slice(-1)[0];
+      const filtering = f.host.receive(request);
+      f.host.releaseEdit();
+      await writing;
+      await filtering;
+      const prepare = f.host.messages.filter(message => message.type === 'prepareViewRefresh').slice(-1)[0];
+      assert.ok(prepare, 'changing filter membership requests a safe full view refresh');
+      // Do not deliver the already-accepted result: the visible module still has
+      // the old applied view while its raw query is newer.
+      f.deliver(prepare);
+      const ack = f.view.messages.filter(message => message.type === 'viewRefreshReady').slice(-1)[0];
+      await f.host.receive(ack);
+      restored = createWebviewDom(f.host.panel.webview.html);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const restoredInput = restored.window.document.querySelector('[data-filter-value]');
+      assert.strictEqual(restoredInput.value, 'ch');
+      assert.strictEqual(restored.window.document.activeElement, restoredInput);
+      assert.deepStrictEqual([restoredInput.selectionStart, restoredInput.selectionEnd], [1, 2]);
+      await wait();
+      const retry = restored.messages.filter(message => message.type === 'updateColumnFilters').slice(-1)[0];
+      assert.notStrictEqual(retry.session, request.session);
+      assert.strictEqual(retry.filters[0].value, 'ch');
+      await f.host.receive(retry);
+      const result = f.host.messages.filter(message => message.type === 'columnFiltersResult' && message.session === retry.session).slice(-1)[0];
+      restored.window.dispatchEvent(new restored.window.MessageEvent('message', { data: result }));
+      assert.strictEqual(restored.cell(1, 0).textContent, 'changed');
+      assert.strictEqual(f.host.rows()[1][0], 'changed');
+      assert.strictEqual(f.host.diskText.includes('changed'), false);
+      assert.strictEqual(restoredInput.value, 'ch');
+    } finally { restored?.close(); f.view.close(); }
+  });
+
+  it('restores interrupted IME text without submitting it or blocking the last-valid grid until that condition is completed', async () => {
+    for (const completion of ['input', 'compositionend']) {
+      const f = await fixture({ filters: [{ column: 0, operator: 'contains', value: 'alpha' }] });
+      let restored: ReturnType<typeof createWebviewDom> | undefined;
+      try {
+        const input = f.input();
+        input.focus();
+        input.dispatchEvent(new f.view.window.CompositionEvent('compositionstart', { bubbles: true }));
+        f.change(input, '未確定');
+        f.deliver({ type: 'prepareViewRefresh' });
+        const ack = f.view.messages.filter(message => message.type === 'viewRefreshReady').slice(-1)[0];
+        assert.strictEqual(ack.filterDraft.rows[0].composing, true);
+        await f.host.receive(ack);
+        restored = createWebviewDom(f.host.panel.webview.html);
+        await wait();
+        const document = restored.window.document;
+        const incomplete = document.querySelector('[data-filter-value]');
+        assert.strictEqual(incomplete.value, '未確定');
+        assert.strictEqual(restored.messages.filter(message => message.type === 'updateColumnFilters').length, 0);
+        assert.strictEqual(document.querySelector('table').hasAttribute('inert'), false);
+        assert.strictEqual(document.querySelector('table').getAttribute('aria-busy'), 'false');
+        assert.ok(document.querySelector('.column-filter-error').textContent.includes('Finish editing'));
+        assert.ok(restored.cell(1, 0));
+        assert.ok(!restored.cell(2, 0), 'the current last-valid alpha filter remains displayed');
+        document.querySelector('#addColumnFilter').click();
+        const other = Array.from(document.querySelectorAll('[data-filter-value]'))[1] as any;
+        other.value = 'a';
+        other.dispatchEvent(new restored.window.Event('input', { bubbles: true }));
+        await wait();
+        assert.strictEqual(restored.messages.filter(message => message.type === 'updateColumnFilters').length, 0, 'editing another AND condition cannot commit interrupted composition');
+        assert.strictEqual(document.querySelector('table').hasAttribute('inert'), false);
+        assert.strictEqual(restored.window.csvColumnFilters.captureDraft().rows[0].composing, true);
+        incomplete.focus();
+        incomplete.value = 'alpha';
+        incomplete.dispatchEvent(completion === 'input'
+          ? new restored.window.Event('input', { bubbles: true })
+          : new restored.window.CompositionEvent('compositionend', { bubbles: true }));
+        await wait();
+        const request = restored.messages.filter(message => message.type === 'updateColumnFilters').slice(-1)[0];
+        assert.ok(request, 'explicitly completing the interrupted condition resumes live filtering');
+        assert.strictEqual(request.filters.length, 2);
+        assert.strictEqual(request.filters[0].value, 'alpha');
+        assert.strictEqual('composing' in request.filters[0], false, 'the volatile marker is never a persisted ColumnFilter');
+        await f.host.receive(request);
+        const result = f.host.messages.filter(message => message.type === 'columnFiltersResult' && message.session === request.session).slice(-1)[0];
+        restored.window.dispatchEvent(new restored.window.MessageEvent('message', { data: result }));
+        assert.strictEqual(document.querySelector('table').getAttribute('aria-busy'), 'false');
+        assert.strictEqual(restored.window.csvColumnFilters.captureDraft().rows[0].composing, undefined);
+        assert.ok(!JSON.stringify(f.host.context.workspaceState.values).includes('未確定'));
+      } finally { restored?.close(); f.view.close(); }
+    }
+  });
+
 });

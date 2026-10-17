@@ -1,11 +1,12 @@
 // Inline filter drafts live in this webview; only complete conditions reach the host.
-window.createColumnFilterControls = ({ root, metadata, onChange, onLayout, onPending }) => {
+window.createColumnFilterControls = ({ root, metadata, onChange, onLayout, onPending, onActivity }) => {
   const columns = Array.isArray(metadata.columns) ? metadata.columns : [];
   const maxFilters = Number.isSafeInteger(metadata.maxFilters) ? metadata.maxFilters : 20;
   let revision = Number.isSafeInteger(metadata.revision) ? metadata.revision : 0;
   let timer = null;
   let nextId = 0;
   let snapshotRows = [];
+  let pending = false;
   const rows = [];
   const make = (tag, text) => {
     const element = document.createElement(tag);
@@ -46,7 +47,7 @@ window.createColumnFilterControls = ({ root, metadata, onChange, onLayout, onPen
   const clearErrors = () => {
     globalError.textContent = '';
     rows.forEach(row => {
-      row.error.textContent = row.invalidOperator ? 'Choose an operator supported by this column type.' : '';
+      row.error.textContent = row.incomplete ? 'Finish editing this condition to apply filters.' : row.invalidOperator ? 'Choose an operator supported by this column type.' : '';
       row.value.toggleAttribute('aria-invalid', !!row.invalidOperator);
       if (row.invalidOperator) row.value.setAttribute('aria-invalid', 'true');
     });
@@ -61,18 +62,20 @@ window.createColumnFilterControls = ({ root, metadata, onChange, onLayout, onPen
   };
   const send = () => {
     timer = null;
-    if (rows.some(row => row.composing)) return;
+    if (rows.some(row => row.composing || row.incomplete)) return;
     snapshotRows = rows.filter(row => condition(row));
     onChange({ revision, filters: snapshotRows.map(condition) });
   };
   const changed = () => {
+    onActivity?.();
     // Invalidate older replies immediately, even before debounce/composition ends.
     revision += 1;
-    onPending?.(true);
+    pending = !rows.some(row => row.incomplete);
+    onPending?.(pending);
     if (timer !== null) clearTimeout(timer);
     timer = null;
     clearErrors();
-    if (!rows.some(row => row.composing)) timer = setTimeout(send, 100);
+    if (pending && !rows.some(row => row.composing)) timer = setTimeout(send, 100);
     updateLayout();
   };
   const fillOperators = (row, preferred) => {
@@ -83,7 +86,7 @@ window.createColumnFilterControls = ({ root, metadata, onChange, onLayout, onPen
       option.value = choice.operator;
       row.operator.append(option);
     }
-    row.error.textContent = '';
+    row.error.textContent = row.incomplete ? 'Finish editing this condition to apply filters.' : '';
     row.value.removeAttribute('aria-invalid');
     row.invalidOperator = !!preferred && !Array.from(row.operator.options).some(option => option.value === preferred);
     if (row.invalidOperator) {
@@ -135,16 +138,16 @@ window.createColumnFilterControls = ({ root, metadata, onChange, onLayout, onPen
     error.className = 'column-filter-error';
     error.setAttribute('role', 'alert');
     value.setAttribute('aria-describedby', error.id);
-    const row = { element, and, column: columnSelect, type, operator, value, error, composing: false };
+    const row = { element, and, column: columnSelect, type, operator, value, remove, error, composing: false, incomplete: filter?.composing === true };
     fillOperators(row, filter?.operator || 'contains');
     element.append(and, columnSelect, type, operator, value, remove, error);
     list.append(element);
     rows.push(row);
-    columnSelect.addEventListener('change', () => { fillOperators(row, operator.value); changed(); });
-    operator.addEventListener('change', () => { row.invalidOperator = false; value.hidden = isUnary(operator.value); value.disabled = isUnary(operator.value); changed(); });
-    value.addEventListener('input', changed);
-    value.addEventListener('compositionstart', () => { row.composing = true; changed(); });
-    value.addEventListener('compositionend', () => { row.composing = false; changed(); });
+    columnSelect.addEventListener('change', () => { row.incomplete = false; fillOperators(row, operator.value); changed(); });
+    operator.addEventListener('change', () => { row.incomplete = false; row.invalidOperator = false; value.hidden = isUnary(operator.value); value.disabled = isUnary(operator.value); changed(); });
+    value.addEventListener('input', () => { row.incomplete = false; changed(); });
+    value.addEventListener('compositionstart', () => { row.incomplete = false; row.composing = true; changed(); });
+    value.addEventListener('compositionend', () => { row.incomplete = false; row.composing = false; changed(); });
     remove.addEventListener('click', () => {
       rows.splice(rows.indexOf(row), 1);
       element.remove();
@@ -163,14 +166,53 @@ window.createColumnFilterControls = ({ root, metadata, onChange, onLayout, onPen
     rows.splice(0).forEach(row => row.element.remove());
     changed();
   });
-  for (const filter of metadata.filters || []) append(filter);
+  const restored = metadata.filterDraft;
+  for (const filter of restored?.rows || metadata.filters || []) append(filter);
   updateLayout();
+  if (restored) {
+    // This state arrived through one controller's refresh ACK, never VS Code storage.
+    changed();
+    setTimeout(() => {
+      const focus = restored.focus;
+      const field = rows[focus?.row]?.[focus?.field];
+      if (!field || !['column', 'operator', 'value', 'remove'].includes(focus?.field)) return;
+      field.focus({ preventScroll: true });
+      if (focus.field === 'value' && Number.isInteger(focus.selectionStart) && Number.isInteger(focus.selectionEnd)) {
+        field.setSelectionRange(focus.selectionStart, focus.selectionEnd, focus.selectionDirection || 'none');
+      }
+    }, 0);
+  }
+  const captureDraft = () => {
+    if (!rows.length && !pending) return undefined;
+    const draft = {
+      rows: rows.map(row => ({ column: Number(row.column.value), operator: row.operator.value, value: row.value.value, ...((row.composing || row.incomplete) ? { composing: true } : {}) })),
+      session: metadata.session,
+      filterColumnsRevision: metadata.filterColumnsRevision,
+      columns: columns.map(column => ({ column: column.column, label: column.label }))
+    };
+    rows.some((row, index) => {
+      for (const field of ['column', 'operator', 'value', 'remove']) {
+        if (row[field] !== document.activeElement) continue;
+        draft.focus = { row: index, field };
+        if (field === 'value') Object.assign(draft.focus, {
+          selectionStart: row.value.selectionStart,
+          selectionEnd: row.value.selectionEnd,
+          selectionDirection: row.value.selectionDirection
+        });
+        return true;
+      }
+      return false;
+    });
+    return draft;
+  };
   return {
     add,
+    captureDraft,
     retry: changed,
     get latestRevision() { return revision; },
     receive(message) {
       if (message.session !== metadata.session || message.revision !== revision) return false;
+      pending = false;
       clearErrors();
       if (Array.isArray(message.columns) && JSON.stringify(message.columns) !== JSON.stringify(columns)) {
         columns.length = 0;

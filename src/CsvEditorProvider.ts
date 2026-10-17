@@ -55,6 +55,19 @@ type ChunkRenderState = {
   serialIndexWidthCh: number;
 };
 type FilterColumn = { column: number; label: string; dataType: FilterDataType; operators: ReturnType<typeof getFilterOperatorChoices> };
+type FilterDraft = {
+  session: string;
+  filterColumnsRevision: number;
+  rows: Array<{ column: number; operator: ColumnFilter['operator']; value: string; composing?: boolean }>;
+  columns: Array<{ column: number; label: string }>;
+  focus?: {
+    row: number;
+    field: 'column' | 'operator' | 'value' | 'remove';
+    selectionStart?: number;
+    selectionEnd?: number;
+    selectionDirection?: 'forward' | 'backward' | 'none';
+  };
+};
 type FilterRender = {
   tableHtml: string; chunksJson: string; colorCss: string; nextChunkStart: number; hasRemoteChunks: boolean;
   visibleRowIds: number[]; matchedRows: number; totalRows: number; filters: ColumnFilter[]; columns: FilterColumn[];
@@ -88,6 +101,10 @@ class CsvEditorController {
   private latestFilterRevision = 0;
   private filterEpoch = 0;
   private filterSession = '';
+  private filterDraftActivityRevision = 0;
+  private filterSessionUri = '';
+  private filterColumnsRevision = 0;
+  private pendingFilterDraft: { uri: string; draft: FilterDraft } | undefined;
   private failedCellEdits = new Set<string>();
 
   constructor(private readonly context: vscode.ExtensionContext) {}
@@ -147,9 +164,14 @@ class CsvEditorController {
     });
 
     webviewPanel.webview.onDidReceiveMessage(e => {
+      if (e.type === 'filterDraftChanged') {
+        if (e.session === this.filterSession) { this.filterDraftActivityRevision += 1; }
+        return;
+      }
       if (e.type === 'updateColumnFilters' && e.session === this.filterSession && Number.isSafeInteger(e.revision) && e.revision > this.latestFilterRevision) {
         this.latestFilterRevision = e.revision;
       }
+      const receivedFilterDraftRevision = this.filterDraftActivityRevision;
       return this.enqueueOperation(async () => {
       switch (e.type) {
         case 'editCell':
@@ -174,6 +196,12 @@ class CsvEditorController {
           await this.updateColumnFilters(e.revision, e.filters, e.session);
           break;
         case 'viewRefreshReady':
+          if (e.session !== this.filterSession) { break; }
+          if (receivedFilterDraftRevision !== this.filterDraftActivityRevision) {
+            void webviewPanel.webview.postMessage({ type: 'prepareViewRefresh' });
+            break;
+          }
+          this.captureFilterDraft(e.filterDraft);
           this.updateWebviewContent();
           break;
         case 'freezePanesChanged':
@@ -251,6 +279,7 @@ class CsvEditorController {
       saveDocumentSubscription.dispose();
       CsvEditorProvider.editors = CsvEditorProvider.editors.filter(ed => ed !== this);
       this.currentWebviewPanel = undefined;
+      this.pendingFilterDraft = undefined;
     });
   }
 
@@ -546,7 +575,67 @@ class CsvEditorController {
     reply({});
   }
 
+  private captureFilterDraft(raw: unknown): void {
+    this.pendingFilterDraft = undefined;
+    const columns = this.currentFilterView?.columns;
+    if (!columns || !raw || typeof raw !== 'object' || Array.isArray(raw)) { return; }
+    const item = raw as Record<string, unknown>;
+    if (item.session !== this.filterSession || item.filterColumnsRevision !== this.filterColumnsRevision ||
+        !Array.isArray(item.rows) || item.rows.length > MAX_COLUMN_FILTERS ||
+        !Array.isArray(item.columns) || item.columns.length !== columns.length) { return; }
+    if (!item.columns.every((column: unknown, index: number) => {
+      if (!column || typeof column !== 'object' || Array.isArray(column)) { return false; }
+      const identity = column as Record<string, unknown>;
+      return identity.column === columns[index].column && identity.label === columns[index].label;
+    })) { return; }
+    const rows: FilterDraft['rows'] = [];
+    for (const rawRow of item.rows as unknown[]) {
+      if (!rawRow || typeof rawRow !== 'object' || Array.isArray(rawRow)) { return; }
+      const row = rawRow as Record<string, unknown>;
+      const operator = getFilterOperatorChoices('number').find(choice => choice.operator === row.operator)?.operator;
+      if (typeof row.column !== 'number' || !Number.isSafeInteger(row.column) || row.column < 0 || row.column >= columns.length ||
+          !operator || typeof row.value !== 'string' || row.value.length > MAX_FILTER_VALUE_LENGTH ||
+          (row.composing !== undefined && typeof row.composing !== 'boolean')) { return; }
+      // Preserve blank and invalid queries as drafts; only submission validates their meaning.
+      rows.push({ column: row.column, operator, value: row.value, ...(row.composing ? { composing: true } : {}) });
+    }
+    const draft: FilterDraft = {
+      session: this.filterSession,
+      filterColumnsRevision: this.filterColumnsRevision,
+      rows,
+      columns: columns.map(column => ({ column: column.column, label: column.label }))
+    };
+    if (item.focus !== undefined) {
+      if (!item.focus || typeof item.focus !== 'object' || Array.isArray(item.focus)) { return; }
+      const focus = item.focus as Record<string, unknown>;
+      if (typeof focus.row !== 'number' || !Number.isSafeInteger(focus.row) || focus.row < 0 || focus.row >= rows.length ||
+          (focus.field !== 'column' && focus.field !== 'operator' && focus.field !== 'value' && focus.field !== 'remove')) { return; }
+      draft.focus = { row: focus.row, field: focus.field };
+      if (focus.selectionStart !== undefined || focus.selectionEnd !== undefined || focus.selectionDirection !== undefined) {
+        if (focus.field !== 'value' || typeof focus.selectionStart !== 'number' || typeof focus.selectionEnd !== 'number' ||
+            !Number.isSafeInteger(focus.selectionStart) || !Number.isSafeInteger(focus.selectionEnd) ||
+            focus.selectionStart < 0 || focus.selectionEnd < focus.selectionStart || focus.selectionEnd > rows[focus.row].value.length ||
+            (focus.selectionDirection !== 'forward' && focus.selectionDirection !== 'backward' && focus.selectionDirection !== 'none')) { return; }
+        Object.assign(draft.focus, { selectionStart: focus.selectionStart, selectionEnd: focus.selectionEnd, selectionDirection: focus.selectionDirection });
+      }
+    }
+    this.pendingFilterDraft = { uri: this.filterSessionUri, draft };
+  }
+
+  private consumeFilterDraft(columns: FilterColumn[]): FilterDraft | undefined {
+    const pending = this.pendingFilterDraft;
+    this.pendingFilterDraft = undefined;
+    if (!pending || pending.uri !== this.document.uri.toString() || pending.draft.filterColumnsRevision !== this.filterColumnsRevision ||
+        pending.draft.columns.length !== columns.length || pending.draft.columns.some((column, index) =>
+          column.column !== columns[index].column || column.label !== columns[index].label)) { return undefined; }
+    return pending.draft;
+  }
+
   private async remapFilters(columnOrder: number[]): Promise<void> {
+    if (columnOrder.length !== this.currentFilterView?.columns.length || columnOrder.some((column, index) => column !== index)) {
+      this.filterColumnsRevision++;
+      this.pendingFilterDraft = undefined;
+    }
     await CsvEditorProvider.setColumnFiltersForUri(this.context, this.document.uri,
       remapColumnFilters(CsvEditorProvider.getColumnFiltersForUri(this.context, this.document.uri), columnOrder));
   }
@@ -1635,12 +1724,15 @@ class CsvEditorController {
     const data = this.trimTrailingEmptyRows((parsed.data || []) as string[][]);
     const filters = normalizeColumnFilters(CsvEditorProvider.getColumnFiltersForUri(this.context, this.document.uri), data.reduce((max, row) => Math.max(max, row.length), 0));
     const view = this.buildFilterView(data, filters);
+    const filterDraft = this.consumeFilterDraft(view.columns);
     this.currentHeader = view.headerEnabled;
     this.chunkRenderState = view.chunkState;
     this.currentFilterView = view;
     this.latestFilterRevision = 0;
     this.filterEpoch = 0;
     this.filterSession = this.getNonce();
+    this.filterDraftActivityRevision = 0;
+    this.filterSessionUri = this.document.uri.toString();
     const mouseWheelZoomEnabled = config.get<boolean>('mouseWheelZoom', true);
     const mouseWheelZoomInvert = config.get<boolean>('mouseWheelZoomInvert', false);
     const { tableHtml, chunksJson, colorCss, nextChunkStart, hasRemoteChunks } = view;
@@ -1666,7 +1758,7 @@ class CsvEditorController {
       firstVisibleRow: view.firstVisibleRow,
       realRowCount: data.length,
       visibleRowIds: view.visibleRowIds,
-      filterMetadata: { session: this.filterSession, filters, columns: view.columns, matchedRows: view.matchedRows, totalRows: view.totalRows, maxFilters: MAX_COLUMN_FILTERS, revision: 0 }
+      filterMetadata: { session: this.filterSession, filterColumnsRevision: this.filterColumnsRevision, filters, columns: view.columns, matchedRows: view.matchedRows, totalRows: view.totalRows, maxFilters: MAX_COLUMN_FILTERS, revision: 0, ...(filterDraft ? { filterDraft } : {}) }
     });
   }
 
@@ -1951,7 +2043,7 @@ class CsvEditorController {
     firstVisibleRow: number;
     realRowCount: number;
     visibleRowIds: number[];
-    filterMetadata: { session: string; filters: ColumnFilter[]; columns: FilterColumn[]; matchedRows: number; totalRows: number; maxFilters: number; revision: number };
+    filterMetadata: { session: string; filterColumnsRevision: number; filters: ColumnFilter[]; columns: FilterColumn[]; matchedRows: number; totalRows: number; maxFilters: number; revision: number; filterDraft?: FilterDraft };
   }): string {
     const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, mouseWheelZoomEnabled, mouseWheelZoomInvert, columnSizes, frozenPanes, firstVisibleRow, realRowCount, visibleRowIds, filterMetadata } = args;
     const themeKind = vscode.window.activeColorTheme.kind;

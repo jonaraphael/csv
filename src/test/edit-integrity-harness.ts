@@ -189,6 +189,7 @@ export function createWebviewDom(html: string) {
   window.eval(`${source}\nwindow.editingTestApi = { editCell, setSingleSelection, selectRange, selectFullRowRange };`);
   return {
     window, messages,
+    state: () => state,
     close() { window.close(); },
     cell(row = 1, col = 0) {
       return window.document.querySelector(`[data-row="${row}"][data-col="${col}"]`);

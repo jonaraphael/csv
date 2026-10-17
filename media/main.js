@@ -2153,7 +2153,7 @@ window.addEventListener('message', event => {
   if (message.type === 'prepareViewRefresh') {
     if (editingCell) editingCell.blur();
     persistState();
-    vscode.postMessage({ type: 'viewRefreshReady' });
+    vscode.postMessage({ type: 'viewRefreshReady', session: filterSession, filterDraft: window.csvColumnFilters?.captureDraft() });
   } else if (message.type === 'columnFiltersResult') {
     applyColumnFiltersResult(message);
   } else if (message.type === 'frozenPanes') {
@@ -2433,6 +2433,7 @@ if (filterStatus && typeof window.createColumnFilterControls === 'function') {
     root: filterStatus,
     metadata: filterMetadata,
     onChange: submitColumnFilters,
+    onActivity: () => vscode.postMessage({ type: 'filterDraftChanged', session: filterSession }),
     onPending: setFilterPending,
     onLayout: () => window.csvFrozenPanes?.schedule()
   });

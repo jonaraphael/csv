@@ -301,3 +301,183 @@ describe('Inline typed filter provider', () => {
     assert.notStrictEqual(host.panel.webview.html, html, 'only the unrelated full refresh replaces HTML');
   });
 });
+
+
+describe('Volatile inline filter draft handoff', () => {
+  function draftFor(host: Host, rows = [{ column: 0, operator: 'contains', value: 'volatile draft' }]): any {
+    const initial = metadata(host);
+    return {
+      session: initial.session,
+      filterColumnsRevision: initial.filterColumnsRevision,
+      columns: initial.columns.map((column: any) => ({ column: column.column, label: column.label })),
+      rows
+    };
+  }
+  async function acknowledge(host: Host, filterDraft: unknown, session = metadata(host).session) {
+    await host.receive({ type: 'viewRefreshReady', session, filterDraft });
+    return metadata(host);
+  }
+
+  for (const separator of [',', '\t']) {
+    it(`carries blank/invalid rows and caret once without storing drafts or changing source (${JSON.stringify(separator)})`, async () => {
+      const host = await createEditorHarness({ rows: [['Name'], ['one'], ['two']], separator, filters: [{ column: 0, operator: 'contains', value: 'one' }] });
+      const previous = JSON.stringify(host.context.workspaceState.values);
+      const source = host.document.getText();
+      const draft = draftFor(host, [{ column: 0, operator: 'regex', value: 'volatile-[' }, { column: 0, operator: 'contains', value: '' }]);
+      draft.focus = { row: 0, field: 'value', selectionStart: 1, selectionEnd: 4, selectionDirection: 'backward' };
+      const next = await acknowledge(host, draft);
+      assert.deepStrictEqual(next.filterDraft, draft);
+      assert.notStrictEqual(next.session, draft.session);
+      assert.strictEqual(next.filterColumnsRevision, draft.filterColumnsRevision);
+      assert.strictEqual(JSON.stringify(host.context.workspaceState.values), previous);
+      assert.strictEqual(host.document.getText(), source);
+      assert.strictEqual(host.diskText, source);
+      assert.strictEqual(host.document.version, 1);
+      assert.strictEqual((await acknowledge(host, undefined)).filterDraft, undefined, 'a later refresh does not replay the consumed draft');
+    });
+  }
+
+  it('renews a queued ACK for current-session typing and ignores stale-session activity', async () => {
+    for (const stale of [false, true]) {
+      const host = await createEditorHarness({ rows: [['Name'], ['one']], filters: [{ column: 0, operator: 'contains', value: 'one' }] });
+      const controller = CsvEditorProvider.getActiveProvider() as any;
+      let release = () => {};
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const blocked = controller.enqueueOperation(() => gate) as Promise<void>;
+      try {
+        await new Promise(resolve => setImmediate(resolve));
+        const original = host.panel.webview.html;
+        const draft = draftFor(host, [{ column: 0, operator: 'contains', value: 'one' }]);
+        controller.refreshViewSafely();
+        const request = host.messages.filter(message => message.type === 'prepareViewRefresh').at(-1)!;
+        const cursor = host.messages.length;
+        const acknowledging = host.receive({ type: 'viewRefreshReady', session: draft.session, requestId: request.requestId, filterDraft: draft });
+        await host.receive({ type: 'filterDraftChanged', session: stale ? 'previous-view' : draft.session });
+        assert.strictEqual(host.panel.webview.html, original);
+        release();
+        await Promise.all([blocked, acknowledging]);
+        const renewed = host.messages.slice(cursor).find(message => message.type === 'prepareViewRefresh');
+        if (stale) {
+          assert.strictEqual(renewed, undefined, 'old-view activity cannot renew a current ACK');
+          assert.strictEqual(metadata(host).filterDraft.rows[0].value, 'one');
+        } else {
+          assert.ok(renewed, 'typing received while an ACK waits must request a newer snapshot');
+          assert.strictEqual(host.panel.webview.html, original, 'the stale snapshot cannot replace the live view');
+          draft.rows[0].value = 'one m';
+          await host.receive({ type: 'viewRefreshReady', session: draft.session, requestId: renewed.requestId, filterDraft: draft });
+          assert.strictEqual(metadata(host).filterDraft.rows[0].value, 'one m');
+        }
+        assert.strictEqual(host.document.version, 1);
+        assert.strictEqual(host.document.getText(), host.diskText);
+      } finally { release(); }
+    }
+  });
+
+  it('roundtrips only validated true IME markers without saving unfinished text', async () => {
+    const host = await createEditorHarness({ rows: [['Name'], ['one']], filters: [{ column: 0, operator: 'contains', value: 'one' }] });
+    const stored = JSON.stringify(host.context.workspaceState.values);
+    const draft = draftFor(host);
+    draft.rows = [{ column: 0, operator: 'contains', value: 'unfinished IME', composing: true }, { column: 0, operator: 'regex', value: '[', composing: false }];
+    const next = await acknowledge(host, draft);
+    assert.deepStrictEqual(next.filterDraft.rows, [{ column: 0, operator: 'contains', value: 'unfinished IME', composing: true }, { column: 0, operator: 'regex', value: '[' }]);
+    assert.strictEqual(JSON.stringify(host.context.workspaceState.values), stored);
+    assert.strictEqual(host.document.getText(), host.diskText);
+    for (const marker of ['true', 1, null, {}]) {
+      const invalid = draftFor(host);
+      invalid.rows[0].composing = marker;
+      assert.strictEqual((await acknowledge(host, invalid)).filterDraft, undefined);
+      assert.strictEqual(JSON.stringify(host.context.workspaceState.values), stored);
+    }
+  });
+
+  it('retains current intent after a newer valid filter was accepted in the same session', async () => {
+    const host = await createEditorHarness({ rows: [['Name'], ['one'], ['two']], filters: [{ column: 0, operator: 'contains', value: 'one' }] });
+    const draft = draftFor(host, [{ column: 0, operator: 'contains', value: 'ch' }]);
+    draft.focus = { row: 0, field: 'value', selectionStart: 1, selectionEnd: 2, selectionDirection: 'none' };
+    const accepted = await update(host, 1, [{ column: 0, operator: 'contains', value: 'two' }]);
+    assert.strictEqual(accepted.filterEpoch, 1);
+    const refreshed = await acknowledge(host, draft);
+    assert.strictEqual(refreshed.filters[0].value, 'two', 'last accepted conditions remain persisted');
+    assert.strictEqual(refreshed.filterDraft.rows[0].value, 'ch', 'an undelivered response cannot replace the newer raw draft');
+    assert.deepStrictEqual(refreshed.filterDraft.focus, draft.focus);
+  });
+
+  it('carries a pending Clear all as an empty draft without prematurely changing preferences', async () => {
+    const host = await createEditorHarness({ rows: [['Name'], ['one']], filters: [{ column: 0, operator: 'contains', value: 'one' }] });
+    const cleared = draftFor(host, []);
+    const next = await acknowledge(host, cleared);
+    assert.deepStrictEqual(next.filterDraft.rows, []);
+    assert.strictEqual(saved(host).length, 1);
+    await update(host, 1, [], next.session);
+    assert.deepStrictEqual(saved(host), []);
+    assert.strictEqual(host.document.getText(), host.diskText);
+  });
+
+  it('rejects malformed, oversized and stale draft state without persisting any draft data', async () => {
+    const host = await createEditorHarness({ rows: [['Name'], ['one']] });
+    const malformed: Array<(draft: any) => void> = [
+      draft => { draft.session = 'previous-view'; },
+      draft => { delete draft.filterColumnsRevision; },
+      draft => { draft.filterColumnsRevision += 1; },
+      draft => { draft.rows = {}; },
+      draft => { draft.rows = Array.from({ length: metadata(host).maxFilters + 1 }, () => ({ column: 0, operator: 'contains', value: '' })); },
+      draft => { draft.rows[0].column = 1; },
+      draft => { draft.rows[0].column = '0'; },
+      draft => { draft.rows[0].operator = 'unknown'; },
+      draft => { draft.rows[0].value = 'x'.repeat(4097); },
+      draft => { draft.columns[0].label = 'another column'; },
+      draft => { draft.columns = []; },
+      draft => { draft.focus = { row: 1, field: 'value' }; },
+      draft => { draft.focus = { row: 0, field: 'unknown' }; },
+      draft => { draft.focus = { row: 0, field: 'value', selectionStart: 0, selectionEnd: 100, selectionDirection: 'none' }; },
+      draft => { draft.focus = { row: 0, field: 'value', selectionStart: 2, selectionEnd: 1, selectionDirection: 'none' }; },
+      draft => { draft.focus = { row: 0, field: 'value', selectionStart: 0, selectionEnd: 1, selectionDirection: 'unknown' }; }
+    ];
+    const stored = JSON.stringify(host.context.workspaceState.values);
+    for (const mutate of malformed) {
+      const draft = draftFor(host);
+      mutate(draft);
+      assert.strictEqual((await acknowledge(host, draft)).filterDraft, undefined);
+      assert.strictEqual(JSON.stringify(host.context.workspaceState.values), stored);
+    }
+    const oldSession = metadata(host).session;
+    await acknowledge(host, undefined);
+    const html = host.panel.webview.html;
+    await acknowledge(host, draftFor(host), oldSession);
+    assert.strictEqual(host.panel.webview.html, html, 'an old ACK cannot refresh the new view');
+  });
+
+  it('invalidates duplicate-label column reordering while preserving no-op mapping revisions', async () => {
+    const host = await createEditorHarness({ rows: [['Same', 'Same'], ['left', 'right']] });
+    const initial = metadata(host), stale = draftFor(host);
+    assert.strictEqual(initial.filterColumnsRevision, 0);
+    await host.receive({ type: 'reorderColumns', indices: [0], beforeIndex: 1 });
+    assert.strictEqual(metadata(host).filterColumnsRevision, initial.filterColumnsRevision);
+    await host.receive({ type: 'reorderColumns', indices: [0], beforeIndex: 2 });
+    const reordered = metadata(host);
+    assert.deepStrictEqual(reordered.columns.map((column: any) => column.label), ['Same', 'Same']);
+    assert.strictEqual(reordered.filterColumnsRevision, initial.filterColumnsRevision + 1);
+    assert.deepStrictEqual(host.rows()[1], ['right', 'left']);
+    stale.session = reordered.session;
+    assert.strictEqual((await acknowledge(host, stale)).filterDraft, undefined, 'identical labels do not authorize a draft from the old column mapping');
+    await host.receive({ type: 'insertColumn', index: 1 });
+    const inserted = metadata(host);
+    assert.strictEqual(inserted.filterColumnsRevision, reordered.filterColumnsRevision + 1);
+    await host.receive({ type: 'deleteColumn', index: 1 });
+    assert.strictEqual(metadata(host).filterColumnsRevision, inserted.filterColumnsRevision + 1);
+  });
+
+  it('drops drafts when column labels change or the rendered owner URI has rebound', async () => {
+    const host = await createEditorHarness({ rows: [['Name'], ['one']] });
+    const renamedDraft = draftFor(host);
+    await host.receive({ type: 'editCell', row: 0, col: 0, value: 'Renamed' });
+    assert.strictEqual((await acknowledge(host, renamedDraft)).filterDraft, undefined, 'changed semantic labels invalidate the old draft');
+    const reboundDraft = draftFor(host);
+    const OldUri = host.document.uri.constructor as new (path: string) => typeof host.document.uri;
+    host.document.uri = new OldUri('/test/rebound.csv');
+    const rebound = await acknowledge(host, reboundDraft);
+    assert.strictEqual(rebound.filterDraft, undefined, 'a session belongs to its original URI even when the live owner changes before ACK');
+    assert.strictEqual(host.rows()[0][0], 'Renamed');
+    assert.ok(!host.diskText.includes('Renamed'));
+  });
+});
