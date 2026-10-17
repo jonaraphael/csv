@@ -26,6 +26,7 @@
     "onCommand:csv.compareFilesAsTable",
     "onCustomEditor:csv.largeFilePreview",
     "onCommand:csv.toggleEditor",
+    "onCommand:csv.saveUntitled",
     "onCommand:csv.toggleHeader",
     "onCommand:csv.toggleSerialIndex",
     "onCommand:csv.changeSeparator",
@@ -84,6 +85,12 @@
         "title": "CSV: Compare Files as Table"
       },
       {
+        "command": "csv.saveUntitled",
+        "title": "CSV: Save Untitled Document As\u2026",
+        "icon": "$(save)",
+        "enablement": "activeWebviewPanelId == csv.untitledEditor"
+      },
+      {
         "command": "csv.toggleExtension",
         "title": "CSV: Toggle Extension On/Off"
       },
@@ -132,8 +139,19 @@
       "editor/title": [
         {
           "command": "csv.toggleEditor",
-          "when": "!isInDiffEditor && (activeCustomEditorId == csv.editor || (activeEditor == workbench.editors.textEditor && resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i))",
+          "when": "!isInDiffEditor && (activeCustomEditorId == csv.editor || activeWebviewPanelId == csv.untitledEditor || (activeEditor == workbench.editors.textEditor && (resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i || (resourceScheme == untitled && editorLangId =~ /^(csv|tsv)$/))))",
           "group": "navigation"
+        },
+        {
+          "command": "csv.saveUntitled",
+          "when": "activeWebviewPanelId == csv.untitledEditor",
+          "group": "navigation@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "csv.saveUntitled",
+          "when": "activeWebviewPanelId == csv.untitledEditor"
         }
       ],
       "explorer/context": [

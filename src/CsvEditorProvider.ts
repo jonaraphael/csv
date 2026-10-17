@@ -72,6 +72,12 @@ class CsvEditorController {
   private isUpdatingDocument = false;
   private isSaving = false;
   private disposed = false;
+  private pendingViewAction: (() => Promise<void>) | undefined;
+  private pendingDocumentReference: { document: vscode.TextDocument; separator: string } | undefined;
+  private renderedSeparator: string | undefined;
+  private viewCommitRequested = false;
+  private viewCommitSequence = 0;
+  private pendingClose = false;
   private pendingOperation: Promise<void> = Promise.resolve();
   private currentWebviewPanel: vscode.WebviewPanel | undefined;
   private document!: vscode.TextDocument;
@@ -99,7 +105,7 @@ class CsvEditorController {
     }
 
     const proceed = await this.confirmLargeFileOpen(config, webviewPanel, _token);
-    if (!proceed) {
+    if (!proceed || _token.isCancellationRequested || document.isClosed) {
       return;
     }
 
@@ -141,6 +147,22 @@ class CsvEditorController {
 
     webviewPanel.webview.onDidReceiveMessage(e => this.enqueueOperation(async () => {
       switch (e.type) {
+        case 'webviewReady': {
+          if (this.viewCommitRequested) {
+            this.postViewCommitRequest();
+          }
+          break;
+        }
+        case 'viewRefreshReady': {
+          if (this.viewCommitRequested && e.requestId !== this.viewCommitSequence) {
+            break;
+          }
+          if (!this.viewCommitRequested && e.requestId !== undefined) {
+            break;
+          }
+          await this.finishViewCommit();
+          break;
+        }
         case 'editCell':
           await this.updateDocument(e.row, e.col, e.value);
           break;
@@ -157,7 +179,11 @@ class CsvEditorController {
           await this.findMatches(e.requestId, e.query, e.options);
           break;
         case 'save':
-          await this.handleSave();
+          if (this.viewCommitRequested) {
+            this.saveAfterCommit();
+          } else {
+            await this.handleSave();
+          }
           break;
         case 'configureColumnFilter':
           await this.configureColumnFilter(e.column);
@@ -167,9 +193,6 @@ class CsvEditorController {
           break;
         case 'clearAllFilters':
           await this.setColumnFilters([]);
-          break;
-        case 'viewRefreshReady':
-          this.updateWebviewContent();
           break;
         case 'freezePanesChanged':
           await this.setFrozenPanes({ rows: e.rows, columns: e.columns });
@@ -246,6 +269,12 @@ class CsvEditorController {
       saveDocumentSubscription.dispose();
       CsvEditorProvider.editors = CsvEditorProvider.editors.filter(ed => ed !== this);
       this.currentWebviewPanel = undefined;
+      this.pendingViewAction = undefined;
+      this.pendingDocumentReference = undefined;
+      this.viewCommitRequested = false;
+      if (CsvEditorProvider.currentActive === this) {
+        CsvEditorProvider.currentActive = undefined;
+      }
     });
   }
 
@@ -259,7 +288,7 @@ class CsvEditorController {
   }
 
   private async warnAboutPossibleDecoding(): Promise<void> {
-    if (!this.document.getText().includes('\uFFFD') || CsvEditorController.encodingWarnings.has(this.document)) {
+    if (this.document.uri.scheme === 'untitled' || !this.document.getText().includes('\uFFFD') || CsvEditorController.encodingWarnings.has(this.document)) {
       return;
     }
     CsvEditorController.encodingWarnings.add(this.document);
@@ -307,7 +336,11 @@ class CsvEditorController {
         preserveFocus: !webviewPanel.active,
         preview: webviewPanel.active ? webviewPanel.active : false
       };
-      await vscode.commands.executeCommand('vscode.openWith', uri, 'default', opts);
+      if (uri.scheme === 'untitled') {
+        await vscode.window.showTextDocument(this.document, opts);
+      } else {
+        await vscode.commands.executeCommand('vscode.openWith', uri, 'default', opts);
+      }
     } finally {
       try { webviewPanel.dispose(); } catch {}
     }
@@ -318,6 +351,9 @@ class CsvEditorController {
     webviewPanel: vscode.WebviewPanel,
     token: vscode.CancellationToken
   ): Promise<boolean> {
+    if (this.document.uri.scheme === 'untitled') {
+      return true;
+    }
     const maxFileSizeMB = this.getMaxFileSizeLimitMb(config);
     if (maxFileSizeMB <= 0) {
       return true;
@@ -368,12 +404,94 @@ class CsvEditorController {
   public refresh() {
     const config = vscode.workspace.getConfiguration('csv', this.document.uri);
     if (!config.get<boolean>('enabled', true)) {
-      this.currentWebviewPanel?.dispose();
-      vscode.commands.executeCommand('vscode.openWith', this.document.uri, 'default');
+      const panel = this.currentWebviewPanel;
+      if (this.document.uri.scheme === 'untitled') {
+        this.revealSourceAfterCommit();
+      } else {
+        panel?.dispose();
+        vscode.commands.executeCommand('vscode.openWith', this.document.uri, 'default');
+      }
     } else {
-      if (this.currentWebviewPanel) {
+      if (this.currentWebviewPanel && !this.viewCommitRequested) {
         this.forceReload();
       }
+    }
+  }
+
+  public revealSourceAfterCommit(reason: 'disabled' | 'language' = 'disabled'): void {
+    const panel = this.currentWebviewPanel;
+    if (!panel) {
+      return;
+    }
+    // A deliberate close takes priority over a pending Save As or re-render.
+    this.pendingClose = true;
+    this.pendingViewAction = async () => {
+      const enabled = vscode.workspace.getConfiguration('csv', this.document.uri).get<boolean>('enabled', true);
+      const supportedLanguage = this.document.languageId === 'csv' || this.document.languageId === 'tsv';
+      if (enabled && (reason === 'disabled' || supportedLanguage)) {
+        // A quick re-enable/language roundtrip still commits the active draft.
+        this.updateWebviewContent();
+        return;
+      }
+      await vscode.window.showTextDocument(this.document, { viewColumn: panel.viewColumn, preview: false });
+      panel.dispose();
+    };
+    this.requestViewCommit();
+  }
+
+  public saveUntitledAfterCommit(): void {
+    if (this.document.uri.scheme === 'untitled') {
+      this.saveAfterCommit();
+    }
+  }
+
+  private saveAfterCommit(): void {
+    if (!this.currentWebviewPanel || this.pendingClose) {
+      return;
+    }
+    this.pendingViewAction = async () => {
+      await this.handleSave();
+      this.updateWebviewContent();
+    };
+    this.requestViewCommit();
+  }
+
+  private postViewCommitRequest(): void {
+    void this.currentWebviewPanel?.webview.postMessage({
+      type: 'prepareViewRefresh', requestId: this.viewCommitSequence
+    });
+  }
+
+  private requestViewCommit(): void {
+    const panel = this.currentWebviewPanel;
+    if (!panel || this.viewCommitRequested) {
+      return;
+    }
+    this.viewCommitRequested = true;
+    this.viewCommitSequence += 1;
+    if (panel.visible) {
+      // The final edit arrives before the acknowledgment in the ordered queue.
+      // webviewReady resends this request if the first script is still loading.
+      this.postViewCommitRequest();
+    } else {
+      void this.enqueueOperation(() => this.finishViewCommit());
+    }
+  }
+
+  private async finishViewCommit(): Promise<void> {
+    this.viewCommitRequested = false;
+    if (this.pendingDocumentReference) {
+      this.document = this.pendingDocumentReference.document;
+      this.pendingDocumentReference = undefined;
+      this.separatorCache = undefined;
+    }
+    const action = this.pendingViewAction;
+    this.pendingViewAction = undefined;
+    this.pendingClose = false;
+    if (action) {
+      await action();
+    } else {
+      this.updateWebviewContent();
     }
   }
 
@@ -506,11 +624,7 @@ class CsvEditorController {
   }
 
   public refreshViewSafely(): void {
-    if (this.currentWebviewPanel?.visible) {
-      this.currentWebviewPanel.webview.postMessage({ type: 'prepareViewRefresh' });
-    } else {
-      this.refresh();
-    }
+    this.requestViewCommit();
   }
 
   public getCurrentFrozenPanes(): FrozenPanes {
@@ -520,6 +634,16 @@ class CsvEditorController {
   public async setFrozenPanes(change: Partial<FrozenPanes>): Promise<void> {
     await CsvEditorProvider.setFrozenPanesForUri(this.context, this.document.uri, change);
     this.currentWebviewPanel?.webview.postMessage({ type: 'frozenPanes', ...this.getCurrentFrozenPanes() });
+  }
+
+  public updateDocumentReference(document: vscode.TextDocument): void {
+    if (document.uri.toString() === this.document.uri.toString()) {
+      this.pendingDocumentReference = {
+        document,
+        separator: this.pendingDocumentReference?.separator ?? this.renderedSeparator ?? this.getSeparator()
+      };
+      this.requestViewCommit();
+    }
   }
 
   public getDocumentUri(): vscode.Uri {
@@ -533,13 +657,16 @@ class CsvEditorController {
   // ───────────── Document Editing Methods ─────────────
 
   private async updateDocument(row: number, col: number, value: string) {
+    // The old document may be closed during a language change. Apply its final
+    // draft to the live shared URI using the delimiter of the still-visible grid.
+    const document = this.pendingDocumentReference?.document ?? this.document;
     this.isUpdatingDocument = true;
     let structuralChange = false;
     let filterMembershipChanged = false;
     let applied = false;
     try {
       const separator = this.getSeparator();
-      const oldText = this.document.getText();
+      const oldText = document.getText();
       const result = Papa.parse(oldText, { dynamicTyping: false, delimiter: separator });
       const data = result.data as string[][];
       const hadRows = data.length;
@@ -579,11 +706,11 @@ class CsvEditorController {
 
       const fullRange = new vscode.Range(
         0, 0,
-        this.document.lineCount,
-        this.document.lineCount ? this.document.lineAt(this.document.lineCount - 1).text.length : 0
+        document.lineCount,
+        document.lineCount ? document.lineAt(document.lineCount - 1).text.length : 0
       );
       const edit = new vscode.WorkspaceEdit();
-      edit.replace(this.document.uri, fullRange, newCsvText);
+      edit.replace(document.uri, fullRange, newCsvText);
       applied = await vscode.workspace.applyEdit(edit);
     } finally {
       this.isUpdatingDocument = false;
@@ -594,7 +721,7 @@ class CsvEditorController {
     }
 
     console.log(`CSV: Updated row ${row + 1}, column ${col + 1}`);
-    const config = vscode.workspace.getConfiguration('csv', this.document.uri);
+    const config = vscode.workspace.getConfiguration('csv', document.uri);
     const clickableLinks = config.get<boolean>('clickableLinks', true);
     const rendered = this.formatCellContent(value ?? '', clickableLinks);
     this.currentWebviewPanel?.webview.postMessage({ type: 'updateCell', row, col, value, rendered });
@@ -602,7 +729,7 @@ class CsvEditorController {
     // Trigger a full re-render if structure may have changed (new row/col created)
     if (filterMembershipChanged) {
       this.refreshViewSafely();
-    } else if (structuralChange) {
+    } else if (structuralChange && !this.pendingDocumentReference) {
       try { this.updateWebviewContent(); } catch (e) { console.error('CSV: refresh failed after structural edit', e); }
     }
   }
@@ -1111,6 +1238,13 @@ class CsvEditorController {
   private async handleSave() {
     this.isSaving = true;
     try {
+      if (this.document.uri.scheme === 'untitled') {
+        // Native Save owns the actual Save As transition. The temporary grid
+        // closes when VS Code closes the original untitled document.
+        await vscode.window.showTextDocument(this.document, { viewColumn: this.currentWebviewPanel?.viewColumn, preview: false });
+        await vscode.commands.executeCommand('workbench.action.files.save');
+        return;
+      }
       const success = await this.document.save();
       console.log(success ? 'CSV: Document saved' : 'CSV: Failed to save document');
     } catch (error) {
@@ -1546,12 +1680,13 @@ class CsvEditorController {
   // ───────────── Webview Rendering ─────────────
 
   private updateWebviewContent() {
-    if (!this.currentWebviewPanel) return;
+    if (!this.currentWebviewPanel || this.viewCommitRequested || this.pendingDocumentReference) return;
 
     const webview = this.currentWebviewPanel.webview;
     const config = vscode.workspace.getConfiguration('csv', this.document.uri);
     const addSerialIndex = CsvEditorProvider.getSerialIndexForUri(this.context, this.document.uri);
     const separator = this.getSeparator();
+    this.renderedSeparator = separator;
     const hiddenRows = this.getHiddenRows();
 
     let parsed;
@@ -2215,6 +2350,9 @@ class CsvEditorController {
   }
 
   private getSeparator(): string {
+    if (this.pendingDocumentReference) {
+      return this.pendingDocumentReference.separator;
+    }
     const stored = CsvEditorProvider.getSeparatorForUri(this.context, this.document.uri);
     if (stored && stored.length) return stored;
 
@@ -2229,7 +2367,9 @@ class CsvEditorController {
       return this.separatorCache.separator;
     }
 
-    const filePath = this.document?.uri.fsPath || this.document?.uri.path || '';
+    const filePath = this.document.uri.scheme === 'untitled'
+      ? this.document.languageId === 'tsv' ? 'untitled.tsv' : 'untitled.csv'
+      : this.document?.uri.fsPath || this.document?.uri.path || '';
     const text = this.document.getText();
     const separator = CsvEditorProvider.resolveInheritedSeparator(filePath, text, settings);
     this.separatorCache = { version, configKey, separator };

@@ -112,6 +112,8 @@ export function createWebview(options: { state?: any; persistedColumns?: Record<
   });
   (document as any).createElement = (tag: string) => new Element(tag.toUpperCase());
   vm.runInContext(fs.readFileSync(path.join(process.cwd(), 'media', 'main.js'), 'utf8'), context);
+  // Interaction assertions begin after the independent initialization handshake.
+  messages.length = 0;
   const cell = (row: number, col: number, value: string, header = false) => {
     const el = new Element(header ? 'TH' : 'TD');
     el.rect = { left: col * 100, right: (col + 1) * 100, top: row * 30, bottom: (row + 1) * 30, width: 100, height: 30 };

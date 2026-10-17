@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { CsvEditorProvider } from './CsvEditorProvider';
 import { registerCsvCommands } from './commands';
 import { LargeFilePreviewProvider } from './large-file-preview';
+import { registerUntitledCsvEditors } from './untitled-editors';
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('CSV: Extension activated');
@@ -33,6 +34,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (viewType === CsvEditorProvider.viewType) return; // already our editor
             if (viewType === LargeFilePreviewProvider.viewType) { return; }
             if (!uri) return;
+            if (uri.scheme === 'untitled') { return; } // Untitled buffers retain their native owner.
             const fsPath = uri.fsPath?.toLowerCase?.() || '';
             const isCsvLike = fsPath.endsWith('.csv') || fsPath.endsWith('.tsv') || fsPath.endsWith('.tab') || fsPath.endsWith('.psv');
             console.log(`[CSV(enable)]: -> eligible=${isCsvLike}`);
@@ -122,6 +124,7 @@ export function activate(context: vscode.ExtensionContext) {
       { supportsMultipleEditorsPerDocument: false }
     )
   );
+  registerUntitledCsvEditors(context);
 }
 
 export function deactivate() {

@@ -22,6 +22,11 @@ const vscodeStub = {
   ColorThemeKind: { Dark: 1 },
   window: {
     activeColorTheme: { kind: 1 },
+    onDidChangeActiveTextEditor: () => ({ dispose() {} }),
+    showTextDocument: async (document: any) => {
+      activeHarness.sourceReveals.push(document.getText());
+      return { document };
+    },
     showWarningMessage: async (message: string) => {
       activeHarness.warnings.push(message);
       return activeHarness.warningChoice;
@@ -55,14 +60,21 @@ const vscodeStub = {
       if (name === 'workbench.action.editor.changeEncoding') {
         await activeHarness.commandWait;
       }
+      if (name === 'workbench.action.files.save') {
+        activeHarness.nativeSaveCommands.push(name);
+        return activeHarness.document.save();
+      }
     }
   },
   env: { clipboard: { writeText: async (text: string) => { activeHarness.clipboardText = text; }, readText: async () => activeHarness.clipboardText } },
   workspace: {
+    onDidOpenTextDocument: () => ({ dispose() {} }),
+    onDidCloseTextDocument: () => ({ dispose() {} }),
     getConfiguration: (_section: string, resource?: TestUri) => {
       if (activeHarness) { activeHarness.configurationRequests.push(resource); }
       return { get: (key: string, fallback: unknown) => {
         if (key in activeHarness.configuration) { return activeHarness.configuration[key]; }
+        if (key === 'enabled') { return activeHarness?.enabled ?? true; }
         if (key === 'maxFileSizeMB') { return 0; }
         if (key === 'defaultIgnoreRows') { return activeHarness.resourceDefaults[resource?.toString() ?? ''] ?? activeHarness.defaultIgnoreRows; }
         return fallback;
@@ -119,6 +131,11 @@ export async function createEditorHarness(options: {
   hiddenRows?: number;
   defaultIgnoreRows?: number;
   filters?: unknown;
+  untitled?: boolean;
+  fileName?: string;
+  separatorOverride?: string;
+  cancelInitialization?: boolean;
+  closeDuringInitialization?: boolean;
 } = {}) {
   const separator = options.separator ?? ',';
   let text = options.text ?? Papa.unparse(options.rows ?? [['name', 'value'], ['one', 'two']], { delimiter: separator });
@@ -128,12 +145,15 @@ export async function createEditorHarness(options: {
   const viewListeners: Array<(event: unknown) => void> = [];
   const saveListeners: Array<(event: unknown) => void> = [];
   const disposeListeners: Array<() => void> = [];
+  let controller: any;
   const messages: any[] = [];
   const delayedEdits: Array<() => void> = [];
   let deferEdits = false;
-  const uri = new TestUri(`/test/data.${separator === '\t' ? 'tsv' : 'csv'}`, options.remote ? 'vscode-remote' : 'file');
+  const uri = new TestUri(options.fileName ?? `/test/data.${separator === '\t' ? 'tsv' : 'csv'}`, options.untitled ? 'untitled' : options.remote ? 'vscode-remote' : 'file');
   const document = {
     uri,
+    isClosed: false,
+    languageId: separator === '\t' ? 'tsv' : 'csv',
     version: 1,
     getText: () => text,
     get lineCount() { return text.split(/\r\n|\n|\r/).length; },
@@ -156,6 +176,9 @@ export async function createEditorHarness(options: {
     }
   };
   await CsvEditorProvider.setHeaderForUri(context as any, uri as any, options.header ?? true);
+  if (options.separatorOverride) {
+    await CsvEditorProvider.setSeparatorForUri(context as any, uri as any, options.separatorOverride);
+  }
   await CsvEditorProvider.setColumnFiltersForUri(context as any, uri as any, options.filters);
   if (options.hiddenRows !== undefined) {
     await CsvEditorProvider.setHiddenRowsForUri(context as any, uri as any, options.hiddenRows);
@@ -174,7 +197,14 @@ export async function createEditorHarness(options: {
       onDidReceiveMessage: (listener: typeof messageListener) => { messageListener = listener; }
     },
     onDidChangeViewState: (listener: (event: unknown) => void) => { viewListeners.push(listener); },
-    onDidDispose(listener: () => void) { disposeListeners.push(listener); }
+    disposed: false,
+    onDidDispose(listener: () => void) { disposeListeners.push(listener); },
+    dispose() {
+      panel.disposed = true;
+      panel.active = false;
+      panel.visible = false;
+      disposeListeners.forEach(listener => listener());
+    }
   };
   const harness = {
     document, panel, messages, changeListeners, saveListeners,
@@ -195,7 +225,7 @@ export async function createEditorHarness(options: {
     warningChoice: options.warningChoice,
     commandError: undefined as Error | undefined,
     commandWait: undefined as Promise<void> | undefined,
-    dispose() { disposeListeners.forEach(listener => listener()); },
+    dispose() { panel.dispose(); },
     closeResult: true,
     commands: new Map<string, (...args: any[]) => unknown>(),
     executedCommands: [] as Array<{ name: string; args: unknown[] }>,
@@ -211,6 +241,26 @@ export async function createEditorHarness(options: {
     notifications: [] as string[],
     resourceDefaults: {} as Record<string, number>,
     configurationRequests: [] as Array<TestUri | undefined>,
+    enabled: true,
+    sourceReveals: [] as string[],
+    nativeSaveCommands: [] as string[],
+    get controllerCount() { return CsvEditorProvider.editors.length; },
+    get activeController() { return CsvEditorProvider.currentActive; },
+    saveUntitledAfterCommit() { controller.saveUntitledAfterCommit(); },
+    requestViewCommit() { controller.requestViewCommit(); },
+    revealSourceAfterCommit() { harness.enabled = false; controller.revealSourceAfterCommit(); },
+    setEnabled(enabled: boolean) { harness.enabled = enabled; controller.refresh(); },
+    getCurrentSeparator() { return controller.getCurrentSeparator() as string; },
+    rebindDocument(languageId: string) {
+      const replacement = {
+        ...document, languageId,
+        get version() { return document.version; },
+        getText: () => text,
+        get lineCount() { return text.split(/\r\n|\n|\r/).length; }
+      };
+      controller.updateDocumentReference(replacement);
+      return replacement;
+    },
     get diskText() { return diskText; },
     get pendingEdits() { return delayedEdits.length; },
     deferEdits() { deferEdits = true; },
@@ -240,7 +290,15 @@ export async function createEditorHarness(options: {
     rows() { return Papa.parse<string[]>(text, { delimiter: separator }).data; }
   };
   activeHarness = harness;
-  await new CsvEditorProvider(context as any).resolveCustomTextEditor(document as any, panel as any, { isCancellationRequested: false } as any);
+  const token = { isCancellationRequested: false };
+  const initializing = new CsvEditorProvider(context as any).resolveCustomTextEditor(document as any, panel as any, token as any);
+  if (options.cancelInitialization || options.closeDuringInitialization) {
+    token.isCancellationRequested = !!options.cancelInitialization;
+    document.isClosed = !!options.closeDuringInitialization;
+    panel.dispose();
+  }
+  await initializing;
+  controller = CsvEditorProvider.currentActive;
   return harness;
 }
 

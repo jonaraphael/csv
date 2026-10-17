@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { CsvEditorProvider } from './CsvEditorProvider';
+import { getActiveUntitledCsvEditor, isUntitledCsv, openUntitledCsvEditor } from './untitled-editors';
 
 const switchingTabs = new Set<string>();
 const supportedExtensions = new Set(['.csv', '.tsv', '.tab', '.psv']);
@@ -13,6 +14,16 @@ function getInputUri(input: unknown, viewType: string): vscode.Uri | undefined {
 }
 
 export async function toggleCsvEditor(): Promise<void> {
+  const untitled = getActiveUntitledCsvEditor();
+  if (untitled) {
+    await vscode.window.showTextDocument(untitled.document, { viewColumn: untitled.panel.viewColumn, preview: false });
+    return;
+  }
+  const activeDocument = vscode.window.activeTextEditor?.document;
+  if (activeDocument && isUntitledCsv(activeDocument)) {
+    await openUntitledCsvEditor(activeDocument, vscode.window.activeTextEditor?.viewColumn);
+    return;
+  }
   const group = vscode.window.tabGroups.activeTabGroup;
   const tab = group.activeTab;
   if (!tab) {

@@ -110,6 +110,8 @@ function createWebview() {
   });
   (document as any).createElement = (tag: string) => new Element(tag.toUpperCase());
   vm.runInContext(fs.readFileSync(path.join(process.cwd(), 'media', 'main.js'), 'utf8'), context);
+  // Interaction assertions begin after the independent initialization handshake.
+  messages.length = 0;
   const cell = (row: number, col: number, value: string, header = false) => {
     const el = new Element(header ? 'TH' : 'TD');
     el.setAttribute('data-row', String(row));

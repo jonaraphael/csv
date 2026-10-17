@@ -5,14 +5,15 @@ import { describe, it } from 'node:test';
 const commands = new Map<string, () => Promise<void>>();
 let input: string | undefined;
 let prompt: any;
+const configurationListeners: Array<(event: any) => void> = [];
 let changedConfiguration: (event: any) => void;
 const originalRequire = Module.prototype.require;
 Module.prototype.require = function (id: string) {
   if (id === 'vscode') {
     return {
       commands: { registerCommand: (name: string, callback: () => Promise<void>) => { commands.set(name, callback); return { dispose() {} }; } },
-      window: { showInputBox: async (options: any) => { prompt = options; return input; }, showInformationMessage() {}, registerCustomEditorProvider: () => ({ dispose() {} }) },
-      workspace: { getConfiguration: () => ({ get: (key: string, fallback: any) => key === 'defaultIgnoreRows' ? 7 : fallback }), onDidChangeConfiguration: (listener: any) => { changedConfiguration = listener; return { dispose() {} }; } }
+      window: { onDidChangeActiveTextEditor: () => ({ dispose() {} }), showInputBox: async (options: any) => { prompt = options; return input; }, showInformationMessage() {}, registerCustomEditorProvider: () => ({ dispose() {} }) },
+      workspace: { textDocuments: [], onDidOpenTextDocument: () => ({ dispose() {} }), onDidCloseTextDocument: () => ({ dispose() {} }), getConfiguration: () => ({ get: (key: string, fallback: any) => key === 'defaultIgnoreRows' ? 7 : fallback }), onDidChangeConfiguration: (listener: any) => { configurationListeners.push(listener); changedConfiguration = event => configurationListeners.forEach(callback => callback(event)); return { dispose() {} }; } }
     };
   }
   return originalRequire.apply(this, arguments as any);

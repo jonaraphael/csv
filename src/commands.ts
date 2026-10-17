@@ -4,6 +4,7 @@ import { CsvEditorProvider } from './CsvEditorProvider';
 import { openLargeFilePreview } from './large-file-preview';
 import { toggleCsvEditor } from './editor-switch';
 import { compareFilesAsTable } from './table-comparison';
+import { saveActiveUntitledCsvEditor } from './untitled-editors';
 
 function displaySeparator(separator: string): string {
   return separator === '\t' ? '\\t' : separator;
@@ -46,6 +47,7 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('csv.openLargeFilePreview', openLargeFilePreview),
     vscode.commands.registerCommand('csv.toggleEditor', toggleCsvEditor),
     vscode.commands.registerCommand('csv.compareFilesAsTable', (resource?: vscode.Uri, selected?: vscode.Uri[]) => compareFilesAsTable(context, resource, selected)),
+    vscode.commands.registerCommand('csv.saveUntitled', saveActiveUntitledCsvEditor),
     vscode.commands.registerCommand('csv.toggleExtension', () =>
       toggleBooleanConfig('enabled', true, 'CSV extension')
     ),
@@ -157,6 +159,11 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
       const active = CsvEditorProvider.getActiveProvider();
       const uri = requestedUri instanceof vscode.Uri ? requestedUri : active?.getDocumentUri();
       if (!uri) { vscode.window.showInformationMessage('Open a CSV/TSV/PSV file in the CSV editor.'); return; }
+      if (uri.scheme === 'untitled') {
+        vscode.window.showInformationMessage('Save this document before changing its file encoding.');
+        return;
+      }
+
 
       // Close any existing tabs for this URI so we can reuse the slot cleanly
       try {
