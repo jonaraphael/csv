@@ -142,6 +142,8 @@ describe('Full-source filtered view operations', () => {
       const status = view.window.document.getElementById('filterStatus');
       status.getBoundingClientRect = () => ({ height: 20 });
       for (const row of Array.from(view.window.document.querySelectorAll('tr')) as any[]) { row.getBoundingClientRect = () => ({ height: 30 }); }
+      // JSDOM drops border shorthand containing a CSS variable; model the browser's 1px border.
+      view.window.document.querySelector('th, td').style.borderTopWidth = '1px';
       view.window.csvFrozenPanes.layout();
       assert.strictEqual(view.cell(0, 0).style.top, '19.5px');
       assert.strictEqual(view.cell(1, 0).style.top, '49.5px');
