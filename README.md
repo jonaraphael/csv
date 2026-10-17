@@ -1,274 +1,193 @@
-# **CSV**
+# CSV
 
-Experience a whole new way to work with CSV files right inside VS Code. CSV transforms your CSV files into an interactive, spreadsheet-like experience—making it effortless to view, edit, and navigate your data with precision and speed.
+View and edit `.csv`, `.tsv`, `.tab`, and `.psv` files as tables in VS Code. CSV supports multiline cells, selection and clipboard operations, column filters, frozen panes, and a text-view switch for working with the underlying file.
 
----
+Actual CSV table webview with example data, captured in Chromium.
 
-## Screenshots
+![CSV table in a dark theme](images/marketplace-dark.png)
+![CSV table in a light theme](images/marketplace-light.png)
 
-![Dark Theme Screenshot](images/Screenshot_dark.png)
-![Light Theme Screenshot](images/Screenshot_light.png)
+## Open and edit a file
 
----
+Install **CSV** by **ReprEng** from the Extensions view, then open a supported file. CSV opens it as a table unless your editor associations select another editor. The default separators are comma for `.csv`, tab for `.tsv` and `.tab`, and pipe for `.psv`.
 
-## Why CSV?
+1. Click a cell to select it. Type to start a quick edit, or press Enter or double-click for detail editing.
+2. Press Enter or Tab, click outside the cell, or move focus away to commit its text to the VS Code document. In quick edit, arrow keys also commit and move to the adjacent cell. In detail edit, arrows move the text caret; Shift+Enter inserts a line break.
+3. Press Ctrl/Cmd+S to commit the active cell and save the document. Committing a cell alone does **not** write the file to disk; VS Code's autosave can save committed document changes if enabled.
 
-Working with CSV files shouldn’t be a chore. With CSV, you get:
+Escape cancels the active cell draft. If VS Code rejects an edit, its draft stays available: retry it or press Escape to discard it before structural operations, switching views, or disabling the table. Changes remain unsaved until a save succeeds.
 
-- **Direct In-Place Editing:** Click on any cell to edit its content seamlessly. Your changes can be saved immediately to the CSV file, ensuring data integrity without extra steps.
-- **Smart Column Sizing & Dynamic Color Coding:** Columns automatically adjust to fit content while being visually distinguished by data type. Whether it’s boolean, date, integer, float, or text, each column gets its own adaptive color that adjusts for light and dark themes.
-- **Sticky Headers & Fluid Navigation:** Keep your header row always visible as you scroll. Effortlessly move through cells using intuitive keyboard shortcuts like `Tab`, `Shift + Tab`, and arrow keys—just like a full-featured spreadsheet.
-- **Efficient Multi-Cell Selection & Clipboard Integration:** Select a range of cells with click-and-drag and copy them as well-formatted CSV data using `Ctrl/Cmd + C`.
-- **Clipboard Actions:** Use Ctrl/Cmd + C or X, or right-click a selection and choose Copy or Cut, to copy properly quoted data to the system clipboard. Right-click Paste inserts clipboard data into the grid. Ordinary cell text is copied without surrounding quotes, even beside values that need escaping. The extra append row is never copied; real empty cells are preserved. CSV escaping still preserves separators, line breaks, literal quotes, surrounding whitespace, and empty cells. Clipboard shortcuts in Find, Replace, and cell text edits keep their normal text-editing behavior.
-- **Grid Paste Support:** Paste copied ranges directly into the selected cell/range with `Ctrl/Cmd + V` in selection mode.
-- **Robust Data Handling:** Leveraging the power of [Papa Parse](https://www.papaparse.com/), the extension handles complex CSV structures, special characters, and various data types gracefully.
-- **Theme-Optimized Interface:** CSV adapts to light, dark, and high-contrast themes. High-contrast themes add clear borders, selection and Find outlines, and theme-aware menus and Find/Replace controls. Cell colors keep the selected datatype palette or explicit theme-foreground mode in every theme.
+An empty file can be edited immediately. The extra bottom row is an append affordance; entering a value creates source data, while leaving it empty does not. Disable `csv.showTrailingEmptyRow` to hide it.
 
----
+CSV declares support for VS Code **1.70 or later**. Saved-file table/text replacement requires **1.100** for clean documents and **1.120** for documents with unsaved changes. Older hosts show update guidance for that action.
 
-## Features
+## Select, copy, paste, and arrange data
 
-- **Interactive Editing:** Two modes — type to start a quick edit, or press Enter/double‑click for detail edit. Changes commit to the document when focus leaves the cell or CSV view; unsaved changes remain visible when you switch tabs. If a cell edit fails, retry it or press Escape to discard its draft before changing or disabling the table view.
-- **Table/Text Switching:** Use the switch action in the editor toolbar or `CSV: Switch Between Table and Text` in the Command Palette to move between views while retaining unsaved edits. The target opens before the original view is replaced, so one representation remains in that editor group. An active cell commits before switching, and unsaved document edits remain unsaved. Other tabs and groups are unaffected. A table already open for this file in another group must be switched from that group. For a saved local file, choosing Text also remembers a reversible file-path editor association, so Find in Files continues to open that file in text while CSV stays enabled. The choice survives a window restart and an extension Off/On cycle; a successful switch back to Table restores only that owned association. Other files continue to open as tables. File patterns follow VS Code’s case-insensitive matching. Remote/virtual URIs whose authority cannot be isolated still switch views, with guidance to turn CSV off before using Find in Files; longer user associations are preserved and reported if they prevent native routing. Searching a file that is still in table mode is outside this text-mode handoff. The table view requires `csv.enabled`. This action requires VS Code 1.100 or newer for clean documents and 1.120 or newer for unsaved documents; older hosts show update guidance. Existing extension features continue to support the declared VS Code minimum.
-- **Smart Resizing:** Automatic widths follow the longest line in multiline cells. Drag close to a column boundary to resize; the narrow grab area leaves small columns selectable. Widths are remembered per file across closing and reopening. Double-click a column boundary to restore automatic sizing. Resizing also works with the header row hidden.
-- **Dynamic Color Coding:** Visual cues based on data type help you quickly identify numbers, dates, booleans, and more (with opt‑in cool palette and theme-foreground mode settings).
-- **Serial Index Column:** Right-click a serial index cell or its top-left corner and choose **Hide serial index column** for that file. Restore it with **CSV: Toggle Serial Index Column** in the Command Palette.
-- **Sticky Headers:** Keep column titles in view as you scroll through large datasets. Right-click a cell in the first visible row and choose **Use first row as header** or **Treat first row as data** to toggle the header for that file. With leading metadata rows hidden, this applies to the first visible row; the CSV contents stay unchanged.
-- **Frozen Rows and Columns:** Keep any number of leading visible rows and data columns in view. Right-click a cell to freeze through its row/column or unfreeze; counts are remembered per file. Frozen rows use measured heights, including multiline cells and zoom, and paint divider-colored edges on every frozen row so scrolling text cannot show through the seams. The serial index stays visible alongside frozen data columns.
-- **Enhanced Keyboard Navigation:** Navigate cells with arrows and Tab/Shift+Tab; quick edits can commit with arrow keys; `Ctrl/Cmd + A` selects all; `Ctrl/Cmd + C` copies selection.
-- **Advanced Multi-Cell Selection:** Easily select and copy blocks of data, then paste them elsewhere as properly formatted CSV.
-- **Add/Delete Columns:** Right-click any cell to add a column left or right, or remove the selected column.
-- **Add/Delete Rows:** Insert above/below or remove the selected row via context menu. Menus open toward available space and remain scrollable in small editor panes.
-- **Untitled CSV/TSV:** Choose CSV or TSV language mode in a new untitled text document to open its table without saving first. Separator, header, serial-index, and hidden-row commands work in this view; save the document before changing file encoding. Switching from the untitled table to text commits its live cell, reveals the same native document, and closes the temporary table. Switching back creates a table against that document. Unlike saved-file view replacement, opening an untitled table retains its native source tab because it owns the unsaved document. Use the table’s **Save Untitled Document As…** action or **Ctrl/Cmd+S** in either selection or cell-edit mode. This commits the active cell, reveals the source, and uses VS Code’s normal Save As flow; the temporary table closes when the untitled document becomes a saved file. VS Code’s native File > Save and Save command cannot target a standalone table panel; switch to the source before using those native actions. Changing CSV/TSV language mode preserves pending edits before rebuilding the table.
-- **Edit Empty CSVs:** Create or open an empty CSV file and start typing immediately.
-- **Column Sorting:** Right-click a header and choose A–Z or Z–A. With filters active, sorting rearranges matching rows within their source positions and leaves hidden rows in place.
-- **Column Filters:** Right-click a column and choose **Filter this column** at the top of the menu to add a condition to the filter details row. Choose its column and operator and type a value there; matching rows update as you type. **Add filter** and repeated right-clicks add more conditions, including multiple conditions on the same column; every condition combines with AND. Remove a condition individually or use **Clear all filters**. Every column offers Contains, Does Not Contain, Regular Expression, Equals, Does Not Equal, Is Empty and Is Not Empty. Number and date columns also offer >, >=, < and <= comparisons. Operator choices use the inferred type from the original body rows, excluding headers and hidden metadata; other filters do not change it. A text column whose nonblank cells all contain supported dates also offers date comparisons, without changing column colors. Filtering searches the full file, retains source row numbers and remembers valid conditions per file.
-- **Custom Font Controls:** Choose a font family and optional font-size override, or inherit VS Code defaults.
-- **In-View Zoom:** Use `Ctrl/Cmd + Mouse Wheel` or `Ctrl/Cmd + +/-/0` to zoom the CSV view without changing global editor zoom.
-- **Find & Replace Overlay:** Built-in find/replace bar with match options (case, whole-word, regex), keyboard navigation, and single/all replace actions across the full file (including chunked rows), or the matching rows while column filters are active.
-- **Multiline Cell Display:** Cells with embedded newlines render as wrapped multi-line content (with preserved line breaks and matching row height).
-- **Clickable Links:** URLs in cells are automatically detected and displayed as clickable links. Ctrl/Cmd+click to open them in your browser.
-- **Preserved CSV Integrity:** Cell edits, expanding grid pastes, and row/column moves preserve existing field quoting and line endings. Appended values follow the existing column quote style when the column uses one consistently.
-- **Optimized for Performance:** Designed for medium-sized datasets, ensuring a smooth editing experience without compromising on functionality.
-- **Large File Support:** The editable view chunks table rendering; an optional read-only preview bounds source reading and displays one page at a time.
-- **CSV/TSV/TAB/PSV Support:** `.csv`, `.tsv`, `.tab`, and `.psv` files are recognized automatically. Defaults: comma for CSV, tab for TSV/TAB, pipe for PSV.
+Selection is visible as soon as you press the mouse button. Drag or Shift+click to select a range. Click a header to select its column; a second separate click on the same header selects only the header cell. Double-click edits the header. Click the serial index to select a row, or the top-left corner to select the table. Shift+click extends whole-row or whole-column selections.
 
----
+Use Ctrl/Cmd+C or X, or the selection's right-click **Copy** or **Cut** action. Clipboard data uses the active separator and quotes each value only when needed, preserving separators, line breaks, literal quotes, surrounding whitespace, and real empty cells. The serial index and extra append row are excluded. Selecting only the append row leaves the clipboard unchanged. Clipboard shortcuts inside cell edits, Find, Replace, and filter inputs keep their normal text-editing behavior.
 
-## Compatibility
+Paste with Ctrl/Cmd+V in selection mode or the right-click **Paste** action. A single value fills a selected rectangle; a copied matrix starts at the selection. With filters active, copying, cutting, filling, and matrix paste use matching source rows. Additional pasted rows append at the physical end of the file. Nonmatching rows stay intact, and saving includes the full file.
 
-This extension is built for VS Code **1.70.0** and later. It has been tested with
-Cursor (built on VS Code 1.99) and the latest VS Code releases (1.102).
+Right-click cells to insert or delete rows and columns. Multi-selection actions use the selected count. Drag selected headers or row indices to reorder a column/row or selected group. Right-click a header to sort ascending or descending; with filters active, sorting rearranges matching rows within their source positions and leaves hidden rows in place. These operations change the document and require saving like other edits. Unchanged field quoting and existing line endings are preserved; new values follow a consistent existing column quote style where available.
 
-## Getting Started
+Context menus open toward the available space, flip above or left when needed, and scroll in small panes. Resizing the editor or changing CSV zoom dismisses an open menu.
 
-### 1. Install the Extension
+## Headers, metadata rows, widths, and frozen panes
 
-- Open Visual Studio Code.
-- Go to the Extensions view (`Ctrl+Shift+X` or `Cmd+Shift+X` on macOS).
-- Search for **CSV** and click **Install**.
+- **Header:** Right-click a cell in the first visible source row and choose **Use first row as header** or **Treat first row as data**. Hidden leading metadata is skipped; filtering does not promote an arbitrary matching row to the header. The Command Palette also provides **CSV: Toggle First Row as Header**.
+- **Serial index:** Right-click an index cell or its top-left corner and choose **Hide serial index column**. Restore it with **CSV: Toggle Serial Index Column**. The numbers identify source rows and can have gaps while filtering.
+- **Metadata:** **CSV: Hide First N Rows** hides leading records without deleting them. Blank input inherits `csv.defaultIgnoreRows`; an explicit `0` shows them even if the configured default is nonzero.
+- **Widths:** Automatic column widths account for the longest line in multiline cells. Drag close to a column boundary to resize, including with headers off. Double-click the boundary to restore automatic sizing. Manual widths are remembered per file; narrow columns retain a selectable center. Drag the bottom edge of a serial-index cell to adjust its row height.
+- **Frozen panes:** Right-click to freeze through a visible row or data column, or use **CSV: Freeze Leading Rows/Columns**. Enter `0` to unfreeze an axis. Counts are remembered per file. By default, the header stays frozen; with headers off, no rows freeze until requested. Hidden metadata and the append row do not count. Frozen rows follow measured multiline/zoomed heights and paint their divider seams; the serial index stays alongside frozen data columns.
 
-### 2. Open a CSV, TSV, TAB, or PSV File
+Header, serial-index, separator, hidden-row, manual-width, and frozen-pane preferences do not change CSV contents and are stored per file URI in VS Code workspace state. Scroll, selection, row heights, and zoom use webview state. Column colors follow the selected datatype palette (`default`, `cool`, or `warm`) or the theme foreground mode. Light, dark, and high-contrast themes retain that choice. CSV's zoom changes the table's text size independently of global editor zoom.
 
-- Open any `.csv`, `.tsv`, `.tab`, or `.psv` file in VS Code.
-- The file will automatically load, presenting your data in an interactive grid view.
+## Live column filters
 
-### 3. Edit and Navigate
+Right-click a data column and choose **Filter this column** to add a condition above the table. Choose a column and operator, then type a value; results update as you type without replacing the focused input. **Add filter** and repeated context actions add conditions, including multiple conditions on the same column. All conditions combine with **AND**. Remove one condition or use **Clear all filters** to remove them all.
 
-- **Edit Modes:**
-  - Quick edit: start typing any character to edit the selected cell immediately. Press any Arrow key to save and move the selection to the next cell in that direction.
-  - Detail edit: press `Enter` on a selected cell or double‑click to enter a focused edit. Arrow Left/Right move the text caret; Arrow Up goes to start; Arrow Down goes to end. Click outside the cell (or blur) to save.
-- **Keyboard Navigation:** Use Arrow keys to move between cells when not editing. Use `Tab`/`Shift+Tab` to move horizontally (wrapping across rows as needed). Holding an arrow keeps the active cell in view; with `Shift`, the viewport follows the moving end of the selection.
-- **Multi-Cell Selection:** Cells show their selected color as soon as you press the mouse button. Drag or use `Shift + Click` to select multiple cells, then copy them as CSV using `Ctrl/Cmd + C`. Click a header once to select its column; a second separate click on the same header selects only that header cell. Double-click edits the header. Drag an already selected header to reorder its column or selected column group.
-- **Find & Replace:** Press `Ctrl/Cmd + F` to open Find, or `Ctrl/Cmd + H` to open Find + Replace. Add `Shift` to use VS Code’s native Find/Replace in Files; shortcuts with `Alt` also stay outside the table overlay. With filters active, Find and Replace All operate on the visible filtered table (including its header); hidden metadata and nonmatching rows are excluded.
+![Two live column conditions combined with AND](images/marketplace-filters.png)
 
-Filter comparisons use the column's inferred type. Text matching ignores case. Numbers compare finite decimal/scientific values, including consistently grouped thousands. Boolean equality accepts `true/false`, `t/f`, `yes/no`, `y/n`, `on/off` and `1/0`. Date queries accept explicit numeric dates and English month names, optional times and timezone offsets; date-only or timezone-less values use UTC. Ambiguous numeric dates default to month/day/year (`03/04/2026` means March 4); a leading day above 12 is unambiguous (`13/04/2026` means April 13). Use an ISO date or an explicit month name to avoid ambiguity. Supported timestamps compare exactly, including sub-millisecond fractional seconds. Blank or invalid cell values do not match typed comparisons, including Does Not Equal; use Is Empty to find empty cells. Incomplete or invalid values show an inline error and retain the last valid results until corrected. A blank value leaves that draft condition inactive; Is Empty and Is Not Empty apply without a value. Filter controls retain focus while results update.
+Every column offers Contains, Does Not Contain, Regular Expression, Equals, Does Not Equal, Is Empty, and Is Not Empty. Number and date columns also offer `>`, `>=`, `<`, and `<=`. Types are inferred from the original body rows, excluding the effective header and hidden metadata, before any filters apply. A text column whose nonblank cells all parse as supported dates also offers date comparisons without changing its column colors.
 
-Regular Expression uses [RE2 syntax](https://github.com/google/re2/wiki/Syntax). Plain patterns ignore case; `/pattern/flags` accepts `i`, `m` and `s`, and explicit flags override that default (`/pattern/` is case-sensitive). Lookaround and backreferences are unsupported and rejected by input validation.
+- Text comparisons ignore case. Numbers accept finite decimal/scientific values and consistent thousands grouping, and compare without rounding away significant digits.
+- Boolean equality accepts `true/false`, `t/f`, `yes/no`, `y/n`, `on/off`, and `1/0`.
+- Dates accept ISO/year-first forms, numeric dates with four-digit years, and English month names, with optional times and timezone offsets. Unzoned values use UTC. Ambiguous numeric dates use month/day/year: `03/04/2026` means March 4; `13/04/2026` is unambiguously April 13. Use ISO dates or month names to avoid ambiguity. Supported timestamps compare exactly, including sub-millisecond fractions.
+- Regular Expression uses [RE2 syntax](https://github.com/google/re2/wiki/Syntax). Plain patterns ignore case; `/pattern/flags` supports `i`, `m`, and `s`. An explicit empty flag list (`/pattern/`) is case-sensitive. Lookaround and backreferences are unsupported.
 
----
+A zero-length value leaves a draft condition inactive, except Is Empty/Is Not Empty, which need no value. Literal spaces are valid text searches. Invalid or incomplete values show an inline error and retain the last valid results. Blank or invalid cell values do not match typed comparisons, including Does Not Equal; use Is Empty for empty cells. Incomplete IME text is not applied automatically after a view refresh.
 
-## Commands
+Filtering scans the full editable document, retains source row identities, and does not delete source rows. Valid conditions are remembered per file and can contain sensitive data; see [Privacy and data handling](PRIVACY.md). Blank or invalid drafts are not persisted.
 
-Open the Command Palette and search for:
+## Find, native search, and text view
 
-- `CSV: Switch Between Table and Text` (`csv.toggleEditor`)
-- `CSV: Toggle Extension On/Off` (`csv.toggleExtension`)
-- `CSV: Open Large File Preview (Read-only)` (`csv.openLargeFilePreview`)
-- `CSV: Compare Files as Table` (`csv.compareFilesAsTable`)
-- `CSV: Toggle First Row as Header` (`csv.toggleHeader`)
-- `CSV: Freeze Leading Rows` (`csv.changeFrozenRows`)
-- `CSV: Freeze Leading Columns` (`csv.changeFrozenColumns`)
-- `CSV: Toggle Serial Index Column` (`csv.toggleSerialIndex`)
-- `CSV: Change CSV Separator` (`csv.changeSeparator`)
-- `CSV: Reset CSV Separator (Inherit)` (`csv.resetSeparator`)
-- `CSV: Change Font Family` (`csv.changeFontFamily`)
-- `CSV: Hide First N Rows` (`csv.changeIgnoreRows`)
-- `CSV: Change File Encoding` (`csv.changeEncoding`)
-- `CSV: Toggle Clickable Links` (`csv.toggleClickableLinks`)
-  
+Ctrl/Cmd+F opens table Find; Ctrl/Cmd+H opens Find and Replace. Match case, whole-word, regular expression, selection-only search, and single/all replacement are available. Table Find includes later chunks. With filters active, Find and Replace All use matching displayed rows and the header; hidden metadata and nonmatching rows are excluded.
 
-## Settings
+Ctrl/Cmd+Shift+F and Ctrl/Cmd+Shift+H remain VS Code's native Find/Replace in Files shortcuts. Alt-modified variants also stay outside the table overlay.
 
-Global (Settings UI or `settings.json`):
+Use the toolbar switch or **CSV: Switch Between Table and Text** to edit the same document as source text. For saved files, the target opens before the source view is replaced, so one representation remains in that editor group. Live cell edits commit first, unsaved changes remain unsaved, and unrelated tabs/groups are retained. If the file already has a table in another group, switch from that group.
 
-- `csv.enabled` (boolean, default `true`): Enable/disable the custom editor. The existing Toggle Extension command honors an explicit workspace value, otherwise it changes the global value. While off, CSV temporarily routes its four file selectors and existing explicit CSV-editor associations to the native text editor, so Find in Files preserves the destination and selection. Re-enabling restores the previous disabled-state associations while retaining files explicitly switched to Text. Other editors, unrelated associations, and intervening user changes are preserved. Routing recovery metadata is stored in VS Code extension state; it contains editor identifiers and patterns, never CSV data. If settings or policy prevent routing, CSV reports the failure instead of claiming the toggle succeeded.
-- `csv.defaultIgnoreRows` (integer, default `0`): Default number of leading metadata rows to hide. Set it globally or for a workspace/folder. `CSV: Hide First N Rows` overrides it per file; enter `0` to show all rows or leave the input blank to reset that file to the configured default. Hidden rows remain in the saved file.
-- `csv.fontFamily` (string, default empty): Override font family; falls back to `editor.fontFamily`.
-- `csv.fontSize` (number, default `0`): Override font size in px; set to `0` to inherit `editor.fontSize`.
-- `csv.mouseWheelZoom` (boolean, default `true`): Enable `Ctrl/Cmd + Mouse Wheel` zooming in the CSV editor.
-- `csv.mouseWheelZoomInvert` (boolean, default `false`): Invert the `Ctrl/Cmd + Mouse Wheel` zoom direction.
-- `csv.cellPadding` (number, default `4`): Vertical cell padding in pixels.
-- `csv.columnColorMode` (string, default `type`): `type` keeps CSV’s type-based column colors; `theme` uses your theme foreground color for all columns.
-- `csv.columnColorPalette` (string, default `default`): Type-color palette when `csv.columnColorMode` is `type`. `cool` biases colors toward greens/blues; `warm` biases colors toward oranges/reds.
-- `csv.diffUseThemeForeground` (boolean, default `true`): In compare/diff views, use theme foreground color so diff highlighting remains readable.
-- `csv.clickableLinks` (boolean, default `true`): Make URLs in cells clickable. Ctrl/Cmd+click to open links.
-- `csv.showTrailingEmptyRow` (boolean, default `true`): Show the extra empty row at the end of the table. Turn this off to hide that visual append row.
-- `csv.separatorMode` (string, default `extension`): Separator selection mode when no per-file override exists. `extension` uses extension mapping, `auto` detects from content first, `default` always uses `csv.defaultSeparator`.
-- `csv.defaultSeparator` (string, default `,`): Fallback separator. Use `\\t` in `settings.json` for tabs.
-- `csv.separatorByExtension` (object): Extension-to-separator mapping (defaults include `.csv`→`,`, `.tsv`/`.tab`→tab, `.psv`→`|`).
-- `csv.maxFileSizeMB` (number, default `10`): Soft limit for opening files in CSV view. If exceeded, CSV prompts: `Cancel`, `Continue This Time`, or `Ignore Forever` (sets this setting to `0`).
-- `csv.largeFilePreviewRows` (integer, default `1000`, range `1`–`10000`): Maximum records per read-only preview page; byte and cell limits can make a page smaller.
-- Per-file encoding: `CSV: Change File Encoding` opens VS Code's encoding picker. Use **Reopen with Encoding** and select the source file's encoding to correct incorrectly displayed characters before editing or saving.
+For a saved local `file:` URI without an authority, query, or fragment, choosing Text also installs a reversible file-path editor association. Native Find in Files can then open that file in text at the selected result while CSV remains enabled. The choice survives restart and Off/On; switching successfully back to Table restores only CSV's owned association. Other files keep their normal editor choice. Intervening user choices are preserved. Patterns use VS Code's case-insensitive matching, so case-distinct paths are not independently isolated. CSV reports longer/conflicting associations or settings restrictions that prevent native routing.
 
-Per-file (stored by the extension; set via commands):
+**Search boundary:** this does not add native search navigation inside a table. A cold search into a file still associated with the table may open the table without revealing the match. Remote/virtual URIs that cannot be isolated by these patterns can switch views, but need CSV turned off for native text search routing. **CSV: Toggle Extension On/Off** temporarily routes CSV's four selectors and explicit CSV associations to native text while off, then restores owned preferences when enabled again. It honors an explicit workspace `csv.enabled` value, otherwise it toggles the global value.
 
-- First row as header (default `true`) — `CSV: Toggle First Row as Header`
-- Serial index column (default `true`) — `CSV: Toggle Serial Index Column`
-- CSV separator override — `CSV: Change CSV Separator` (or clear it with `CSV: Reset CSV Separator (Inherit)`)
-- Hide first N rows (inherits `csv.defaultIgnoreRows`) — `CSV: Hide First N Rows`. An explicit `0` overrides a nonzero default; blank input clears the per-file override.
-- Column filter conditions — edit in the live filter details row; add from its Add filter button or a column’s context menu and remove individually. Conditions, including any entered CSV text, are stored in VS Code workspace state on the extension host (which may be remote). Clear all filters removes the saved conditions for that file. No CSV rows are removed by filtering.
-- Frozen leading visible rows/columns — `CSV: Freeze Leading Rows` / `CSV: Freeze Leading Columns`. Enter `0` to unfreeze that axis. The default keeps the first header row frozen; with headers off, no rows freeze until requested. Hidden metadata rows do not count; the virtual append row is never frozen as a leading row.
+## Untitled CSV and TSV
 
-### File encodings and accented characters
+Choose CSV or TSV language mode in a new untitled text document to open a table before saving. The native text tab remains its unsaved owner. Switching the table to text commits the live cell and closes only the temporary table; switching back recreates a table against that same document. Language changes preserve pending edits before refreshing the table.
 
-CSV displays the Unicode text supplied by VS Code; VS Code controls decoding the file's bytes and encoding saved files. If accents look wrong, run `CSV: Change File Encoding`, choose **Reopen with Encoding**, and select the encoding used by the source. Check the names before saving. Cancelling the unsaved-changes prompt stops the command and preserves your open edits.
+Use the table toolbar's **Save Untitled Document As…** action or Ctrl/Cmd+S in selection or editing mode. CSV commits the active cell, reveals the native owner, and invokes VS Code's normal Save As flow. The temporary table closes when the untitled document becomes a saved file. Cancelling Save As retains the unsaved owner and table. Native **File > Save** cannot directly target a standalone table panel; switch to text before using that native action.
 
-The editor shows a nonmodal warning once per opened document when it contains the replacement character `�`, offering the same encoding command. This character can be legitimate text, so the warning indicates a possible mismatch and does not guess an encoding or change any data. Some incorrect decodings produce other characters instead and will not trigger this warning.
-
-For example, the original attachment in [issue #76](https://github.com/jonaraphael/csv/issues/76) is not valid UTF-8. Explicitly decoding it as **DOS (CP 437)** or **Western European DOS (CP 850)** restores names such as `Knäckebröd` and `Thüringer`; both encodings produce the same text for that particular file, so its bytes do not uniquely identify which one created it. Use the source's documented encoding for other files. Available picker labels depend on your VS Code version.
-
-**Save with Encoding** changes how the current text is written; it cannot restore characters already decoded incorrectly. If a corrupted version was saved, reopen the original source or a backup using the correct encoding first.
-
----
+Separator, header, serial-index, metadata, and filter controls work before saving. File encoding can be changed after saving. Untitled documents are not switched with the saved-file native replacement operation because associated-path untitled buffers require their existing owner.
 
 ## Large File Preview
 
-To inspect a very large saved file without creating a full VS Code text document, right-click a CSV/TSV/TAB/PSV file in Explorer and choose **CSV: Open Large File Preview (Read-only)**. The same command in the Command Palette opens a file picker. Use this direct path before opening the file in an editable tab; switching an already-open large text document to the preview does not undo memory already allocated by VS Code.
+The normal editable view uses a full VS Code text document; chunked rendering does not bound source-memory use. To inspect a very large saved file without first allocating that document, right-click it in Explorer and choose **CSV: Open Large File Preview (Read-only)**, or run that command and pick a file. Opening the preview after an editable tab does not undo memory already allocated by VS Code.
 
-The preview reads the saved bytes in bounded chunks and displays one page at a time. **Next**, **Previous**, and **Back to Start** navigate complete CSV records, including quoted multiline cells. The first record is displayed as data. It has no editing, global search, sorting, or filtering controls, and never writes to the source. Unsaved edits in another editor are not part of the saved-byte preview.
+The preview reads bounded saved-file blocks and displays one page at a time. **Next**, **Previous**, and **Back to Start** navigate complete records, including quoted multiline fields. The first record is data. There is no editing, global search, sorting, or filtering, and unsaved edits in another view are not included.
 
-`csv.largeFilePreviewRows` limits a page to 1–10,000 records (default 1,000). Independent limits cap a page at 512 KiB of source records and 20,000 cells, one record at 256 KiB, and a record at 1,000 columns. Pages may contain fewer records. Oversized or malformed records produce a visible error instead of being truncated. Only the current page and at most 32 page positions are retained; Previous reaches the retained history, and Back to Start always restarts the file. If the file changes between reads, Back to Start reloads it.
+It supports valid **UTF-8**, an optional UTF-8 BOM, a single ASCII separator, and host-local `file:` URIs. It reads directly in the extension host; arbitrary remote filesystem-provider URIs and other encodings are unsupported. Use a per-file separator override or `extension`/`default` separator mode; automatic detection without an override produces an actionable error.
 
-This preview currently supports **valid UTF-8 and host-local `file:` URIs**. It decodes saved bytes directly in the extension host instead of requesting VS Code's decoded TextDocument. A UTF-8 BOM is accepted; other encodings must use the normal editor's encoding workflow. The extension host can be remote; arbitrary remote filesystem providers are unsupported. Separators follow the per-file override or extension/default settings. Automatic separator detection requires an explicit override or a change to `csv.separatorMode`; otherwise the preview shows an actionable error. Normal editable CSV views retain their existing full-document behavior.
+`csv.largeFilePreviewRows` sets a maximum of 1–10,000 records per page (default 1,000). Independent limits are 512 KiB of source records and 20,000 cells per page, 256 KiB per record, and 1,000 columns. Pages may be smaller. Malformed/oversized records produce errors instead of truncated data. Only the current page and up to 32 page positions are retained; **Previous** reaches that retained history. If the saved file changes, use **Back to Start**.
 
-## Compare Files as Table
+## Compare two files as tables
 
-Run **CSV: Compare Files as Table** from an active CSV/text editor and choose the modified file, or select two files in Explorer and use that context-menu command. With no active source file, the command asks for an original and a modified file. Both panes are read-only; edit a source in its normal editor and the comparison refreshes from VS Code's current document text, including unsaved edits and its selected encoding.
+Select two files in Explorer and choose **CSV: Compare Files as Table**, or run the command from an active CSV/text document and select the modified file. With no active source, choose original and modified files. Both panes are read-only and use VS Code's decoded document text, including unsaved edits; editing a source refreshes the comparison.
 
-The comparison aligns unchanged records around inserted/deleted records, highlights changed original cells in red and modified cells in green, and leaves a placeholder where the other side has no record or field. Both scroll axes stay synchronized, and paired rows share their height so quoted multiline values remain aligned. Use **Previous/Next Change** to find differences and **Previous/Next Page** to browse. The first record is displayed as data. It compares parsed values and field presence; quoting and line-ending formatting are not compared.
+The comparison aligns records around insertions/deletions, highlights changed cells, and shows placeholders for missing records or fields. Both scroll axes stay synchronized and paired rows share their height. Use **Previous/Next Change** and **Previous/Next Page**. The first record is data; comparison uses parsed values and field presence, not quoting or line-ending formatting.
 
-There are no new settings. The existing `csv.maxFileSizeMB` limit applies. Independent hard limits are 10 MiB of saved bytes before opening a new input and 5 MiB of decoded text, plus 10,000 records, 100,000 cells, and 1,000 columns per input; individual values are limited to 64 Ki characters and records to 256 Ki characters. Providers that cannot report source size must already have the document open in VS Code; its decoded text is still checked. Larger or malformed inputs show an error without truncating data. Each page contains at most 200 aligned records, 20,000 body cells, and 512 Ki characters. Unique-row anchors and a fixed alignment-work budget keep computation bounded; if a large changed section cannot be aligned within that budget, a visible notice explains that it is paired by position.
+The existing `csv.maxFileSizeMB` limit applies. Hard per-input limits are 10 MiB of saved bytes before a new document opens, 5 MiB of decoded text, 10,000 records, 100,000 cells, and 1,000 columns; values are limited to 64 Ki characters and records to 256 Ki characters. A provider without size information must already have the document open. Pages are capped at 200 aligned records, 20,000 body cells, and 512 Ki characters. Oversized/malformed inputs show errors without truncation. Bounded alignment falls back to positional pairing with a visible notice when necessary.
 
-**Native diff limitation:** this command opens CSV's own table comparison. It does not replace VS Code's native Git/PR comparison. Stable custom-editor APIs do not expose a reliable original/modified URI pair for native comparisons made of two custom webviews, so the native highlighting/scrolling requests in [#67](https://github.com/jonaraphael/csv/issues/67) and [#86](https://github.com/jonaraphael/csv/issues/86) remain limited by that API. The command provides table comparison when the two input URIs are known explicitly. CSV's source stays in the extension-host/webview environment; the comparison does not upload data, write files, or persist cell values in global/workspace state.
+This command is a separate table comparison. It does not provide native Git/PR custom-editor diff navigation; stable APIs do not reliably expose both input URIs for that flow.
 
-## Editing Modes and Shortcuts
+## File encoding
 
-- Quick edit:
-  - Start: type any character (not Enter) on a selected cell.
-  - Save and move: press Arrow Up/Down/Left/Right to save and select the adjacent cell; does not re-enter edit.
-- Detail edit:
-  - Start: press `Enter` on a selected cell or double‑click a cell.
-  - Caret navigation: Arrow Left/Right move one character; Arrow Up moves caret to start; Arrow Down moves caret to end.
-  - New line in cell: `Shift + Enter` inserts a line break inside the current cell.
-  - Exit/save: click outside the cell or move focus to commit changes.
-  - Save the file: `Ctrl/Cmd + S` commits the active cell before saving, including all inserted line breaks.
-- Global:
-  - Copy selection: `Ctrl/Cmd + C`
-  - Paste selection: `Ctrl/Cmd + V` (selection mode). Pasting a single value into a selected rectangle fills that rectangle. With filters active, copying/cutting and filling affect visible selected rows; matrix paste advances through matching rows and appends at the physical end when needed. Nonmatching rows remain intact, and saving always includes the full source file.
-  - Zoom in/out/reset: `Ctrl/Cmd + +`, `Ctrl/Cmd + -`, `Ctrl/Cmd + 0` (also `Ctrl/Cmd + Mouse Wheel`)
-  - Find: `Ctrl/Cmd + F`
-  - Replace: `Ctrl/Cmd + H`
-  - Next/Previous match: `F3` / `Shift + F3` (also `Enter` / `Shift + Enter` in the Find box)
-  - Select all: `Ctrl/Cmd + A`
-  - Jump to an edge: `Ctrl/Cmd + Arrow`. Add `Shift` to extend the current selection from its fixed starting cell; whole-row and whole-column selections retain their shape.
+Editable views use Unicode text decoded by VS Code. Run **CSV: Change File Encoding**, choose **Reopen with Encoding**, and select the original file's encoding to correct incorrectly displayed characters. Check the text before saving. Cancelling the unsaved-changes prompt stops the command without discarding your edits. **Save with Encoding** changes how the current text is written; it cannot repair characters already decoded incorrectly. Use the original file or a backup if a corrupted version was saved.
 
----
+A nonmodal warning appears once per opened document containing the replacement character `�`, offering the encoding action. This is a possible decoding mismatch, not automatic encoding detection: `�` can be legitimate text, and other incorrect decodings may not produce it. CSV does not guess, transcode, or repair bytes automatically. The read-only preview's UTF-8 restriction is separate from this editable-view workflow.
 
-## Release Notes
+## Commands
 
-### v1.4.1 (Unreleased)
+Run these from the Command Palette. Commands that change a view preference target the active CSV table unless noted.
 
-- Keep Find in Files destinations in text after explicitly switching a saved local file from Table to Text, while retaining automatic tables for other files.
-- Retain that Text choice across restarts and extension Off/On; restore the prior file association after a successful return to Table.
+| Command | Purpose |
+| --- | --- |
+| **CSV: Switch Between Table and Text** (`csv.toggleEditor`) | Switch the active supported table/text view. |
+| **CSV: Save Untitled Document As…** (`csv.saveUntitled`) | Commit and save the active untitled table through the native owner. |
+| **CSV: Toggle Extension On/Off** (`csv.toggleExtension`) | Enable/disable CSV and synchronize native editor routing. |
+| **CSV: Toggle First Row as Header** (`csv.toggleHeader`) | Change the file's header preference. |
+| **CSV: Toggle Serial Index Column** (`csv.toggleSerialIndex`) | Show/hide the file's serial index. |
+| **CSV: Change CSV Separator** (`csv.changeSeparator`) | Override the separator; blank input inherits configured rules. Enter `\t` for tab. |
+| **CSV: Reset CSV Separator (Inherit)** (`csv.resetSeparator`) | Clear the file's separator override. |
+| **CSV: Hide First N Rows** (`csv.changeIgnoreRows`) | Override the metadata-row count; blank input inherits the default. |
+| **CSV: Freeze Leading Rows** (`csv.changeFrozenRows`) | Set the number of leading visible rows to freeze; `0` unfreezes. |
+| **CSV: Freeze Leading Columns** (`csv.changeFrozenColumns`) | Set leading data columns to freeze; `0` unfreezes. |
+| **CSV: Change File Encoding** (`csv.changeEncoding`) | Open VS Code's encoding picker for a saved file. |
+| **CSV: Change Font Family** (`csv.changeFontFamily`) | Pick an extension-host font or inherit `editor.fontFamily`. |
+| **CSV: Toggle Clickable Links** (`csv.toggleClickableLinks`) | Toggle link interaction globally. |
+| **CSV: Open Large File Preview (Read-only)** (`csv.openLargeFilePreview`) | Open a saved host-local file in the bounded preview. |
+| **CSV: Compare Files as Table** (`csv.compareFilesAsTable`) | Choose two source files for read-only table comparison. |
 
-### v1.4.0 (Unreleased)
+## Settings
 
-Integration candidate; final contents remain subject to review.
+All settings are under `csv.*` in VS Code Settings or `settings.json`. Font and mouse-wheel zoom settings are application-scoped. Per-file commands override the relevant inherited view defaults.
 
-- Add column filters, frozen rows/columns, a configurable hidden-row default, and a bounded read-only large-file preview.
-- Add table/text switching, untitled CSV/TSV editing, and explicit read-only table comparison.
-- Improve edit/save integrity, clipboard behavior, source-format preservation, column resizing, and encoding guidance.
-- Document privacy and data handling. See `CHANGELOG.md` for details.
+| Setting | Default | Behavior |
+| --- | --- | --- |
+| `csv.enabled` | `true` | Enable the custom editor; the toggle command also manages reversible native routing. |
+| `csv.fontFamily` | `""` | Inherit `editor.fontFamily`, or use the specified font family. |
+| `csv.fontSize` | `0` | Inherit `editor.fontSize`, or use a positive pixel size. |
+| `csv.mouseWheelZoom` | `true` | Allow Ctrl/Cmd+mouse wheel table zoom. |
+| `csv.mouseWheelZoomInvert` | `false` | Reverse the table zoom direction. |
+| `csv.cellPadding` | `4` | Vertical cell padding in pixels. |
+| `csv.columnColorMode` | `"type"` | `type` uses datatype colors; `theme` uses theme foreground. |
+| `csv.columnColorPalette` | `"default"` | `default`, `cool`, or `warm` when color mode is `type`. |
+| `csv.diffUseThemeForeground` | `true` | Use theme foreground for CSV views recognized as diff contexts. |
+| `csv.clickableLinks` | `true` | Enable Ctrl/Cmd+click on recognized links. |
+| `csv.showTrailingEmptyRow` | `true` | Show the extra append row. |
+| `csv.separatorMode` | `"extension"` | `extension` uses extension mapping, `auto` detects from content first, `default` uses the configured default. Per-file overrides take precedence. |
+| `csv.defaultSeparator` | `","` | Fallback separator. Use `"\t"` in JSON for a tab character, or `"\\t"` for the supported literal escape. |
+| `csv.separatorByExtension` | CSV comma; TSV/TAB tab; PSV pipe | Extension mapping; keys accept `.ext` or `ext`. |
+| `csv.maxFileSizeMB` | `10` | Editable-view size prompt. `0` disables it; **Ignore Forever** sets it to `0`. This is not a memory cap. |
+| `csv.defaultIgnoreRows` | `0` | Hidden leading metadata records when no per-file override exists. |
+| `csv.largeFilePreviewRows` | `1000` | Preview records per page, from `1` to `10000`, subject to byte/cell caps. |
 
-### v1.2.1
-- Fix scrolling freeze at ~1000 rows when header is enabled by unifying chunking behavior and safely transporting chunks to the webview.
-- Trim trailing empty lines to avoid phantom last rows; correct final virtual row numbering.
-- Preserve scroll position after edits/saves in later chunks by loading enough chunks before restoring scroll.
-- Add tests for separators (CSV/TSV overrides), strict date parsing, header heuristics, and chunking stability.
+Header mode, serial-index visibility, separator overrides, hidden rows, widths, frozen panes, and valid filter conditions are remembered per file. They change the view, except operations such as sorting, editing, and structural changes that explicitly modify document data.
 
-### v1.2.0
-- Edit modes: Quick edit (type to start; arrows save and move) and Detail edit (Enter/double‑click; arrows move caret, Up/Down jump to start/end).
-- Virtual rows and cells: Always shows one extra empty row at the bottom; short rows display empty editable cells up to the widest column. Empty edits do not create real rows/columns.
-- State persistence: Keeps scroll position and selection across tab switches and configuration refreshes, including large files with chunked rendering.
-- Selection improvements: Shift+Click on headers selects column ranges; Shift+Click on the serial index selects row ranges; right‑click preserves current selection.
-- Batch actions: Context menu adapts to multi‑selection (Add/Delete X Rows/Columns) and performs exact counts in a single operation.
-- Delete to clear: Press Delete/Backspace to clear contents of selected cells (skips serial index column).
-- Copy fidelity: Copies with the active delimiter and skips the serial index column for full‑row copies.
-- Encoding: New command “CSV: Change File Encoding” integrates VS Code’s encoding picker and returns to the CSV view.
-- Enable/disable UX: Toggling the extension on instantly upgrades open CSV/TSV tabs to this view; toggling off reverts immediately to the default view.
+## Keyboard and mouse reference
 
-See full history in `CHANGELOG.md`.
+Ctrl/Cmd means Ctrl on Windows/Linux and Command on macOS. Table shortcuts apply outside text inputs unless noted.
 
----
+| Action | Shortcut or gesture |
+| --- | --- |
+| Select a cell/range | Click / drag / Shift+click |
+| Select a row or column | Click its serial index or header; Shift+click extends the range |
+| Select only a header cell | A second separate click on the same header |
+| Select the table | Ctrl/Cmd+A, or click the top-left corner |
+| Move selection | Arrow keys; holding a key keeps the target visible |
+| Extend selection | Shift+Arrow |
+| Jump to a table edge | Ctrl/Cmd+Arrow |
+| Extend to an edge | Ctrl/Cmd+Shift+Arrow, retaining the starting anchor and row/column shape |
+| Next/previous cell | Tab / Shift+Tab; wraps across data rows |
+| Quick edit | Type on a selected cell; arrows commit and move |
+| Detail edit | Enter or double-click; arrows move the caret |
+| Commit and move while editing | Enter moves down; Tab/Shift+Tab moves across |
+| Insert a cell line break | Shift+Enter |
+| Cancel a draft | Escape; a failed edit restores its current source value |
+| Save | Ctrl/Cmd+S commits the active cell, then saves (Save As for untitled) |
+| Copy / cut / paste | Ctrl/Cmd+C / X / V, or right-click actions |
+| Clear selected values | Delete / Backspace |
+| Table Find / Replace | Ctrl/Cmd+F / H |
+| Native Find / Replace in Files | Ctrl/Cmd+Shift+F / H |
+| Next/previous Find match | F3 / Shift+F3; Enter/Shift+Enter in Find; Ctrl/Cmd+G/Shift+G while Find is open |
+| Resize / reset a column | Drag / double-click near its boundary |
+| Resize a row | Drag the bottom edge of its serial-index cell |
+| Reorder rows/columns | Drag selected serial indices/headers |
+| Zoom in / out / reset | Ctrl/Cmd+plus / minus / 0; Ctrl/Cmd+mouse wheel if enabled |
+| Open a recognized link | Ctrl/Cmd+click |
 
-## Development
+## Privacy and development
 
-Clone the repository and run the following commands:
+See [Privacy and data handling](PRIVACY.md) for local/remote processing, clipboard and link actions, diagnostics, and saved preferences. CSV has no upload service or extension-specific analytics client. Remote workspaces can process files in the remote extension host.
 
-```bash
-npm install
-npm run lint
-npm test
-```
-
-To create a VS Code extension package, run:
-
-```bash
-npm run package
-```
-
-To compile without running tests:
-
-```bash
-npm run compile
-```
-
----
-
-## Privacy
-
-CSV processes files through VS Code and bundled libraries, with no extension-specific upload service or telemetry client. Remote workspaces, clipboard operations, links, diagnostic logs, and editor-managed backups have additional data-handling implications. See [Privacy and data handling](PRIVACY.md) for the verified behavior and scope.
-
----
-
-## Support
-
-Have questions, suggestions, or encountered an issue?
-- Open an issue on [GitHub](https://github.com/jonaraphael/csv/issues) and let us know how we can help!
-
----
-
-## License
-
-This extension is licensed under the [MIT License](LICENSE).
+For development, use Node 20 and run `npm ci`, `npm test`, and `npm run lint`. `npm run package` creates the VSIX. See [the changelog](CHANGELOG.md) for release history and [REVIEW.md](REVIEW.md) for repository priorities.
