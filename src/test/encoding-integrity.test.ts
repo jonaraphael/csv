@@ -53,6 +53,33 @@ describe('Possible decoding mismatches use an explicit encoding workflow', () =>
     assert.deepStrictEqual(host.executedCommands, [{ name: 'csv.changeEncoding', args: [host.document.uri] }]);
   });
 
+  it('does not act on a warning from a disposed editor', async () => {
+    let choose!: (value: string) => void;
+    const choice = new Promise<string>(resolve => { choose = resolve; });
+    const host = await createEditorHarness({ rows: [['text'], ['�']], warningChoice: choice });
+    host.dispose();
+    choose('Change File Encoding');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.strictEqual(host.executedCommands.length, 0);
+  });
+
+  it('handles a rejected warning action without an unhandled promise rejection', async () => {
+    let choose!: (value: string) => void;
+    const choice = new Promise<string>(resolve => { choose = resolve; });
+    const host = await createEditorHarness({ rows: [['text'], ['�']], warningChoice: choice });
+    host.commandError = new Error('test command rejection');
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(args); };
+    try {
+      choose('Change File Encoding');
+      await new Promise(resolve => setImmediate(resolve));
+      assert.strictEqual(warnings[0]?.[0], 'CSV: Encoding warning action failed');
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
   it('stops the encoding command when the user cancels closing a dirty document', async () => {
     const host = await createEditorHarness();
     await host.receive({ type: 'editCell', row: 1, col: 0, value: 'unsaved' });
@@ -73,6 +100,19 @@ describe('Possible decoding mismatches use an explicit encoding workflow', () =>
     ]);
     assert.strictEqual(host.executedCommands[0].args[0], host.document.uri);
     assert.strictEqual(host.executedCommands[2].args[1], 'csv.editor');
+  });
+
+  it('waits for the native picker command to finish before reopening the CSV view', async () => {
+    const host = await createEditorHarness();
+    let complete!: () => void;
+    host.commandWait = new Promise<void>(resolve => { complete = resolve; });
+    host.registerCommands();
+    const changing = host.commands.get('csv.changeEncoding')?.();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepStrictEqual(host.executedCommands.map(command => command.name), ['vscode.openWith', 'workbench.action.editor.changeEncoding']);
+    complete();
+    await changing;
+    assert.strictEqual(host.executedCommands[2].name, 'vscode.openWith');
   });
 
   it('round-trips UTF-8 accented CSV and TSV without triggering a warning', async () => {

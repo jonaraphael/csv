@@ -65,6 +65,7 @@ class CsvEditorController {
 
   private isUpdatingDocument = false;
   private isSaving = false;
+  private disposed = false;
   private pendingOperation: Promise<void> = Promise.resolve();
   private currentWebviewPanel: vscode.WebviewPanel | undefined;
   private document!: vscode.TextDocument;
@@ -110,7 +111,9 @@ class CsvEditorController {
     if (webviewPanel.active) {
       CsvEditorProvider.currentActive = this;
     }
-    void this.warnAboutPossibleDecoding();
+    void this.warnAboutPossibleDecoding().catch(error => {
+      console.warn('CSV: Encoding warning action failed', error);
+    });
 
     webviewPanel.webview.postMessage({ type: 'focus' });
     let wasVisible = webviewPanel.visible;
@@ -211,6 +214,7 @@ class CsvEditorController {
     });
 
     webviewPanel.onDidDispose(() => {
+      this.disposed = true;
       changeDocumentSubscription.dispose();
       saveDocumentSubscription.dispose();
       CsvEditorProvider.editors = CsvEditorProvider.editors.filter(ed => ed !== this);
@@ -237,7 +241,7 @@ class CsvEditorController {
       'CSV: This file contains replacement characters (�), which can indicate a decoding mismatch. Check the source encoding before saving.',
       action
     );
-    if (selected === action) {
+    if (selected === action && !this.disposed) {
       // Bind the action to this document even if another tab becomes active.
       await vscode.commands.executeCommand('csv.changeEncoding', this.document.uri);
     }

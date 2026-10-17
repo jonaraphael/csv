@@ -38,6 +38,12 @@ const vscodeStub = {
     },
     executeCommand: async (name: string, ...args: unknown[]) => {
       activeHarness.executedCommands.push({ name, args });
+      if (activeHarness.commandError) {
+        throw activeHarness.commandError;
+      }
+      if (name === 'workbench.action.editor.changeEncoding') {
+        await activeHarness.commandWait;
+      }
     }
   },
   workspace: {
@@ -66,7 +72,7 @@ const { JSDOM } = require('jsdom');
 
 export async function createEditorHarness(options: {
   text?: string;
-  warningChoice?: string;
+  warningChoice?: string | Promise<string | undefined>;
   rows?: string[][];
   separator?: string;
   header?: boolean;
@@ -79,6 +85,7 @@ export async function createEditorHarness(options: {
   const changeListeners: Array<(event: unknown) => void> = [];
   const viewListeners: Array<(event: unknown) => void> = [];
   const saveListeners: Array<(event: unknown) => void> = [];
+  const disposeListeners: Array<() => void> = [];
   const messages: any[] = [];
   const delayedEdits: Array<() => void> = [];
   let deferEdits = false;
@@ -120,12 +127,15 @@ export async function createEditorHarness(options: {
       onDidReceiveMessage: (listener: typeof messageListener) => { messageListener = listener; }
     },
     onDidChangeViewState: (listener: (event: unknown) => void) => { viewListeners.push(listener); },
-    onDidDispose() {}
+    onDidDispose(listener: () => void) { disposeListeners.push(listener); }
   };
   const harness = {
     document, panel, messages, changeListeners, saveListeners,
     warnings: [] as string[],
     warningChoice: options.warningChoice,
+    commandError: undefined as Error | undefined,
+    commandWait: undefined as Promise<void> | undefined,
+    dispose() { disposeListeners.forEach(listener => listener()); },
     closeResult: true,
     commands: new Map<string, (...args: any[]) => unknown>(),
     executedCommands: [] as Array<{ name: string; args: unknown[] }>,
