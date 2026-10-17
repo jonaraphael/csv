@@ -19,12 +19,10 @@ async function prepare(document, language, content) {
   const edit = new vscode.WorkspaceEdit();
   edit.insert(document.uri, new vscode.Position(0, 0), content);
   assert.equal(await vscode.workspace.applyEdit(edit), true);
-  console.log('UNTITLED_PRE_LANGUAGE', document.uri.toString(), document.isDirty, document.isClosed, document.getText());
   const live = await vscode.languages.setTextDocumentLanguage(document, language);
-  console.log('UNTITLED_POST_LANGUAGE', live.uri.toString(), live.isDirty, live.isClosed, live.getText());
   await waitUntil(() => getActiveUntitledCsvEditor()?.document === live, 'language mode should open the untitled table');
   assert.equal(live.getText(), content);
-  await waitUntil(() => live.isDirty, 'untitled contents must remain dirty');
+  assert.ok(vscode.window.tabGroups.all.flatMap(group => group.tabs).some(tab => tab.input.uri?.toString() === live.uri.toString() && tab.isDirty), 'native source must retain its unsaved state');
   return live;
 }
 
@@ -40,6 +38,14 @@ exports.run = async function () {
       await vscode.languages.setTextDocumentLanguage(document, 'plaintext');
       const contents = `name${separator}value\nnew${separator}42`;
       const live = await prepare(document, language, contents);
+      await new Promise(resolve => setTimeout(resolve, 200));
+      await vscode.workspace.getConfiguration('csv').update('enabled', false, vscode.ConfigurationTarget.Global);
+      await waitUntil(() => vscode.window.activeTextEditor?.document.uri.toString() === live.uri.toString() && !getActiveUntitledCsvEditor(), 'disabling should reveal the native untitled owner');
+      assert.equal(live.getText(), contents);
+      assert.equal(fs.existsSync(filename), false, 'disabling must not save');
+      await vscode.workspace.getConfiguration('csv').update('enabled', true, vscode.ConfigurationTarget.Global);
+      await waitUntil(() => getActiveUntitledCsvEditor()?.document === live, 'enabling should safely reopen associated-path untitled buffers');
+      assert.equal(live.getText(), contents);
       let controller = CsvEditorProvider.getActiveProvider();
       assert.ok(controller);
       assert.equal(controller.getCurrentSeparator(), separator);
@@ -54,9 +60,11 @@ exports.run = async function () {
       await vscode.commands.executeCommand('csv.toggleEditor');
       await waitUntil(() => getActiveUntitledCsvEditor()?.document === live, 'switch should return to existing untitled grid');
       controller = CsvEditorProvider.getActiveProvider();
-      await controller.handleSave();
+      const savedExpected = `name${separator}value\nnew${separator}"43\nqueued"`;
+      void controller.enqueueOperation(() => controller.updateDocument(1, 1, '43\nqueued'));
+      await controller.enqueueOperation(() => controller.handleSave());
       await waitUntil(() => fs.existsSync(filename) && !getActiveUntitledCsvEditor(), 'native save should produce the file and close temporary grid');
-      assert.equal(fs.readFileSync(filename, 'utf8'), expected);
+      assert.equal(fs.readFileSync(filename, 'utf8'), savedExpected);
       await vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(filename), 'csv.editor', { preview: false });
       assert.equal(CsvEditorProvider.getActiveProvider().getCurrentSeparator(), separator);
     }
@@ -67,14 +75,14 @@ exports.run = async function () {
     await CsvEditorProvider.getActiveProvider().handleSave();
     // VS Code's isolated extension-test host cancels the native Save As picker.
     assert.equal(live.isClosed, false);
-    assert.equal(live.isDirty, true);
+    assert.ok(vscode.window.tabGroups.all.flatMap(group => group.tabs).some(tab => tab.input.uri?.toString() === live.uri.toString() && tab.isDirty), 'cancel must retain the dirty native source');
     assert.equal(live.getText(), 'name,value\ncancel,42');
     await vscode.commands.executeCommand('csv.toggleEditor');
     await waitUntil(() => getActiveUntitledCsvEditor()?.panel === panel, 'cancelled Save As must retain and reuse the grid');
     panel.dispose();
     assert.equal(live.getText(), 'name,value\ncancel,42');
     assert.equal(CsvEditorProvider.currentActive, undefined);
-    console.log('CSV_UNTITLED_SMOKE_OK: pretyped CSV+TSV, shared edits, source switching, exact native saves, cancelled Save As retained');
+    console.log('CSV_UNTITLED_SMOKE_OK: pretyped CSV+TSV, shared edits, source switching, disable/re-enable, exact native saves, cancelled Save As retained');
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

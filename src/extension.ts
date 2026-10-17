@@ -32,6 +32,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (!input) return;
             if (viewType === CsvEditorProvider.viewType) return; // already our editor
             if (!uri) return;
+            if (uri.scheme === 'untitled') { return; } // Untitled buffers retain their native owner.
             const fsPath = uri.fsPath?.toLowerCase?.() || '';
             const isCsvLike = fsPath.endsWith('.csv') || fsPath.endsWith('.tsv') || fsPath.endsWith('.tab') || fsPath.endsWith('.psv');
             console.log(`[CSV(enable)]: -> eligible=${isCsvLike}`);

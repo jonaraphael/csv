@@ -107,10 +107,28 @@ export function registerUntitledCsvEditors(context: vscode.ExtensionContext): vo
       }, 0);
     }),
     vscode.workspace.onDidChangeConfiguration(event => {
-      if (event.affectsConfiguration('csv.enabled') && vscode.workspace.getConfiguration('csv').get<boolean>('enabled', true)) {
-        opened.clear();
-        maybeOpen(vscode.window.activeTextEditor?.document);
+      if (!event.affectsConfiguration('csv.enabled')) {
+        return;
       }
+      if (!vscode.workspace.getConfiguration('csv').get<boolean>('enabled', true)) {
+        editors.forEach(editor => {
+          const controller = CsvEditorProvider.editors.find(candidate => candidate.getDocumentUri().toString() === editor.document.uri.toString());
+          if (controller) {
+            controller.revealSourceAfterCommit();
+            return;
+          }
+          // A panel still initializing has no active draft or controller yet.
+          if (!editor.document.isClosed) {
+            void Promise.resolve(vscode.window.showTextDocument(editor.document, {
+              viewColumn: editor.panel.viewColumn, preview: false, preserveFocus: !editor.panel.active
+            })).catch(error => console.error('CSV: could not reveal the untitled source', error));
+          }
+          editor.panel.dispose();
+        });
+        return;
+      }
+      opened.clear();
+      maybeOpen(vscode.window.activeTextEditor?.document);
     }),
     { dispose: () => {
       editors.forEach(editor => editor.panel.dispose());

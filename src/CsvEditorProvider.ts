@@ -64,6 +64,7 @@ class CsvEditorController {
 
   private isUpdatingDocument = false;
   private isSaving = false;
+  private pendingViewAction: (() => Promise<void>) | undefined;
   private pendingOperation: Promise<void> = Promise.resolve();
   private currentWebviewPanel: vscode.WebviewPanel | undefined;
   private document!: vscode.TextDocument;
@@ -129,6 +130,16 @@ class CsvEditorController {
 
     webviewPanel.webview.onDidReceiveMessage(e => this.enqueueOperation(async () => {
       switch (e.type) {
+        case 'viewRefreshReady': {
+          const action = this.pendingViewAction;
+          this.pendingViewAction = undefined;
+          if (action) {
+            await action();
+          } else {
+            this.updateWebviewContent();
+          }
+          break;
+        }
         case 'editCell':
           await this.updateDocument(e.row, e.col, e.value);
           break;
@@ -213,6 +224,7 @@ class CsvEditorController {
       saveDocumentSubscription.dispose();
       CsvEditorProvider.editors = CsvEditorProvider.editors.filter(ed => ed !== this);
       this.currentWebviewPanel = undefined;
+      this.pendingViewAction = undefined;
       if (CsvEditorProvider.currentActive === this) {
         CsvEditorProvider.currentActive = undefined;
       }
@@ -331,8 +343,7 @@ class CsvEditorController {
     if (!config.get<boolean>('enabled', true)) {
       const panel = this.currentWebviewPanel;
       if (this.document.uri.scheme === 'untitled') {
-        void vscode.window.showTextDocument(this.document, { viewColumn: panel?.viewColumn, preview: false });
-        panel?.dispose();
+        this.revealSourceAfterCommit();
       } else {
         panel?.dispose();
         vscode.commands.executeCommand('vscode.openWith', this.document.uri, 'default');
@@ -341,6 +352,28 @@ class CsvEditorController {
       if (this.currentWebviewPanel) {
         this.forceReload();
       }
+    }
+  }
+
+  public revealSourceAfterCommit(): void {
+    const panel = this.currentWebviewPanel;
+    if (!panel || this.pendingViewAction) {
+      return;
+    }
+    this.pendingViewAction = async () => {
+      await vscode.window.showTextDocument(this.document, { viewColumn: panel.viewColumn, preview: false });
+      panel.dispose();
+    };
+    if (panel.visible) {
+      // The webview posts its final edit before acknowledging this request.
+      // The ordered message queue applies that edit before closing the panel.
+      void panel.webview.postMessage({ type: 'prepareViewRefresh' });
+    } else {
+      void this.enqueueOperation(async () => {
+        const action = this.pendingViewAction;
+        this.pendingViewAction = undefined;
+        await action?.();
+      });
     }
   }
 
@@ -429,6 +462,7 @@ class CsvEditorController {
   public updateDocumentReference(document: vscode.TextDocument): void {
     if (document.uri.toString() === this.document.uri.toString()) {
       this.document = document;
+      this.separatorCache = undefined;
       this.refresh();
     }
   }

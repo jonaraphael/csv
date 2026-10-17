@@ -2038,7 +2038,11 @@ const copySelectionToClipboard = () => {
 
 window.addEventListener('message', event => {
   const message = event.data;
-  if(message.type === 'focus'){
+  if (message.type === 'prepareViewRefresh') {
+    if (editingCell) editingCell.blur();
+    persistState();
+    vscode.postMessage({ type: 'viewRefreshReady' });
+  } else if(message.type === 'focus'){
     if (anchorCell) {
       try { anchorCell.focus({ preventScroll: true }); } catch { try { anchorCell.focus(); } catch {} }
     } else {

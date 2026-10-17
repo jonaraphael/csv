@@ -133,6 +133,11 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
       const active = CsvEditorProvider.getActiveProvider();
       if (!active) { vscode.window.showInformationMessage('Open a CSV/TSV/PSV file in the CSV editor.'); return; }
       const uri = active.getDocumentUri();
+      if (uri.scheme === 'untitled') {
+        vscode.window.showInformationMessage('Save this document before changing its file encoding.');
+        return;
+      }
+
 
       // Close any existing tabs for this URI so we can reuse the slot cleanly
       try {

@@ -26,12 +26,15 @@ const state = {
   resolutions: [] as any[],
   subscriptions: [] as any[],
   tokens: [] as any[],
-  failResolve: false
+  failResolve: false,
+  commands: new Map<string, (...args: any[]) => any>(),
+  information: [] as string[]
 };
 class FakeProvider {
   static viewType = 'csv.editor';
   static editors: any[] = [];
   static currentActive: any;
+  static getActiveProvider() { return FakeProvider.currentActive; }
   async resolveCustomTextEditor(document: any, panel: any, token: any) {
     state.resolutions.push({ document, panel, token });
     if (state.failResolve) { throw new Error('resolve failed'); }
@@ -39,7 +42,11 @@ class FakeProvider {
       document,
       getDocumentUri: () => controller.document.uri,
       isActive: () => panel.active,
-      updateDocumentReference: (replacement: any) => { controller.document = replacement; }
+      updateDocumentReference: (replacement: any) => { controller.document = replacement; },
+      revealSourceAfterCommit: async () => {
+        await vscode.window.showTextDocument(controller.document, { viewColumn: panel.viewColumn });
+        panel.dispose();
+      }
     };
     FakeProvider.editors.push(controller);
     FakeProvider.currentActive = controller;
@@ -92,7 +99,14 @@ const vscode = {
       activeEvent.fire(state.activeTextEditor);
       return state.activeTextEditor;
     },
-    showErrorMessage() {}
+    showErrorMessage() {},
+    showInformationMessage(message: string) { state.information.push(message); }
+  },
+  commands: {
+    registerCommand: (name: string, callback: (...args: any[]) => any) => {
+      state.commands.set(name, callback);
+      return { dispose() {} };
+    }
   },
   workspace: {
     get textDocuments() { return state.documents; },
@@ -105,11 +119,13 @@ const vscode = {
 const originalRequire = Module.prototype.require;
 Module.prototype.require = function (id: string) {
   if (id === 'vscode') { return vscode; }
+  if (id === 'font-list') { return { getFonts: async () => [] }; }
   if (id === './CsvEditorProvider') { return { CsvEditorProvider: FakeProvider }; }
   return originalRequire.apply(this, arguments as any);
 };
 import { getActiveUntitledCsvEditor, isUntitledCsv, openUntitledCsvEditor, registerUntitledCsvEditors } from '../untitled-editors';
 import { toggleCsvEditor } from '../editor-switch';
+import { registerCsvCommands } from '../commands';
 Module.prototype.require = originalRequire;
 
 function document(languageId = 'csv', scheme = 'untitled', name = 'Untitled-1'): any {
@@ -138,6 +154,8 @@ beforeEach(() => {
   state.subscriptions = [];
   state.tokens = [];
   state.failResolve = false;
+  state.commands.clear();
+  state.information = [];
   FakeProvider.editors = [];
   FakeProvider.currentActive = undefined;
   registerUntitledCsvEditors({ subscriptions: state.subscriptions } as any);
@@ -204,6 +222,19 @@ describe('untitled CSV document ownership and routing', () => {
     assert.strictEqual(state.panels.length, 1);
   });
 
+  it('returns to the unchanged native source when disabled from settings', async () => {
+    const original = document();
+    activate(original);
+    await settle();
+    state.enabled = false;
+    configEvent.fire({ affectsConfiguration: () => true });
+    await settle();
+    assert.strictEqual(state.panels[0].disposed, true);
+    assert.strictEqual(state.activeTextEditor.document, original);
+    assert.strictEqual(original.getText(), 'name,value\nalready typed,42');
+    assert.strictEqual(FakeProvider.currentActive, undefined);
+  });
+
   it('keeps an intentionally closed table closed until explicitly requested', async () => {
     const original = document();
     activate(original);
@@ -244,6 +275,16 @@ describe('untitled CSV document ownership and routing', () => {
     assert.strictEqual(state.panels[0].disposed, true);
     assert.strictEqual(FakeProvider.currentActive, undefined);
     assert.strictEqual(getActiveUntitledCsvEditor(), undefined);
+  });
+
+  it('requires saving before encoding commands can close or reopen an untitled owner', async () => {
+    activate(document());
+    await settle();
+    registerCsvCommands({ subscriptions: [] } as any);
+    await state.commands.get('csv.changeEncoding')!();
+    assert.strictEqual(state.panels[0].disposed, false);
+    assert.strictEqual(state.information.length, 1);
+    assert.match(state.information[0], /Save this document/);
   });
 
   it('cleans up a rejected initialization and allows a subsequent explicit retry', async () => {

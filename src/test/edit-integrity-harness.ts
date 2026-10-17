@@ -19,7 +19,13 @@ const vscodeStub = {
     replace(_uri: unknown, _range: unknown, text: string) { this.text = text; }
   },
   ColorThemeKind: { Dark: 1 },
-  window: { activeColorTheme: { kind: 1 } },
+  window: {
+    activeColorTheme: { kind: 1 },
+    showTextDocument: async (document: any) => {
+      activeHarness.sourceReveals.push(document.getText());
+      return { document };
+    }
+  },
   workspace: {
     getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'maxFileSizeMB' ? 0 : fallback }),
     applyEdit: (edit: { text: string }) => activeHarness.applyEdit(edit.text),
@@ -49,6 +55,7 @@ export async function createEditorHarness(options: {
   separator?: string;
   header?: boolean;
   remote?: boolean;
+  untitled?: boolean;
 } = {}) {
   const separator = options.separator ?? ',';
   let text = Papa.unparse(options.rows ?? [['name', 'value'], ['one', 'two']], { delimiter: separator });
@@ -57,12 +64,15 @@ export async function createEditorHarness(options: {
   const changeListeners: Array<(event: unknown) => void> = [];
   const viewListeners: Array<(event: unknown) => void> = [];
   const saveListeners: Array<(event: unknown) => void> = [];
+  const disposeListeners: Array<() => void> = [];
+  let controller: any;
   const messages: any[] = [];
   const delayedEdits: Array<() => void> = [];
   let deferEdits = false;
-  const uri = new TestUri(`/test/data.${separator === '\t' ? 'tsv' : 'csv'}`, options.remote ? 'vscode-remote' : 'file');
+  const uri = new TestUri(`/test/data.${separator === '\t' ? 'tsv' : 'csv'}`, options.untitled ? 'untitled' : options.remote ? 'vscode-remote' : 'file');
   const document = {
     uri,
+    languageId: separator === '\t' ? 'tsv' : 'csv',
     version: 1,
     getText: () => text,
     get lineCount() { return text.split(/\r\n|\n|\r/).length; },
@@ -97,10 +107,19 @@ export async function createEditorHarness(options: {
       onDidReceiveMessage: (listener: typeof messageListener) => { messageListener = listener; }
     },
     onDidChangeViewState: (listener: (event: unknown) => void) => { viewListeners.push(listener); },
-    onDidDispose() {}
+    disposed: false,
+    onDidDispose(listener: () => void) { disposeListeners.push(listener); },
+    dispose() {
+      panel.disposed = true;
+      panel.active = false;
+      panel.visible = false;
+      disposeListeners.forEach(listener => listener());
+    }
   };
   const harness = {
     document, panel, messages, changeListeners, saveListeners,
+    sourceReveals: [] as string[],
+    revealSourceAfterCommit() { controller.revealSourceAfterCommit(); },
     get diskText() { return diskText; },
     get pendingEdits() { return delayedEdits.length; },
     deferEdits() { deferEdits = true; },
@@ -131,6 +150,7 @@ export async function createEditorHarness(options: {
   };
   activeHarness = harness;
   await new CsvEditorProvider(context as any).resolveCustomTextEditor(document as any, panel as any, { isCancellationRequested: false } as any);
+  controller = CsvEditorProvider.currentActive;
   return harness;
 }
 
