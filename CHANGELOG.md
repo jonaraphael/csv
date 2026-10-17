@@ -20,6 +20,7 @@ Integration candidate; final contents remain subject to review. No release has b
 - Fixed: Context menus keep their natural width, open toward available space, and remain scrollable in small editor panes.
 - Fixed: Frozen rows cover the top border seam so scrolling text cannot peek above the pinned header.
 - Fixed: Cmd/Ctrl+Shift+Arrow extends the current cell, row, or column selection while retaining its starting anchor.
+- Fixed: Held arrow navigation keeps the active cell or range endpoint visible on each display frame, including beneath frozen panes and filter controls.
 - Fixed: Clipboard actions, delimiter fidelity, and CSV quote/line-ending preservation during data mutations.
 - Improved: Multiline-aware column sizing, remembered manual widths, and encoding guidance.
 - Documentation: Privacy and data handling, including remote workspaces and saved filter conditions.
