@@ -97,7 +97,7 @@ Open the Command Palette and search for:
 
 Global (Settings UI or `settings.json`):
 
-- `csv.enabled` (boolean, default `true`): Enable/disable the custom editor.
+- `csv.enabled` (boolean, default `true`): Enable/disable the custom editor. The existing Toggle Extension command honors an explicit workspace value, otherwise it changes the global value. While off, CSV temporarily routes its four file selectors and existing explicit CSV-editor associations to the native text editor, so Find in Files preserves the destination and selection. Re-enabling restores the previous associations. Other editors, unrelated associations, and intervening user changes are preserved. Routing recovery metadata is stored in VS Code extension state; it contains editor identifiers and patterns, never CSV data. If settings or policy prevent routing, CSV reports the failure instead of claiming the toggle succeeded.
 - `csv.fontFamily` (string, default empty): Override font family; falls back to `editor.fontFamily`.
 - `csv.fontSize` (number, default `0`): Override font size in px; set to `0` to inherit `editor.fontSize`.
 - `csv.mouseWheelZoom` (boolean, default `true`): Enable `Ctrl/Cmd + Mouse Wheel` zooming in the CSV editor.

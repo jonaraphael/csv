@@ -19,11 +19,38 @@ async function toggleBooleanConfig(key: string, defaultVal: boolean, messagePref
   CsvEditorProvider.editors.forEach(ed => ed.refresh());
 }
 
-export function registerCsvCommands(context: vscode.ExtensionContext) {
+async function toggleCsvEnabled(synchronizeRouting: () => Promise<void>): Promise<void> {
+  const config = vscode.workspace.getConfiguration('csv');
+  const inspected = config.inspect<boolean>('enabled');
+  const target = inspected?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+  const previous = target === vscode.ConfigurationTarget.Workspace ? inspected?.workspaceValue : inspected?.globalValue;
+  const next = !config.get<boolean>('enabled', true);
+  await config.update('enabled', next, target);
+  try {
+    await synchronizeRouting();
+  } catch (error) {
+    // Do not report Off while VS Code still routes searches into the custom view.
+    const current = config.inspect<boolean>('enabled');
+    const value = target === vscode.ConfigurationTarget.Workspace ? current?.workspaceValue : current?.globalValue;
+    if (value === next) {
+      await config.update('enabled', previous, target);
+      try { await synchronizeRouting(); } catch (restoreError) { console.error('CSV: routing rollback failed', restoreError); }
+    }
+    console.error('CSV: extension toggle was not applied', error);
+    return;
+  }
+  vscode.window.showInformationMessage(`CSV extension ${next ? 'enabled' : 'disabled'}.`);
+  CsvEditorProvider.editors.slice().forEach(ed => ed.refresh());
+}
+
+export function registerCsvCommands(context: vscode.ExtensionContext, synchronizeRouting: () => Promise<void> = async () => {}) {
+  let pendingToggle: Promise<void> = Promise.resolve();
   context.subscriptions.push(
-    vscode.commands.registerCommand('csv.toggleExtension', () =>
-      toggleBooleanConfig('enabled', true, 'CSV extension')
-    ),
+    vscode.commands.registerCommand('csv.toggleExtension', () => {
+      const next = pendingToggle.catch(() => {}).then(() => toggleCsvEnabled(synchronizeRouting));
+      pendingToggle = next;
+      return next;
+    }),
     vscode.commands.registerCommand('csv.toggleClickableLinks', () =>
       toggleBooleanConfig('clickableLinks', true, 'CSV clickable links')
     ),
