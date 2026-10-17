@@ -28,7 +28,7 @@ describe('Hidden-row override controls', () => {
     activate(context);
     const uri = { toString: () => 'file:///sample.csv' } as any;
     let refreshed = 0;
-    const active = { getDocumentUri: () => uri, refreshHiddenRows: () => refreshed++ } as any;
+    const active = { getDocumentUri: () => uri, refreshViewSafely: () => refreshed++ } as any;
     CsvEditorProvider.currentActive = active;
     CsvEditorProvider.editors = [active];
     input = '0';

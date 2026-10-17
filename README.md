@@ -37,13 +37,14 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Add/Delete Columns:** Right-click any cell to add a column left or right, or remove the selected column.
 - **Add/Delete Rows:** Insert above/below or remove the selected row via context menu.
 - **Edit Empty CSVs:** Create or open an empty CSV file and start typing immediately.
-- **Column Sorting:** Right-click a header and choose A–Z or Z–A.
+- **Column Sorting:** Right-click a header and choose A–Z or Z–A. With filters active, sorting rearranges matching rows within their source positions and leaves hidden rows in place.
+- **Column Filters:** Right-click a column and choose Filter this column. Every column offers Contains, Does Not Contain, Regular Expression, Equals, Does Not Equal, Is Empty and Is Not Empty. Number and date columns also offer >, >=, < and <= comparisons. The picker shows the inferred type from the original body rows, excluding headers and hidden metadata; other filters do not change it. For filters, a text column whose nonblank cells all contain supported dates also offers date comparisons, without changing column colors. The active-filter bar shows readable conditions, matching/total counts, removable conditions and Clear all filters. Filters search the full file, retain source row numbers and are remembered per file.
 - **Custom Font Controls:** Choose a font family and optional font-size override, or inherit VS Code defaults.
 - **In-View Zoom:** Use `Ctrl/Cmd + Mouse Wheel` or `Ctrl/Cmd + +/-/0` to zoom the CSV view without changing global editor zoom.
-- **Find & Replace Overlay:** Built-in find/replace bar with match options (case, whole-word, regex), keyboard navigation, and single/all replace actions across the full file (including chunked rows).
+- **Find & Replace Overlay:** Built-in find/replace bar with match options (case, whole-word, regex), keyboard navigation, and single/all replace actions across the full file (including chunked rows), or the matching rows while column filters are active.
 - **Multiline Cell Display:** Cells with embedded newlines render as wrapped multi-line content (with preserved line breaks and matching row height).
 - **Clickable Links:** URLs in cells are automatically detected and displayed as clickable links. Ctrl/Cmd+click to open them in your browser.
-- **Preserved CSV Integrity:** All modifications respect CSV formatting—no unwanted extra characters or formatting issues.
+- **Preserved CSV Integrity:** Cell edits, expanding grid pastes, and row/column moves preserve existing field quoting and line endings. Appended values follow the existing column quote style when the column uses one consistently.
 - **Optimized for Performance:** Designed for medium-sized datasets, ensuring a smooth editing experience without compromising on functionality.
 - **Large File Support:** Loads big CSVs in chunks so even large datasets open quickly.
 - **CSV/TSV/TAB/PSV Support:** `.csv`, `.tsv`, `.tab`, and `.psv` files are recognized automatically. Defaults: comma for CSV, tab for TSV/TAB, pipe for PSV.
@@ -75,7 +76,11 @@ Cursor (built on VS Code 1.99) and the latest VS Code releases (1.102).
   - Detail edit: press `Enter` on a selected cell or double‑click to enter a focused edit. Arrow Left/Right move the text caret; Arrow Up goes to start; Arrow Down goes to end. Click outside the cell (or blur) to save.
 - **Keyboard Navigation:** Use Arrow keys to move between cells when not editing. Use `Tab`/`Shift+Tab` to move horizontally (wrapping across rows as needed).
 - **Multi-Cell Selection:** Click and drag or use `Shift + Click` to select multiple cells, then copy them as CSV using `Ctrl/Cmd + C`.
-- **Find & Replace:** Press `Ctrl/Cmd + F` to open Find, or `Ctrl/Cmd + H` to open Find + Replace.
+- **Find & Replace:** Press `Ctrl/Cmd + F` to open Find, or `Ctrl/Cmd + H` to open Find + Replace. With filters active, Find and Replace All operate on the visible filtered table (including its header); hidden metadata and nonmatching rows are excluded.
+
+Filter comparisons use the column's inferred type. Text matching ignores case. Numbers compare finite decimal/scientific values, including consistently grouped thousands. Boolean equality accepts `true/false`, `t/f`, `yes/no`, `y/n`, `on/off` and `1/0`. Date queries accept explicit numeric dates and English month names, optional times and timezone offsets; date-only or timezone-less values use UTC. Ambiguous numeric dates default to month/day/year (`03/04/2026` means March 4); a leading day above 12 is unambiguous (`13/04/2026` means April 13). Use an ISO date or an explicit month name to avoid ambiguity. Supported timestamps compare exactly, including sub-millisecond fractional seconds. Blank or invalid cell values do not match typed comparisons, including Does Not Equal; use Is Empty to find empty cells. Invalid or cancelled input leaves the previous condition unchanged.
+
+Regular Expression uses [RE2 syntax](https://github.com/google/re2/wiki/Syntax). Plain patterns ignore case; `/pattern/flags` accepts `i`, `m` and `s`, and explicit flags override that default (`/pattern/` is case-sensitive). Lookaround and backreferences are unsupported and rejected by input validation.
 
 ---
 
@@ -124,6 +129,7 @@ Per-file (stored by the extension; set via commands):
 - Serial index column (default `true`) — `CSV: Toggle Serial Index Column`
 - CSV separator override — `CSV: Change CSV Separator` (or clear it with `CSV: Reset CSV Separator (Inherit)`)
 - Hide first N rows (inherits `csv.defaultIgnoreRows`) — `CSV: Hide First N Rows`. An explicit `0` overrides a nonzero default; blank input clears the per-file override.
+- Column filter conditions — set from a column’s context menu and remove from the active-filter bar. Conditions, including any entered CSV text, are stored in VS Code workspace state on the extension host (which may be remote). Clear all filters removes the saved conditions for that file. No CSV rows are removed by filtering.
 - Frozen leading visible rows/columns — `CSV: Freeze Leading Rows` / `CSV: Freeze Leading Columns`. Enter `0` to unfreeze that axis. The default keeps the first header row frozen; with headers off, no rows freeze until requested. Hidden metadata rows do not count; the virtual append row is never frozen as a leading row.
 
 ---
@@ -141,7 +147,7 @@ Per-file (stored by the extension; set via commands):
   - Save the file: `Ctrl/Cmd + S` commits the active cell before saving, including all inserted line breaks.
 - Global:
   - Copy selection: `Ctrl/Cmd + C`
-  - Paste selection: `Ctrl/Cmd + V` (selection mode). Pasting a single value into a selected rectangle fills that rectangle.
+  - Paste selection: `Ctrl/Cmd + V` (selection mode). Pasting a single value into a selected rectangle fills that rectangle. With filters active, copying/cutting and filling affect visible selected rows; matrix paste advances through matching rows and appends at the physical end when needed. Nonmatching rows remain intact, and saving always includes the full source file.
   - Zoom in/out/reset: `Ctrl/Cmd + +`, `Ctrl/Cmd + -`, `Ctrl/Cmd + 0` (also `Ctrl/Cmd + Mouse Wheel`)
   - Find: `Ctrl/Cmd + F`
   - Replace: `Ctrl/Cmd + H`
@@ -194,6 +200,12 @@ To compile without running tests:
 ```bash
 npm run compile
 ```
+
+---
+
+## Privacy
+
+CSV processes files through VS Code and bundled libraries, with no extension-specific upload service or telemetry client. Remote workspaces, clipboard operations, links, diagnostic logs, and editor-managed backups have additional data-handling implications. See [Privacy and data handling](PRIVACY.md) for the verified behavior and scope.
 
 ---
 

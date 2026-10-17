@@ -168,7 +168,7 @@ describe('Shipped webview clipboard interactions', () => {
     view.select(0, -1, 1, 1);
     const event = view.dispatch(target, 'copy');
     assert.strictEqual(event.defaultPrevented, true);
-    assert.deepStrictEqual(view.messages, [{ type: 'copyCells', matrix: [['Header', ''], ['literal,comma\nand newline', '  ']], startRow: 0, startCol: 0, cut: false }]);
+    assert.deepStrictEqual(view.messages, [{ type: 'copyCells', matrix: [['Header', ''], ['literal,comma\nand newline', '  ']], rowIds: [0, 1], startCol: 0, cut: false }]);
   });
 
   it('routes grid Ctrl/Cmd+C and X through system clipboard messages', () => {

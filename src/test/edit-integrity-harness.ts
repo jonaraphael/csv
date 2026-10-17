@@ -19,7 +19,20 @@ const vscodeStub = {
     replace(_uri: unknown, _range: unknown, text: string) { this.text = text; }
   },
   ColorThemeKind: { Dark: 1 },
-  window: { activeColorTheme: { kind: 1 } },
+  window: {
+    activeColorTheme: { kind: 1 },
+    showQuickPick: async (items: any[], options: any) => {
+      activeHarness.quickPickCalls.push({ items, options });
+      return typeof activeHarness.filterChoice === 'function' ? activeHarness.filterChoice(items, options) : activeHarness.filterChoice;
+    },
+    showInputBox: async (options: any) => {
+      activeHarness.inputBoxCalls.push(options);
+      return activeHarness.filterInput;
+    },
+    showInformationMessage: (text: string) => activeHarness.notifications.push(text),
+    showErrorMessage: (text: string) => activeHarness.notifications.push(text)
+  },
+  env: { clipboard: { writeText: async (text: string) => { activeHarness.clipboardText = text; }, readText: async () => activeHarness.clipboardText } },
   workspace: {
     getConfiguration: (_section: string, resource?: TestUri) => {
       if (activeHarness) { activeHarness.configurationRequests.push(resource); }
@@ -48,6 +61,7 @@ const { CsvEditorProvider } = require('../CsvEditorProvider') as typeof import('
 const { JSDOM } = require('jsdom');
 
 export async function createEditorHarness(options: {
+  text?: string;
   rows?: string[][];
   separator?: string;
   header?: boolean;
@@ -56,9 +70,10 @@ export async function createEditorHarness(options: {
   frozenColumns?: number;
   hiddenRows?: number;
   defaultIgnoreRows?: number;
+  filters?: unknown;
 } = {}) {
   const separator = options.separator ?? ',';
-  let text = Papa.unparse(options.rows ?? [['name', 'value'], ['one', 'two']], { delimiter: separator });
+  let text = options.text ?? Papa.unparse(options.rows ?? [['name', 'value'], ['one', 'two']], { delimiter: separator });
   let diskText = text;
   let messageListener: (message: any) => Promise<void>;
   const changeListeners: Array<(event: unknown) => void> = [];
@@ -91,6 +106,7 @@ export async function createEditorHarness(options: {
     }
   };
   await CsvEditorProvider.setHeaderForUri(context as any, uri as any, options.header ?? true);
+  await CsvEditorProvider.setColumnFiltersForUri(context as any, uri as any, options.filters);
   if (options.hiddenRows !== undefined) {
     await CsvEditorProvider.setHiddenRowsForUri(context as any, uri as any, options.hiddenRows);
   }
@@ -113,6 +129,12 @@ export async function createEditorHarness(options: {
   const harness = {
     document, panel, messages, changeListeners, saveListeners, context,
     defaultIgnoreRows: options.defaultIgnoreRows ?? 0,
+    clipboardText: '',
+    filterChoice: undefined as any,
+    filterInput: undefined as string | undefined,
+    quickPickCalls: [] as Array<{ items: any[]; options: any }>,
+    inputBoxCalls: [] as any[],
+    notifications: [] as string[],
     resourceDefaults: {} as Record<string, number>,
     configurationRequests: [] as Array<TestUri | undefined>,
     get diskText() { return diskText; },
@@ -163,7 +185,7 @@ export function createWebviewDom(html: string) {
   const source = fs.readFileSync(path.join(process.cwd(), 'media', 'main.js'), 'utf8');
   const freezeSource = fs.readFileSync(path.join(process.cwd(), 'media', 'frozen-panes.js'), 'utf8');
   window.eval(freezeSource);
-  window.eval(`${source}\nwindow.editingTestApi = { editCell, setSingleSelection };`);
+  window.eval(`${source}\nwindow.editingTestApi = { editCell, setSingleSelection, selectRange, selectFullRowRange };`);
   return {
     window, messages,
     close() { window.close(); },

@@ -1,5 +1,5 @@
 // Layout uses measured dimensions so multiline cells, manual sizes and zoom agree.
-window.createFrozenPaneManager = ({ table, firstRow, realRowCount, onNeedRows }) => {
+window.createFrozenPaneManager = ({ table, firstRow, realRowCount, rowOrder, topInset, onNeedRows }) => {
   let rows = 0;
   let columns = 0;
   let scheduled = false;
@@ -42,16 +42,18 @@ window.createFrozenPaneManager = ({ table, firstRow, realRowCount, onNeedRows })
         left += cell.getBoundingClientRect().width;
       }
     }
-    const lastFrozenRow = Math.min(firstRow + rows, realRowCount) - 1;
-    const firstFrozenCell = rendered.find(({ index }) => index >= firstRow && index <= lastFrozenRow)?.element.cells[0];
+    const visibleRows = rowOrder?.length ? rowOrder.filter(row => row < realRowCount) : null;
+    const frozenRows = visibleRows ? new Set(visibleRows.slice(0, rows)) : null;
+    const lastFrozenRow = visibleRows ? (visibleRows[Math.min(rows, visibleRows.length) - 1] ?? -1) : Math.min(firstRow + rows, realRowCount) - 1;
+    const firstFrozenCell = rendered.find(({ index }) => frozenRows ? frozenRows.has(index) : index >= firstRow && index <= lastFrozenRow)?.element.cells[0];
     // A collapsed border straddles the sticky edge. Cover its inner half once,
     // keeping the measured spacing between frozen rows unchanged.
     const topBorder = firstFrozenCell && getComputedStyle(table).borderCollapse === 'collapse'
       ? parseFloat(getComputedStyle(firstFrozenCell).borderTopWidth) || 0
       : 0;
-    let top = -topBorder / 2;
+    let top = (topInset?.() || 0) - topBorder / 2;
     for (const { element, index } of rendered) {
-      const frozenRow = index >= firstRow && index <= lastFrozenRow;
+      const frozenRow = frozenRows ? frozenRows.has(index) : index >= firstRow && index <= lastFrozenRow;
       const height = element.getBoundingClientRect().height || Math.max(0, ...Array.from(element.cells).map(cell => cell.getBoundingClientRect().height));
       for (const cell of Array.from(element.cells)) {
         const attr = cell.getAttribute('data-col');
