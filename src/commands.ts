@@ -127,10 +127,10 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
         .forEach(ed => ed.refresh());
       vscode.window.showInformationMessage(`CSV: Hiding first ${n} row(s) for this file.`);
     }),
-    vscode.commands.registerCommand('csv.changeEncoding', async () => {
+    vscode.commands.registerCommand('csv.changeEncoding', async (requestedUri?: vscode.Uri) => {
       const active = CsvEditorProvider.getActiveProvider();
-      if (!active) { vscode.window.showInformationMessage('Open a CSV/TSV/PSV file in the CSV editor.'); return; }
-      const uri = active.getDocumentUri();
+      const uri = requestedUri instanceof vscode.Uri ? requestedUri : active?.getDocumentUri();
+      if (!uri) { vscode.window.showInformationMessage('Open a CSV/TSV/PSV file in the CSV editor.'); return; }
 
       // Close any existing tabs for this URI so we can reuse the slot cleanly
       try {
@@ -144,10 +144,14 @@ export function registerCsvCommands(context: vscode.ExtensionContext) {
         });
         if (toClose.length) {
           console.log(`[CSV(encoding)]: closing ${toClose.length} tab(s) for ${uri.fsPath}`);
-          await vscode.window.tabGroups.close(toClose);
+          const closed = await vscode.window.tabGroups.close(toClose);
+          if (!closed) {
+            return;
+          }
         }
       } catch (e) {
         console.warn('[CSV(encoding)]: failed to close existing tabs', e);
+        return;
       }
 
       // Open the default text editor in-place and invoke the built-in encoding picker
