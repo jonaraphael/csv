@@ -88,11 +88,15 @@ describe('Context menu viewport positioning', () => {
     try {
       const body = view.open(100, 100, 1);
       const x = 1000 - 8 - body.width;
-      assert.strictEqual(view.open(x, 100, 1).left, x);
-      const header = view.open(x, 100, 0);
-      assert.ok(header.width > body.width);
+      const y = 700 - 8 - body.height;
+      const fittedBody = view.open(x, y, 1);
+      assert.strictEqual(fittedBody.left, x);
+      assert.strictEqual(fittedBody.top, y);
+      const header = view.open(x, y, 0);
+      assert.ok(header.width >= body.width);
       assert.ok(header.height > body.height);
-      assert.strictEqual(header.left, x - header.width);
+      assert.strictEqual(header.left, header.width > body.width ? x - header.width : x);
+      assert.strictEqual(header.top, Math.max(8, y - header.height));
       assert.ok(Array.from(view.menu.children).some((item: any) => item.textContent === 'Treat first row as data'));
       assert.ok(Array.from(view.menu.children).some((item: any) => item.textContent === 'Sort: A-Z'));
     } finally { view.close(); }
