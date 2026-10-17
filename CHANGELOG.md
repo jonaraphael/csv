@@ -1,38 +1,31 @@
 # Changelog
 
-All notable changes to the "CSV" extension will be documented in this file.
+## [1.4.2] - 2026-10-17
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+This release combines the editing, navigation, and table tools developed since the public 1.3 release.
 
-## [1.4.1] - Unreleased
+### Editing and file integrity
 
-- Fixed: An explicit Text view choice is retained for subsequent Find in Files results while CSV remains enabled; returning to Table releases that file choice.
+- Preserve multiline drafts through repeated line breaks, blur, saves, tab changes, and table/text switches. Failed edits remain available for retry or explicit discard.
+- Preserve existing CSV quoting and line endings during cell edits, structural paste, and row/column moves. Copy and Cut quote each value only when necessary, retain real empty fields, and exclude the extra append row.
+- Add saved-file table/text replacement with unsaved-edit preservation and explicit Save As support for untitled CSV/TSV tables that retain their native owner.
+- Keep native Find in Files destinations in text after an explicit local-file Text choice, including restart and Off/On. Restore only owned routing preferences on return to Table and preserve intervening user choices.
+- Improve encoding guidance without guessing or silently changing the source encoding.
 
-## [1.4.0] - Unreleased
+### Table navigation and views
 
-Integration candidate; final contents remain subject to review. No release has been published.
+- Add contextual first-row header and serial-index actions, frozen leading rows/columns, remembered manual widths, and a configurable default for hidden leading metadata.
+- Fix column resize hit testing at fractional borders and frozen seams, retain usable narrow-column centers, and make dragged widths follow the pointer. Automatic sizing accounts for multiline values.
+- Show selection immediately on mouse-down. Support a second separate header click for header-only selection, anchored Ctrl/Cmd+Shift+Arrow ranges, and viewport following during held-arrow navigation.
+- Keep modified native Find/Replace shortcuts outside the table overlay. Position context menus using available viewport space, with scrolling in small panes.
+- Paint frozen-row divider seams without changing row geometry. Preserve the chosen datatype palette or theme foreground mode across light, dark, and high-contrast themes.
 
-- Added: Context actions for first-row header state and serial-index visibility, using the existing per-file preferences.
-- Fixed: Mouse selection uses its selected color immediately on mouse-down, including row and column selection.
-- Fixed: Disabling CSV routes search results directly to native text and restores prior editor associations when re-enabled; the handoff preserves unsaved cell drafts.
-- Fixed: Copy quotes each value only as needed and excludes the extra append row from every Copy/Cut route.
-- Fixed: A second separate header click selects just the header cell; modified Find/Replace shortcuts stay with VS Code.
-- Added: Inline column filters that update matching rows as you type, with multiple AND conditions (including on the same column), inferred number/date comparisons, Does Not Contain, regular expressions, per-file persistence, and full-source saves.
-- Added: Frozen leading rows and columns, plus a configurable default for hidden metadata rows.
-- Added: Bounded, paginated read-only preview for large saved UTF-8 files.
-- Added: Table/text switching and untitled CSV/TSV editing with explicit Save As support.
-- Added: Explicit read-only comparison of two files as tables.
-- Fixed: The table/text toolbar action appears in supported text files and replaces saved-file views while retaining unsaved edits.
-- Fixed: Edit/save ordering and pending multiline edits across editor changes.
-- Fixed: Dark high contrast uses the existing dark datatype palette; accessibility styling is limited to high-contrast themes and preserves the selected palette and color mode.
-- Fixed: Precise column resize boundaries, editable centers in narrow columns, and drag widths that follow the pointer.
-- Fixed: Context menus keep their natural width, open toward available space, and remain scrollable in small editor panes.
-- Fixed: Frozen rows fill every collapsed divider seam with the divider color so scrolling text cannot peek between pinned rows or above them.
-- Fixed: Cmd/Ctrl+Shift+Arrow extends the current cell, row, or column selection while retaining its starting anchor.
-- Fixed: Held arrow navigation keeps the active cell or range endpoint visible on each display frame, including beneath frozen panes and filter controls.
-- Fixed: Clipboard actions, delimiter fidelity, and CSV quote/line-ending preservation during data mutations.
-- Improved: Multiline-aware column sizing, remembered manual widths, and encoding guidance.
-- Documentation: Privacy and data handling, including remote workspaces and saved filter conditions.
+### Filtering, preview, and comparison
+
+- Add inline live column filters with multiple AND conditions, including repeated conditions on one column; inferred number/date/boolean comparisons; Does Not Contain; and RE2 regular expressions. Preserve input focus, invalid drafts, source row identities, and the full source when saving.
+- Add a bounded, paginated read-only preview for large saved UTF-8 files. The direct Explorer/command path avoids opening a full text document first; malformed or oversized records produce errors instead of truncation.
+- Add explicit read-only table comparison with record alignment, changed-cell highlighting, synchronized panes, change navigation, and bounded display/alignment work. Native Git/PR custom-editor diff remains a separate limitation.
+- Document privacy and data handling, including remote extension hosts, clipboard/link actions, diagnostic logs, and saved filter values.
 
 ## [1.2.1] - 2025-08-20
 - Fixed: Scrolling freeze at 1000 rows when header was enabled by making chunking consistent across modes and using a safe JSON transport to the webview.
