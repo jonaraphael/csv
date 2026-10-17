@@ -28,9 +28,12 @@ const vscodeStub = {
     showErrorMessage(message: string) { activeHarness.errors.push(message); }
   },
   commands: {
-    executeCommand: async (command: string) => {
-      activeHarness.nativeSaveCommands.push(command);
-      return activeHarness.document.save();
+    executeCommand: async (command: string, ...args: unknown[]) => {
+      activeHarness.recordedCommands.push([command, ...args]);
+      if (command === 'workbench.action.files.save') {
+        activeHarness.nativeSaveCommands.push(command);
+        return activeHarness.document.save();
+      }
     }
   },
   workspace: {
@@ -137,6 +140,9 @@ export async function createEditorHarness(options: {
     document, panel, messages, changeListeners, saveListeners,
     enabled: true,
     errors: [] as string[],
+    recordedCommands: [] as unknown[][],
+    refresh() { CsvEditorProvider.editors.find(controller => controller.getDocumentUri() === uri as any)!.refresh(); },
+    get isOpen() { return CsvEditorProvider.editors.some(controller => controller.getDocumentUri() === uri as any); },
     async setSeparator(separator: string) { await CsvEditorProvider.setSeparatorForUri(context as any, uri as any, separator); },
     sourceReveals: [] as string[],
     nativeSaveCommands: [] as string[],
