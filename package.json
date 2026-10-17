@@ -111,7 +111,7 @@
       "editor/title": [
         {
           "command": "csv.toggleEditor",
-          "when": "!isInDiffEditor && (activeCustomEditorId == csv.editor || (activeEditor == workbench.editors.textEditor && resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i))",
+          "when": "!isInDiffEditor && (activeCustomEditorId == csv.editor || (activeEditor == workbench.editors.files.textFileEditor && resourceScheme != untitled && resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i))",
           "group": "navigation"
         }
       ]

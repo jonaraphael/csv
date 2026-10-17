@@ -19,7 +19,10 @@ const vscodeStub = {
     replace(_uri: unknown, _range: unknown, text: string) { this.text = text; }
   },
   ColorThemeKind: { Dark: 1 },
-  window: { activeColorTheme: { kind: 1 } },
+  window: {
+    activeColorTheme: { kind: 1 },
+    showErrorMessage(message: string) { activeHarness.errors.push(message); }
+  },
   workspace: {
     getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'maxFileSizeMB' ? 0 : fallback }),
     applyEdit: (edit: { text: string }) => activeHarness.applyEdit(edit.text),
@@ -56,10 +59,12 @@ export async function createEditorHarness(options: {
   let messageListener: (message: any) => Promise<void>;
   const changeListeners: Array<(event: unknown) => void> = [];
   const viewListeners: Array<(event: unknown) => void> = [];
+  const disposeListeners: Array<() => void> = [];
   const saveListeners: Array<(event: unknown) => void> = [];
   const messages: any[] = [];
   const delayedEdits: Array<() => void> = [];
   let deferEdits = false;
+  let editFailure: 'false' | 'throw' | undefined;
   const uri = new TestUri(`/test/data.${separator === '\t' ? 'tsv' : 'csv'}`, options.remote ? 'vscode-remote' : 'file');
   const document = {
     uri,
@@ -88,6 +93,7 @@ export async function createEditorHarness(options: {
     active: true,
     visible: true,
     title: 'data.csv',
+    viewColumn: 2,
     webview: {
       html: '',
       options: {},
@@ -97,15 +103,22 @@ export async function createEditorHarness(options: {
       onDidReceiveMessage: (listener: typeof messageListener) => { messageListener = listener; }
     },
     onDidChangeViewState: (listener: (event: unknown) => void) => { viewListeners.push(listener); },
-    onDidDispose() {}
+    onDidDispose(listener: () => void) { disposeListeners.push(listener); },
+    dispose() { disposeListeners.forEach(listener => listener()); }
   };
   const harness = {
     document, panel, messages, changeListeners, saveListeners,
+    errors: [] as string[],
+    async setSeparator(separator: string) { await CsvEditorProvider.setSeparatorForUri(context as any, uri as any, separator); },
+    commitPendingDraft() { return CsvEditorProvider.editors.find(controller => controller.getDocumentUri() === uri as any)!.commitPendingDraft(); },
     get diskText() { return diskText; },
     get pendingEdits() { return delayedEdits.length; },
     deferEdits() { deferEdits = true; },
+    failEdits(mode: 'false' | 'throw' | undefined) { editFailure = mode; },
     releaseEdit() { delayedEdits.shift()?.(); },
     async applyEdit(nextText: string): Promise<boolean> {
+      if (editFailure === 'false') { return false; }
+      if (editFailure === 'throw') { throw new Error('applyEdit rejected'); }
       return new Promise(resolve => {
         const apply = () => {
           text = nextText;
