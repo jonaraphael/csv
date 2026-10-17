@@ -3,6 +3,8 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { parseClipboardMatrix, serializeClipboardMatrix } from './clipboard';
 
+type FrozenPanes = { rows: number; columns: number };
+
 type SeparatorMode = 'extension' | 'auto' | 'default';
 type SeparatorSettings = {
   mode: SeparatorMode;
@@ -70,6 +72,7 @@ class CsvEditorController {
   private document!: vscode.TextDocument;
   private separatorCache: { version: number; configKey: string; separator: string } | undefined;
   private isDiffContext = false;
+  private currentHeader = false;
   private chunkRenderState: ChunkRenderState | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
@@ -147,6 +150,9 @@ class CsvEditorController {
           break;
         case 'save':
           await this.handleSave();
+          break;
+        case 'freezePanesChanged':
+          await this.setFrozenPanes({ rows: e.rows, columns: e.columns });
           break;
         case 'columnSizesChanged':
           await CsvEditorProvider.setColumnSizesForUri(this.context, this.document.uri, e.columnSizes);
@@ -414,6 +420,15 @@ class CsvEditorController {
       CsvEditorController.normalizeFontSize(editorFontSize) ??
       14
     );
+  }
+
+  public getCurrentFrozenPanes(): FrozenPanes {
+    return CsvEditorProvider.getFrozenPanesForUri(this.context, this.document.uri, this.currentHeader);
+  }
+
+  public async setFrozenPanes(change: Partial<FrozenPanes>): Promise<void> {
+    await CsvEditorProvider.setFrozenPanesForUri(this.context, this.document.uri, change);
+    this.currentWebviewPanel?.webview.postMessage({ type: 'frozenPanes', ...this.getCurrentFrozenPanes() });
   }
 
   public getDocumentUri(): vscode.Uri {
@@ -1413,6 +1428,7 @@ class CsvEditorController {
     const cellPadding = config.get<number>('cellPadding', 4);
     const data = this.trimTrailingEmptyRows((parsed.data || []) as string[][]);
     const treatHeader = this.getEffectiveHeader(data, hiddenRows);
+    this.currentHeader = treatHeader;
     const clickableLinks = config.get<boolean>('clickableLinks', true);
     const configuredColumnColorMode = config.get<string>('columnColorMode', 'type');
     const diffUseThemeForeground = config.get<boolean>('diffUseThemeForeground', true);
@@ -1456,7 +1472,10 @@ class CsvEditorController {
       hasRemoteChunks,
       mouseWheelZoomEnabled,
       mouseWheelZoomInvert,
-      columnSizes: CsvEditorProvider.getColumnSizesForUri(this.context, this.document.uri)
+      columnSizes: CsvEditorProvider.getColumnSizesForUri(this.context, this.document.uri),
+      frozenPanes: this.getCurrentFrozenPanes(),
+      firstVisibleRow: hiddenRows,
+      realRowCount: data.length
     });
   }
 
@@ -1710,12 +1729,19 @@ class CsvEditorController {
     mouseWheelZoomEnabled: boolean;
     mouseWheelZoomInvert: boolean;
     columnSizes: Record<string, number>;
+    frozenPanes: FrozenPanes;
+    firstVisibleRow: number;
+    realRowCount: number;
   }): string {
-    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, mouseWheelZoomEnabled, mouseWheelZoomInvert, columnSizes } = args;
+    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, mouseWheelZoomEnabled, mouseWheelZoomInvert, columnSizes, frozenPanes, firstVisibleRow, realRowCount } = args;
     const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
     // Build script URI using file path for compatibility (older APIs may lack Uri.joinPath)
     const scriptUri = webview.asWebviewUri(
       vscode.Uri.file(path.join(this.context.extensionPath, 'media', 'main.js'))
+    );
+
+    const frozenPanesScriptUri = webview.asWebviewUri(
+      vscode.Uri.file(path.join(this.context.extensionPath, 'media', 'frozen-panes.js'))
     );
 
     // Safe separator transport (assumes single character; see assumptions)
@@ -1734,7 +1760,7 @@ class CsvEditorController {
       .table-container { overflow: auto; height: 100vh; }
       table { border-collapse: collapse; width: max-content; }
       th, td { padding: ${cellPadding}px 8px; border: 1px solid ${isDark ? '#555' : '#ccc'}; font-size: inherit; }
-      th { position: sticky; top: 0; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+      th { position: static; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
       td { overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
       td.selected, th.selected { background-color: ${isDark ? '#333333' : '#cce0ff'} !important; }
       td.editing, th.editing { overflow: visible !important; white-space: pre-wrap !important; overflow-wrap: anywhere !important; max-width: none !important; }
@@ -1918,12 +1944,25 @@ class CsvEditorController {
       #contextMenu div { padding: 4px 12px; cursor: pointer; }
       #contextMenu div:hover { background: ${isDark ? '#3d3d3d' : '#eeeeee'}; }
 
+      #csv-root .csv-frozen-row, #csv-root .csv-frozen-column {
+        position: sticky;
+        background-color: var(--vscode-editor-background, ${isDark ? '#1e1e1e' : '#ffffff'}) !important;
+      }
+      #csv-root .csv-frozen-row.selected, #csv-root .csv-frozen-column.selected {
+        background-image: linear-gradient(var(--vscode-editor-selectionBackground, ${isDark ? '#333333' : '#cce0ff'}), var(--vscode-editor-selectionBackground, ${isDark ? '#333333' : '#cce0ff'}));
+      }
+      #csv-root .csv-frozen-row.highlight, #csv-root .csv-frozen-column.highlight {
+        background-image: linear-gradient(var(--vscode-editor-findMatchHighlightBackground, transparent), var(--vscode-editor-findMatchHighlightBackground, transparent));
+      }
+      #csv-root .csv-frozen-row.active-match, #csv-root .csv-frozen-column.active-match {
+        background-image: linear-gradient(var(--vscode-editor-findMatchBackground, transparent), var(--vscode-editor-findMatchBackground, transparent));
+      }
       /* Per-column computed colors */
       ${extraColumnColorCss}
     </style>
   </head>
   <body>
-    <div id="csv-root" data-columnsizes="${this.escapeHtml(JSON.stringify(columnSizes))}" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
+    <div id="csv-root" data-frozenrows="${frozenPanes.rows}" data-frozencolumns="${frozenPanes.columns}" data-firstrow="${firstVisibleRow}" data-realrowcount="${realRowCount}" data-columnsizes="${this.escapeHtml(JSON.stringify(columnSizes))}" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
       ${tableHtml}
     </div>
 
@@ -1971,6 +2010,7 @@ class CsvEditorController {
     </div>
     <div id="contextMenu"></div>
 
+    <script nonce="${nonce}" src="${frozenPanesScriptUri}"></script>
     <script nonce="${nonce}" src="${scriptUri}"></script>
   </body>
 </html>`;
@@ -2234,6 +2274,7 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   public static readonly serialKey     = 'csv.serialIndexByUri';
   public static readonly sepKey        = 'csv.separatorByUri';
   public static readonly columnSizesKey = 'csv.columnSizesByUri';
+  public static readonly frozenPanesKey = 'csv.frozenPanesByUri';
   private static readonly DEFAULT_SEPARATOR = ',';
   private static readonly DEFAULT_SEPARATOR_MODE: SeparatorMode = 'extension';
   private static readonly BUILTIN_SEPARATORS_BY_EXTENSION: Record<string, string> = {
@@ -2602,6 +2643,26 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     const map = { ...(context.workspaceState.get<Record<string, boolean>>(CsvEditorProvider.serialKey, {})) };
     map[uri.toString()] = !!val; // always persist explicit override
     await context.workspaceState.update(CsvEditorProvider.serialKey, map);
+  }
+
+  public static getFrozenPanesForUri(context: vscode.ExtensionContext, uri: vscode.Uri, header: boolean): FrozenPanes {
+    const map = context.workspaceState.get<Record<string, Partial<FrozenPanes>>>(CsvEditorProvider.frozenPanesKey, {});
+    const saved = map[uri.toString()] ?? {};
+    const valid = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+    return { rows: valid(saved.rows) ? saved.rows : (header ? 1 : 0), columns: valid(saved.columns) ? saved.columns : 0 };
+  }
+
+  public static async setFrozenPanesForUri(context: vscode.ExtensionContext, uri: vscode.Uri, change: Partial<FrozenPanes>): Promise<void> {
+    const map = { ...context.workspaceState.get<Record<string, Partial<FrozenPanes>>>(CsvEditorProvider.frozenPanesKey, {}) };
+    const saved = { ...map[uri.toString()] };
+    for (const axis of ['rows', 'columns'] as const) {
+      const value = change[axis];
+      if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
+        saved[axis] = value;
+      }
+    }
+    map[uri.toString()] = saved;
+    await context.workspaceState.update(CsvEditorProvider.frozenPanesKey, map);
   }
 
   public static normalizeColumnSizes(raw: unknown): Record<string, number> {

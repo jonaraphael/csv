@@ -19,8 +19,27 @@ async function toggleBooleanConfig(key: string, defaultVal: boolean, messagePref
   CsvEditorProvider.editors.forEach(ed => ed.refresh());
 }
 
+async function changeFrozenPaneCount(axis: 'rows' | 'columns') {
+  const active = CsvEditorProvider.getActiveProvider();
+  if (!active) {
+    vscode.window.showInformationMessage('Open a CSV/TSV/PSV file in the CSV editor.');
+    return;
+  }
+  const current = active.getCurrentFrozenPanes()[axis];
+  const input = await vscode.window.showInputBox({
+    prompt: `Number of leading visible ${axis} to freeze (0 unfreezes)`,
+    value: String(current),
+    validateInput: value => /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) ? undefined : 'Enter a non-negative whole number.'
+  });
+  if (input !== undefined && /^\d+$/.test(input) && Number.isSafeInteger(Number(input))) {
+    await active.setFrozenPanes({ [axis]: Number(input) });
+  }
+}
+
 export function registerCsvCommands(context: vscode.ExtensionContext) {
   context.subscriptions.push(
+    vscode.commands.registerCommand('csv.changeFrozenRows', () => changeFrozenPaneCount('rows')),
+    vscode.commands.registerCommand('csv.changeFrozenColumns', () => changeFrozenPaneCount('columns')),
     vscode.commands.registerCommand('csv.toggleExtension', () =>
       toggleBooleanConfig('enabled', true, 'CSV extension')
     ),

@@ -31,7 +31,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Interactive Editing:** Two modes — type to start a quick edit, or press Enter/double‑click for detail edit. Changes commit to the document when focus leaves the cell or CSV view; unsaved changes remain visible when you switch tabs.
 - **Smart Resizing:** Automatic widths follow the longest line in multiline cells. Drag within 10 pixels on either side of a column boundary to resize; widths are remembered per file across closing and reopening. Double-click a column boundary to restore automatic sizing. Resizing also works with the header row hidden.
 - **Dynamic Color Coding:** Visual cues based on data type help you quickly identify numbers, dates, booleans, and more (with opt‑in cool palette and theme-foreground mode settings).
-- **Sticky Headers:** Keep column titles in view as you scroll through large datasets.
+- **Frozen Rows and Columns:** Keep any number of leading visible rows and data columns in view. Right-click a cell to freeze through its row/column or unfreeze; counts are remembered per file. Frozen rows use measured heights, including multiline cells and zoom. The serial index stays visible alongside frozen data columns.
 - **Enhanced Keyboard Navigation:** Navigate cells with arrows and Tab/Shift+Tab; quick edits can commit with arrow keys; `Ctrl/Cmd + A` selects all; `Ctrl/Cmd + C` copies selection.
 - **Advanced Multi-Cell Selection:** Easily select and copy blocks of data, then paste them elsewhere as properly formatted CSV.
 - **Add/Delete Columns:** Right-click any cell to add a column left or right, or remove the selected column.
@@ -85,6 +85,8 @@ Open the Command Palette and search for:
 
 - `CSV: Toggle Extension On/Off` (`csv.toggleExtension`)
 - `CSV: Toggle First Row as Header` (`csv.toggleHeader`)
+- `CSV: Freeze Leading Rows` (`csv.changeFrozenRows`)
+- `CSV: Freeze Leading Columns` (`csv.changeFrozenColumns`)
 - `CSV: Toggle Serial Index Column` (`csv.toggleSerialIndex`)
 - `CSV: Change CSV Separator` (`csv.changeSeparator`)
 - `CSV: Reset CSV Separator (Inherit)` (`csv.resetSeparator`)
@@ -121,6 +123,7 @@ Per-file (stored by the extension; set via commands):
 - Serial index column (default `true`) — `CSV: Toggle Serial Index Column`
 - CSV separator override — `CSV: Change CSV Separator` (or clear it with `CSV: Reset CSV Separator (Inherit)`)
 - Hide first N rows (default `0`) — `CSV: Hide First N Rows`
+- Frozen leading visible rows/columns — `CSV: Freeze Leading Rows` / `CSV: Freeze Leading Columns`. Enter `0` to unfreeze that axis. The default keeps the first header row frozen; with headers off, no rows freeze until requested. Hidden metadata rows do not count; the virtual append row is never frozen as a leading row.
 
 ---
 
