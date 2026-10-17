@@ -30,9 +30,9 @@ describe('Frozen panes', () => {
     const { view } = await fixture({ frozenRows: 3, frozenColumns: 1 });
     try {
       view.window.csvFrozenPanes.layout();
-      assert.strictEqual(view.cell(0, 0).style.top, '0px');
-      assert.strictEqual(view.cell(1, 0).style.top, '25px');
-      assert.strictEqual(view.cell(2, 0).style.top, '85px');
+      assert.strictEqual(view.cell(0, 0).style.top, '-0.5px');
+      assert.strictEqual(view.cell(1, 0).style.top, '24.5px');
+      assert.strictEqual(view.cell(2, 0).style.top, '84.5px');
       assert.strictEqual(view.cell(1, -1).style.left, '0px');
       assert.strictEqual(view.cell(1, 0).style.left, '30px');
       assert.strictEqual(view.cell(1, 0).style.zIndex, '4');
@@ -43,6 +43,31 @@ describe('Frozen panes', () => {
     } finally { view.close(); }
   });
 
+  it('covers the collapsed top border once without rounding fractional row spacing', async () => {
+    const { view } = await fixture({ frozenRows: 3, frozenColumns: 1 });
+    try {
+      const table = view.window.document.querySelector('table');
+      measure(view, [25.5, 60.25, 35.75, 30]);
+      for (const [collapse, border, firstTop] of [
+        ['collapse', 1, -0.5],
+        ['collapse', 2, -1],
+        ['collapse', 0, 0],
+        ['separate', 1, 0]
+      ] as const) {
+        table.style.borderCollapse = collapse;
+        for (const cell of Array.from(table.querySelectorAll('th, td')) as any[]) {
+          cell.style.borderTopWidth = `${border}px`;
+        }
+        view.window.csvFrozenPanes.layout();
+        assert.strictEqual(view.cell(0, 0).style.top, `${firstTop}px`);
+        assert.strictEqual(view.cell(1, 0).style.top, `${firstTop + 25.5}px`);
+        assert.strictEqual(view.cell(2, 0).style.top, `${firstTop + 85.75}px`);
+        assert.strictEqual(table.rows[0].cells[0].style.top, `${firstTop}px`, 'serial corner shares the frozen row origin');
+        assert.strictEqual(view.cell(0, 0).style.left, '30px', 'horizontal offsets remain measured independently');
+      }
+    } finally { view.close(); }
+  });
+
   it('recomputes measured offsets after zoom and column resizing', async () => {
     const { view } = await fixture({ frozenRows: 3, frozenColumns: 2 });
     try {
@@ -50,7 +75,7 @@ describe('Frozen panes', () => {
       view.cell(1, 0).focus();
       view.key('+', { ctrlKey: true });
       view.window.csvFrozenPanes.layout();
-      assert.strictEqual(view.cell(2, 0).style.top, '93.5px');
+      assert.strictEqual(view.cell(2, 0).style.top, '93px');
       view.cell(0, 0).style.width = '200px';
       view.window.csvFrozenPanes.layout();
       assert.strictEqual(view.cell(1, 1).style.left, '230px');
@@ -61,8 +86,8 @@ describe('Frozen panes', () => {
     const { view } = await fixture({ header: false, frozenRows: 100, hiddenRows: 1 });
     try {
       view.window.csvFrozenPanes.layout();
-      assert.strictEqual(view.cell(1, 0).style.top, '0px');
-      assert.strictEqual(view.cell(2, 0).style.top, '60px');
+      assert.strictEqual(view.cell(1, 0).style.top, '-0.5px');
+      assert.strictEqual(view.cell(2, 0).style.top, '59.5px');
       assert.ok(!view.cell(4, 0).classList.contains('csv-frozen-row'));
     } finally { view.close(); }
   });
@@ -77,6 +102,8 @@ describe('Frozen panes', () => {
       view.window.dispatchEvent(new view.window.MessageEvent('message', { data: update }));
       view.window.csvFrozenPanes.layout();
       assert.ok(!view.cell(0, 0).classList.contains('csv-frozen-row'));
+      assert.strictEqual(view.cell(0, 0).style.top, '', 'unfreezing clears the collapsed-border correction');
+      assert.strictEqual(view.cell(1, 0).style.top, '');
       assert.deepStrictEqual(CsvEditorProvider.getFrozenPanesForUri(host.context as any, host.document.uri as any, true), { rows: 0, columns: 0 });
     } finally { view.close(); }
   });
@@ -188,11 +215,11 @@ describe('Frozen panes', () => {
       manager.update(3, 0);
       await new Promise(resolve => view.window.requestAnimationFrame(resolve));
       assert.ok(observed > 0);
-      assert.strictEqual(view.cell(2, 0).style.top, '85px');
+      assert.strictEqual(view.cell(2, 0).style.top, '84.5px');
       heights[1] = 100;
       resized();
       await new Promise(resolve => view.window.requestAnimationFrame(resolve));
-      assert.strictEqual(view.cell(2, 0).style.top, '125px');
+      assert.strictEqual(view.cell(2, 0).style.top, '124.5px');
       manager.dispose();
       assert.strictEqual(disconnected, true);
     } finally { view.close(); }
