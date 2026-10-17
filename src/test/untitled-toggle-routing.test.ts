@@ -14,6 +14,7 @@ const opened: unknown[] = [];
 const vscode = {
   TabInputText, TabInputCustom, version: '1.142.0',
   window: { activeTextEditor: { document: owner, viewColumn: 2 },
+    visibleTextEditors: [{ document: owner, viewColumn: 1 }],
     tabGroups: { activeTabGroup: group }, showInformationMessage() {}, showErrorMessage() {} },
   workspace: { getConfiguration: () => ({ get: () => true }) },
   commands: { getCommands: async () => [] }
@@ -47,6 +48,13 @@ describe('untitled switch routing across editor groups', () => {
   });
   it('opens the untitled grid when its native owner is the active tab', async () => {
     opened.length = 0;
+    group.activeTab = { input: new TabInputText(owner.uri) };
+    await toggleCsvEditor();
+    assert.deepStrictEqual(opened, [{ document: owner, column: 1 }]);
+  });
+  it('uses the visible untitled owner when the global active text editor points elsewhere', async () => {
+    opened.length = 0;
+    vscode.window.activeTextEditor = { document: { ...owner, uri: new Uri('file', '/other.csv') }, viewColumn: 2 };
     group.activeTab = { input: new TabInputText(owner.uri) };
     await toggleCsvEditor();
     assert.deepStrictEqual(opened, [{ document: owner, column: 1 }]);

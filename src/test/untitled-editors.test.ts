@@ -103,6 +103,7 @@ const vscode = {
     tabGroups: { get activeTabGroup() { return { viewColumn: state.activeTextEditor?.viewColumn ?? 2,
       activeTab: state.activeTextEditor ? { input: new TabInputText(state.activeTextEditor.document.uri) } : undefined }; } },
     get activeTextEditor() { return state.activeTextEditor; },
+    get visibleTextEditors() { return state.activeTextEditor ? [state.activeTextEditor] : []; },
     onDidChangeActiveTextEditor: activeEvent.listen,
     createWebviewPanel: createPanel,
     showTextDocument: async (document: any, options: any) => {
