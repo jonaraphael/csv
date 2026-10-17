@@ -326,6 +326,13 @@ export function createWebviewDom(html: string) {
     setState: (nextState: unknown) => { state = nextState; }
   });
   window.HTMLElement.prototype.scrollIntoView = () => {};
+  // JSDOM has no paint hit testing. Interaction tests may supply cell geometry;
+  // use those rectangles unless a scenario installs its own occlusion model.
+  window.document.elementFromPoint = (x: number, y: number) =>
+    Array.from(window.document.querySelectorAll('td, th')).reverse().find((cell: any) => {
+      const rect = cell.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    }) ?? null;
   window.IntersectionObserver = class { observe() {} };
   const source = fs.readFileSync(path.join(process.cwd(), 'media', 'main.js'), 'utf8');
   const freezeSource = fs.readFileSync(path.join(process.cwd(), 'media', 'frozen-panes.js'), 'utf8');
