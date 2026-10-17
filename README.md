@@ -27,7 +27,8 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 
 ## Features
 
-- **Interactive Editing:** Two modes — type to start a quick edit, or press Enter/double‑click for detail edit. Changes commit to the document when focus leaves the cell or CSV view; unsaved changes remain visible when you switch tabs.
+- **Interactive Editing:** Two modes — type to start a quick edit, or press Enter/double‑click for detail edit. Changes commit to the document when focus leaves the cell or CSV view; unsaved changes remain visible when you switch tabs. If a cell edit fails, retry it or press Escape to discard its draft before changing or disabling the table view.
+- **Table/Text Switching:** Use the switch action in the editor toolbar or `CSV: Switch Between Table and Text` in the Command Palette to move between views while retaining unsaved edits. The target opens before the original view is replaced, so one representation remains in that editor group. An active cell commits before switching, and unsaved document edits remain unsaved. Other tabs and groups are unaffected. A table already open for this file in another group must be switched from that group. The table view requires `csv.enabled`. This action requires VS Code 1.100 or newer for clean documents and 1.120 or newer for unsaved documents; older hosts show update guidance. Existing extension features continue to support the declared VS Code minimum.
 - **Smart Resizing:** Automatic calculation of column widths for improved readability.
 - **Dynamic Color Coding:** Visual cues based on data type help you quickly identify numbers, dates, booleans, and more (with opt‑in cool palette and theme-foreground mode settings).
 - **Sticky Headers:** Keep column titles in view as you scroll through large datasets.
@@ -82,6 +83,7 @@ Cursor (built on VS Code 1.99) and the latest VS Code releases (1.102).
 
 Open the Command Palette and search for:
 
+- `CSV: Switch Between Table and Text` (`csv.toggleEditor`)
 - `CSV: Toggle Extension On/Off` (`csv.toggleExtension`)
 - `CSV: Toggle First Row as Header` (`csv.toggleHeader`)
 - `CSV: Toggle Serial Index Column` (`csv.toggleSerialIndex`)

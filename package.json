@@ -22,6 +22,7 @@
     "onLanguage:csv",
     "onLanguage:tsv",
     "onCommand:csv.toggleExtension",
+    "onCommand:csv.toggleEditor",
     "onCommand:csv.toggleHeader",
     "onCommand:csv.toggleSerialIndex",
     "onCommand:csv.changeSeparator",
@@ -65,6 +66,11 @@
     ],
     "commands": [
       {
+        "command": "csv.toggleEditor",
+        "title": "CSV: Switch Between Table and Text",
+        "icon": "$(arrow-swap)"
+      },
+      {
         "command": "csv.toggleExtension",
         "title": "CSV: Toggle Extension On/Off"
       },
@@ -101,6 +107,15 @@
         "title": "CSV: Toggle Clickable Links"
       }
     ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "csv.toggleEditor",
+          "when": "!isInDiffEditor && (activeCustomEditorId == csv.editor || (activeEditor == workbench.editors.files.textFileEditor && resourceScheme != untitled && resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i))",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "type": "object",
       "title": "CSV Extension Configuration",

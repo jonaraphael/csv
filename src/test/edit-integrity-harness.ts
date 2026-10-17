@@ -19,9 +19,18 @@ const vscodeStub = {
     replace(_uri: unknown, _range: unknown, text: string) { this.text = text; }
   },
   ColorThemeKind: { Dark: 1 },
-  window: { activeColorTheme: { kind: 1 } },
+  window: {
+    activeColorTheme: { kind: 1 },
+    showErrorMessage(message: string) { activeHarness.errors.push(message); }
+  },
+  commands: {
+    executeCommand(command: string, ...args: unknown[]) {
+      activeHarness.commands.push([command, ...args]);
+      return Promise.resolve();
+    }
+  },
   workspace: {
-    getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'maxFileSizeMB' ? 0 : fallback }),
+    getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'maxFileSizeMB' ? 0 : key === 'enabled' ? (activeHarness?.enabled ?? true) : fallback }),
     applyEdit: (edit: { text: string }) => activeHarness.applyEdit(edit.text),
     onDidChangeTextDocument: (listener: (event: unknown) => void) => {
       activeHarness.changeListeners.push(listener);
@@ -56,10 +65,12 @@ export async function createEditorHarness(options: {
   let messageListener: (message: any) => Promise<void>;
   const changeListeners: Array<(event: unknown) => void> = [];
   const viewListeners: Array<(event: unknown) => void> = [];
+  const disposeListeners: Array<() => void> = [];
   const saveListeners: Array<(event: unknown) => void> = [];
   const messages: any[] = [];
   const delayedEdits: Array<() => void> = [];
   let deferEdits = false;
+  let editFailure: 'false' | 'throw' | undefined;
   const uri = new TestUri(`/test/data.${separator === '\t' ? 'tsv' : 'csv'}`, options.remote ? 'vscode-remote' : 'file');
   const document = {
     uri,
@@ -88,6 +99,7 @@ export async function createEditorHarness(options: {
     active: true,
     visible: true,
     title: 'data.csv',
+    viewColumn: 2,
     webview: {
       html: '',
       options: {},
@@ -97,15 +109,29 @@ export async function createEditorHarness(options: {
       onDidReceiveMessage: (listener: typeof messageListener) => { messageListener = listener; }
     },
     onDidChangeViewState: (listener: (event: unknown) => void) => { viewListeners.push(listener); },
-    onDidDispose() {}
+    onDidDispose(listener: () => void) { disposeListeners.push(listener); },
+    dispose() { disposeListeners.forEach(listener => listener()); }
   };
   const harness = {
     document, panel, messages, changeListeners, saveListeners,
+    errors: [] as string[],
+    commands: [] as unknown[][],
+    enabled: true,
+    setEnabled(enabled: boolean) { this.enabled = enabled; },
+    refresh() { CsvEditorProvider.editors.find(controller => controller.getDocumentUri() === uri as any)!.refresh(); },
+    get isOpen() { return CsvEditorProvider.editors.some(controller => controller.getDocumentUri() === uri as any); },
+    async setSeparator(separator: string) { await CsvEditorProvider.setSeparatorForUri(context as any, uri as any, separator); },
+    commitPendingDraft() { return CsvEditorProvider.editors.find(controller => controller.getDocumentUri() === uri as any)!.commitPendingDraft(); },
     get diskText() { return diskText; },
     get pendingEdits() { return delayedEdits.length; },
+    get pendingDraftRequestId(): number | undefined { return (CsvEditorProvider.editors.find(controller => controller.getDocumentUri() === uri as any) as any)?.pendingDraftCommit?.requestId; },
     deferEdits() { deferEdits = true; },
+    resumeEdits() { deferEdits = false; },
+    failEdits(mode: 'false' | 'throw' | undefined) { editFailure = mode; },
     releaseEdit() { delayedEdits.shift()?.(); },
     async applyEdit(nextText: string): Promise<boolean> {
+      if (editFailure === 'false') { return false; }
+      if (editFailure === 'throw') { throw new Error('applyEdit rejected'); }
       return new Promise(resolve => {
         const apply = () => {
           text = nextText;
@@ -178,4 +204,17 @@ export function createWebviewDom(html: string) {
       selection.addRange(range);
     }
   };
+}
+
+export async function flushViewCommits(host: Awaited<ReturnType<typeof createEditorHarness>>, view: ReturnType<typeof createWebviewDom>): Promise<void> {
+  for (let round = 0; round < 10; round++) {
+    const requestId = host.pendingDraftRequestId;
+    if (requestId === undefined) { return; }
+    const request = host.messages.find(message => message.type === 'prepareViewRefresh' && message.requestId === requestId);
+    if (!request) { throw new Error('Missing prepare message'); }
+    const cursor = view.messages.length;
+    view.window.dispatchEvent(new view.window.MessageEvent('message', { data: request }));
+    await Promise.all(view.messages.slice(cursor).map(message => host.receive(message)));
+  }
+  throw new Error('View commit did not settle');
 }
