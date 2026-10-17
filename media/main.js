@@ -1978,6 +1978,7 @@ const editCell = (cell, event, mode = 'detail') => {
   cell.classList.remove('selected');
   originalCellValue = cell.textContent;
   editingCell = cell;
+  vscode.postMessage({ type: 'cellEditStarted' });
   editMode = mode;
   cell.classList.add('editing');
   cell.setAttribute('contenteditable', 'true');

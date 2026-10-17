@@ -1,6 +1,6 @@
 import assert from 'assert';
 import { describe, it } from 'node:test';
-import { createEditorHarness, createWebviewDom } from './edit-integrity-harness';
+import { createEditorHarness, createWebviewDom, flushViewCommits } from './edit-integrity-harness';
 
 describe('table switching commits the actual webview draft before replacement', () => {
   for (const separator of [',', '\t']) {
@@ -51,6 +51,7 @@ describe('table switching commits the actual webview draft before replacement', 
         const retry = host.commitPendingDraft();
         view.window.dispatchEvent(new view.window.MessageEvent('message', { data: host.messages.at(-1) }));
         await Promise.all(view.messages.filter(message => ['editCell', 'viewRefreshReady'].includes(message.type)).map(message => host.receive(message)));
+        await flushViewCommits(host, view);
         assert.strictEqual(await retry, true);
         assert.strictEqual(host.rows()[1][0], 'onefailure draft');
       } finally { view.close(); }

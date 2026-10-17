@@ -1,6 +1,6 @@
 import assert from 'assert';
 import { describe, it } from 'node:test';
-import { createEditorHarness, createWebviewDom } from './edit-integrity-harness';
+import { createEditorHarness, createWebviewDom, flushViewCommits } from './edit-integrity-harness';
 
 const turn = () => new Promise(resolve => setImmediate(resolve));
 function deliver(host: Awaited<ReturnType<typeof createEditorHarness>>, view: ReturnType<typeof createWebviewDom>) {
@@ -8,7 +8,8 @@ function deliver(host: Awaited<ReturnType<typeof createEditorHarness>>, view: Re
   assert.ok(request);
   const start = view.messages.length;
   view.window.dispatchEvent(new view.window.MessageEvent('message', { data: request }));
-  return Promise.all(view.messages.slice(start).map(message => host.receive(message)));
+  return Promise.all(view.messages.slice(start).map(message => host.receive(message)))
+    .then(() => flushViewCommits(host, view));
 }
 
 describe('awaitable untitled draft commit', () => {

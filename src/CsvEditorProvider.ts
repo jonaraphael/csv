@@ -70,6 +70,8 @@ class CsvEditorController {
   private renderedSeparator: string | undefined;
   private viewCommitRequested = false;
   private viewCommitSequence = 0;
+  private viewCommitNeedsFreshAck = false;
+  private draftActivityRevision = 0;
   private pendingClose = false;
   private pendingOperation: Promise<void> = Promise.resolve();
   private readonly failedCellEdits = new Map<string, { row: number; col: number }>();
@@ -137,9 +139,16 @@ class CsvEditorController {
       }
     });
 
-    webviewPanel.webview.onDidReceiveMessage(e => this.enqueueOperation(async () => {
+    webviewPanel.webview.onDidReceiveMessage(e => {
       const mutatesTable = ['replaceCells', 'pasteCells', 'insertColumn', 'insertColumns', 'deleteColumn', 'deleteColumns',
         'insertRow', 'insertRows', 'deleteRow', 'deleteRows', 'reorderColumns', 'reorderRows', 'sortColumn'].includes(e.type);
+      // Observe new drafts immediately, even while an earlier queued edit awaits
+      // applyEdit. An ACK received before that activity cannot authorize reload.
+      if (mutatesTable || ['cellEditStarted', 'editCell', 'discardCellDraft'].includes(e.type)) {
+        this.draftActivityRevision += 1;
+      }
+      const receivedRevision = this.draftActivityRevision;
+      return this.enqueueOperation(async () => {
       if (mutatesTable && this.failedCellEdits.size) {
         const failed = this.failedCellEdits.values().next().value!;
         void webviewPanel.webview.postMessage({ type: 'editCellFailed', row: failed.row, col: failed.col, retry: true });
@@ -158,6 +167,12 @@ class CsvEditorController {
             break;
           }
           if (!this.viewCommitRequested && e.requestId !== undefined) {
+            break;
+          }
+          if (this.viewCommitRequested && (this.viewCommitNeedsFreshAck || receivedRevision !== this.draftActivityRevision)) {
+            this.viewCommitNeedsFreshAck = false;
+            this.viewCommitSequence += 1;
+            this.postViewCommitRequest();
             break;
           }
           await this.finishViewCommit();
@@ -229,7 +244,8 @@ class CsvEditorController {
           await this.openLinkExternally(e.url);
           break;
       }
-    }));
+      });
+    });
 
     const changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument(e => {
       if (
@@ -484,6 +500,7 @@ class CsvEditorController {
       return;
     }
     this.viewCommitRequested = true;
+    this.viewCommitNeedsFreshAck = false;
     this.viewCommitSequence += 1;
     if (panel.visible) {
       // The final edit arrives before the acknowledgment in the ordered queue.
@@ -492,6 +509,17 @@ class CsvEditorController {
     } else {
       void this.enqueueOperation(() => this.finishViewCommit());
     }
+  }
+
+  private requestRecoveryRefresh(): void {
+    this.refreshAfterDraftCommit = true;
+    if (this.viewCommitRequested) {
+      // A recovery cannot reuse the snapshot taken before its queued edit.
+      this.viewCommitNeedsFreshAck = true;
+      return;
+    }
+    // The acknowledgment itself runs on the ordered queue, so never await it here.
+    this.requestViewCommit();
   }
 
   private async finishViewCommit(): Promise<void> {
@@ -510,10 +538,11 @@ class CsvEditorController {
     const action = this.pendingViewAction;
     this.pendingViewAction = undefined;
     this.pendingClose = false;
+    const refreshNeeded = this.refreshAfterDraftCommit;
+    this.refreshAfterDraftCommit = false;
     if (action) {
       await action();
-    } else if (!hadWaiters || this.refreshAfterDraftCommit) {
-      this.refreshAfterDraftCommit = false;
+    } else if (!hadWaiters || refreshNeeded) {
       this.updateWebviewContent();
     }
     this.resolveDraftCommitWaiters(!!this.currentWebviewPanel && !this.failedCellEdits.size);
@@ -639,7 +668,7 @@ class CsvEditorController {
   private clearFailedCellEdit(row: number, col: number, value: string): void {
     if (this.failedCellEdits.delete(`${row}:${col}`)) {
       this.postCommittedCell(row, col, value);
-      if (!this.failedCellEdits.size) { this.updateWebviewContent(); }
+      if (!this.failedCellEdits.size) { this.requestRecoveryRefresh(); }
     }
   }
 
@@ -727,7 +756,10 @@ class CsvEditorController {
     this.currentWebviewPanel?.webview.postMessage({ type: 'updateCell', row, col, value, rendered });
 
     // Trigger a full re-render if structure may have changed (new row/col created)
-    if (structuralChange || (recoveredDraft && !this.failedCellEdits.size)) {
+    if (recoveredDraft && !this.failedCellEdits.size) {
+      this.requestRecoveryRefresh();
+    }
+    if (structuralChange) {
       try { this.updateWebviewContent(); } catch (e) { console.error('CSV: refresh failed after structural edit', e); }
     }
   }
@@ -2245,7 +2277,7 @@ class CsvEditorController {
     if (this.pendingDocumentReference) {
       return this.pendingDocumentReference.separator;
     }
-    if (this.failedCellEdits.size && this.renderedSeparator !== undefined) {
+    if ((this.failedCellEdits.size || this.refreshAfterDraftCommit) && this.renderedSeparator !== undefined) {
       return this.renderedSeparator;
     }
     const stored = CsvEditorProvider.getSeparatorForUri(this.context, this.document.uri);

@@ -160,7 +160,9 @@ export async function createEditorHarness(options: {
     },
     get diskText() { return diskText; },
     get pendingEdits() { return delayedEdits.length; },
+    get pendingDraftRequestId(): number | undefined { return controller?.viewCommitRequested ? controller.viewCommitSequence : undefined; },
     deferEdits() { deferEdits = true; },
+    resumeEdits() { deferEdits = false; },
     failEdits(mode: 'false' | 'throw' | undefined) { editFailure = mode; },
     releaseEdit() { delayedEdits.shift()?.(); },
     async applyEdit(nextText: string): Promise<boolean> {
@@ -246,4 +248,17 @@ export function createWebviewDom(html: string) {
       selection.addRange(range);
     }
   };
+}
+
+export async function flushViewCommits(host: Awaited<ReturnType<typeof createEditorHarness>>, view: ReturnType<typeof createWebviewDom>): Promise<void> {
+  for (let round = 0; round < 10; round++) {
+    const requestId = host.pendingDraftRequestId;
+    if (requestId === undefined) { return; }
+    const request = host.messages.find(message => message.type === 'prepareViewRefresh' && message.requestId === requestId);
+    if (!request) { throw new Error('Missing prepare message'); }
+    const cursor = view.messages.length;
+    view.window.dispatchEvent(new view.window.MessageEvent('message', { data: request }));
+    await Promise.all(view.messages.slice(cursor).map(message => host.receive(message)));
+  }
+  throw new Error('View commit did not settle');
 }
