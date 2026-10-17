@@ -33,6 +33,7 @@ let editingCell = null, originalCellValue = "";
 let editMode = null; // 'quick' | 'detail' | null
 const DRAG_THRESHOLD_PX = 4;
 const RESIZE_HANDLE_PX = 6;
+const COLUMN_RESIZE_HANDLE_PX = 4;
 let resizeState = null;
 let reorderState = null;
 
@@ -45,6 +46,9 @@ dragIndicator.style.zIndex = '20000';
 dragIndicator.style.background = '#0a84ff';
 dragIndicator.style.display = 'none';
 document.body.appendChild(dragIndicator);
+const automaticColumnSizes = new WeakMap();
+let persistedColumnSizes = {};
+try { persistedColumnSizes = JSON.parse(root?.dataset?.columnsizes || '{}'); } catch {}
 let columnSizeState = {};
 let rowSizeState = {};
 
@@ -61,13 +65,23 @@ const normalizeSizeState = (raw, minSize) => {
   return out;
 };
 
+const setRenderedColumnWidth = (cell, px) => {
+  if (!automaticColumnSizes.has(cell)) {
+    automaticColumnSizes.set(cell, { width: cell.style.width, minWidth: cell.style.minWidth, maxWidth: cell.style.maxWidth, boxSizing: cell.style.boxSizing });
+  }
+  cell.style.boxSizing = 'border-box';
+  cell.style.width = `${px}px`;
+  cell.style.minWidth = `${px}px`;
+  cell.style.maxWidth = `${px}px`;
+};
+const persistColumnSizes = () => {
+  vscode.postMessage({ type: 'columnSizesChanged', columnSizes: { ...columnSizeState } });
+};
 const applySizeStateToRenderedCells = () => {
   for (const [col, width] of Object.entries(columnSizeState)) {
     const px = Math.max(40, Math.round(Number(width)));
     table.querySelectorAll(`[data-col="${col}"]`).forEach(cell => {
-      cell.style.width = `${px}px`;
-      cell.style.minWidth = `${px}px`;
-      cell.style.maxWidth = `${px}px`;
+      setRenderedColumnWidth(cell, px);
     });
   }
   for (const [row, height] of Object.entries(rowSizeState)) {
@@ -153,7 +167,7 @@ const restoreState = () => {
     const st = vscode.getState() || {};
     const restoredZoom = parsePositiveNumber(st.zoomScale);
     setZoomScale(restoredZoom ?? 1, false);
-    columnSizeState = normalizeSizeState(st.columnSizes, 40);
+    columnSizeState = normalizeSizeState(st.columnSizes ?? persistedColumnSizes, 40);
     rowSizeState = normalizeSizeState(st.rowSizes, getMinRowHeight());
     applySizeStateToRenderedCells();
     if (typeof st.scrollX === 'number' && scrollContainer) {
@@ -560,17 +574,60 @@ const getRowDropTarget = clientY => {
   return { beforeIndex, indicatorY };
 };
 const getResizeEdgeInfo = (target, e) => {
-  if (!target) return null;
-  if (isColumnHeaderCell(target)) {
-    const col = parseInt(target.getAttribute('data-col') || 'NaN', 10);
-    if (!Number.isNaN(col)) {
-      const rect = target.getBoundingClientRect();
-      const edgeDelta = rect.right - e.clientX;
-      if (edgeDelta >= 0 && edgeDelta <= RESIZE_HANDLE_PX) {
-        return { axis: 'column', index: col, rect };
-      }
+  if (editingCell || !Number.isFinite(e.clientX) || !Number.isFinite(e.clientY)) return null;
+  const element = getElementTarget(e.target);
+  if (element?.closest('a, .csv-link, input, textarea, select, button, [contenteditable="true"], [role="button"]')) return null;
+  const paintedCellAt = (x, y) => {
+    const hit = document.elementFromPoint(x, y);
+    return hit && table.contains(hit) ? getCellTarget(hit) : null;
+  };
+  const candidates = new Set();
+  const add = cell => { if (cell && table.contains(cell)) candidates.add(cell); };
+  if (target) {
+    add(target);
+    // A sticky seam can lie inside a partially covered scrolling cell's rect.
+    add(paintedCellAt(e.clientX - COLUMN_RESIZE_HANDLE_PX - 0.5, e.clientY));
+    const rect = target.getBoundingClientRect();
+    if (rect.width > 0 && Math.abs(e.clientX - rect.left) <= COLUMN_RESIZE_HANDLE_PX) {
+      // Hit the painted neighbor, which can differ from col-1 at a frozen seam.
+      add(paintedCellAt(rect.left - 0.5, e.clientY));
+      add(paintedCellAt(rect.left - 1, e.clientY));
+      add(target.previousElementSibling);
+    }
+  } else {
+    // Collapsed/fractional borders can target TR/TABLE rather than either cell.
+    for (const delta of [0, -0.5, 0.5, -1, 1]) {
+      add(paintedCellAt(e.clientX + delta, e.clientY));
     }
   }
+  let closest = null;
+  let closestDistance = Infinity;
+  for (const cell of candidates) {
+    const coords = getDataCellCoords(cell);
+    if (!coords) continue;
+    const rect = cell.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0 || e.clientY < rect.top - 0.5 || e.clientY > rect.bottom + 0.5 || Math.abs(e.clientX - rect.right) > COLUMN_RESIZE_HANDLE_PX + 0.75) continue;
+    const sampleY = clamp(e.clientY, rect.top + Math.min(0.5, rect.height / 4), rect.bottom - Math.min(0.5, rect.height / 4));
+    // A scrolled cell can share the frozen column's x coordinate while covered.
+    if (paintedCellAt(rect.right - Math.min(0.5, rect.width / 4), sampleY) !== cell) continue;
+    const neighbor = paintedCellAt(rect.right + 0.5, sampleY);
+    const next = neighbor && neighbor !== cell && neighbor.parentElement === cell.parentElement ? neighbor : cell.nextElementSibling;
+    const nextRect = next && getDataCellCoords(next) ? next.getBoundingClientRect() : null;
+    const adjacent = nextRect && nextRect.width > 0 && nextRect.left <= rect.right + 1.5 && nextRect.right > rect.right;
+    const contiguous = adjacent && Math.abs(nextRect.left - rect.right) <= 1.5;
+    const boundary = contiguous ? (rect.right + nextRect.left) / 2 : rect.right;
+    const leftCover = paintedCellAt(rect.left + Math.min(0.5, rect.width / 4), sampleY);
+    const visibleLeft = leftCover && leftCover !== cell ? Math.min(rect.right, Math.max(rect.left, leftCover.getBoundingClientRect().right)) : rect.left;
+    const nextWidth = adjacent ? nextRect.right - Math.max(nextRect.left, rect.right) : Infinity;
+    // Use the painted span at sticky seams so even partially covered cells retain a center.
+    const band = Math.min(COLUMN_RESIZE_HANDLE_PX, (rect.right - visibleLeft) / 4, nextWidth / 4);
+    const distance = Math.abs(e.clientX - boundary);
+    if (distance <= band && distance < closestDistance) {
+      closestDistance = distance;
+      closest = { axis: 'column', index: coords.col, rect };
+    }
+  }
+  if (closest) return closest;
   if (isRowIndexCell(target)) {
     const row = parseInt(target.getAttribute('data-row') || 'NaN', 10);
     if (!Number.isNaN(row)) {
@@ -587,17 +644,14 @@ const applyColumnWidth = (col, widthPx) => {
   const width = Math.max(40, Math.round(widthPx));
   columnSizeState[String(col)] = width;
   table.querySelectorAll(`[data-col="${col}"]`).forEach(cell => {
-    cell.style.width = `${width}px`;
-    cell.style.minWidth = `${width}px`;
-    cell.style.maxWidth = `${width}px`;
+    setRenderedColumnWidth(cell, width);
   });
 };
 const resetColumnWidth = col => {
   delete columnSizeState[String(col)];
   table.querySelectorAll(`[data-col="${col}"]`).forEach(cell => {
-    cell.style.width = '';
-    cell.style.minWidth = '';
-    cell.style.maxWidth = '';
+    const automatic = automaticColumnSizes.get(cell);
+    if (automatic) Object.assign(cell.style, automatic);
   });
 };
 const applyRowHeight = (row, heightPx) => {
@@ -700,6 +754,7 @@ const onGlobalDragMove = e => {
 };
 const onGlobalDragEnd = () => {
   if (resizeState) {
+    if (resizeState.axis === 'column') persistColumnSizes();
     resizeState = null;
     table.style.cursor = '';
     persistState();
@@ -769,6 +824,10 @@ table.addEventListener('mousedown', e => {
     return;
   }
   const target = getCellTarget(e.target);
+  if (e.button === 0 && startResizeDrag(target, e)) {
+    e.preventDefault();
+    return;
+  }
   if (!target) return;
 
   // Preserve selection on right-click; select target if outside current selection
@@ -787,10 +846,6 @@ table.addEventListener('mousedown', e => {
     return; // do not start drag selection on right-click
   }
   if (e.button !== 0) return;
-  if (!editingCell && startResizeDrag(target, e)) {
-    e.preventDefault();
-    return;
-  }
   if (!editingCell && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && startReorderDrag(target, e)) {
     e.preventDefault();
     return;
@@ -897,10 +952,6 @@ table.addEventListener('mousemove', e => {
     return;
   }
   const target = getCellTarget(e.target);
-  if (!target) {
-    table.style.cursor = '';
-    return;
-  }
   const edge = getResizeEdgeInfo(target, e);
   if (edge) {
     table.style.cursor = edge.axis === 'column' ? 'col-resize' : 'row-resize';
@@ -2022,6 +2073,7 @@ table.addEventListener('dblclick', e => {
     e.stopPropagation();
     if (edge.axis === 'column') {
       resetColumnWidth(edge.index);
+      persistColumnSizes();
     } else {
       resetRowHeight(edge.index);
     }

@@ -148,6 +148,9 @@ class CsvEditorController {
         case 'save':
           await this.handleSave();
           break;
+        case 'columnSizesChanged':
+          await CsvEditorProvider.setColumnSizesForUri(this.context, this.document.uri, e.columnSizes);
+          break;
         case 'copyCells':
           await this.copyCells(e.matrix, e.startRow, e.startCol, e.cut === true);
           break;
@@ -1452,7 +1455,8 @@ class CsvEditorController {
       nextChunkStart,
       hasRemoteChunks,
       mouseWheelZoomEnabled,
-      mouseWheelZoomInvert
+      mouseWheelZoomInvert,
+      columnSizes: CsvEditorProvider.getColumnSizesForUri(this.context, this.document.uri)
     });
   }
 
@@ -1705,8 +1709,9 @@ class CsvEditorController {
     hasRemoteChunks: boolean;
     mouseWheelZoomEnabled: boolean;
     mouseWheelZoomInvert: boolean;
+    columnSizes: Record<string, number>;
   }): string {
-    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, mouseWheelZoomEnabled, mouseWheelZoomInvert } = args;
+    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, mouseWheelZoomEnabled, mouseWheelZoomInvert, columnSizes } = args;
     const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
     // Build script URI using file path for compatibility (older APIs may lack Uri.joinPath)
     const scriptUri = webview.asWebviewUri(
@@ -1918,7 +1923,7 @@ class CsvEditorController {
     </style>
   </head>
   <body>
-    <div id="csv-root" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
+    <div id="csv-root" data-columnsizes="${this.escapeHtml(JSON.stringify(columnSizes))}" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
       ${tableHtml}
     </div>
 
@@ -1978,7 +1983,9 @@ class CsvEditorController {
     const widths = Array(numColumns).fill(0);
     for (const row of data) {
       for (let i = 0; i < numColumns; i++){
-        widths[i] = Math.max(widths[i], (row[i] || '').length);
+        for (const line of (row[i] || '').split(/\r\n|[\r\n]/)) {
+          widths[i] = Math.max(widths[i], line.length);
+        }
       }
     }
     console.log(`CSV: Column widths: ${widths}`);
@@ -2226,6 +2233,7 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   public static readonly headerKey     = 'csv.headerByUri';
   public static readonly serialKey     = 'csv.serialIndexByUri';
   public static readonly sepKey        = 'csv.separatorByUri';
+  public static readonly columnSizesKey = 'csv.columnSizesByUri';
   private static readonly DEFAULT_SEPARATOR = ',';
   private static readonly DEFAULT_SEPARATOR_MODE: SeparatorMode = 'extension';
   private static readonly BUILTIN_SEPARATORS_BY_EXTENSION: Record<string, string> = {
@@ -2594,6 +2602,38 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     const map = { ...(context.workspaceState.get<Record<string, boolean>>(CsvEditorProvider.serialKey, {})) };
     map[uri.toString()] = !!val; // always persist explicit override
     await context.workspaceState.update(CsvEditorProvider.serialKey, map);
+  }
+
+  public static normalizeColumnSizes(raw: unknown): Record<string, number> {
+    const sizes: Record<string, number> = {};
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return sizes;
+    }
+    for (const [key, value] of Object.entries(raw)) {
+      const col = Number(key);
+      const width = Number(value);
+      if (!Number.isInteger(col) || col < 0 || !Number.isFinite(width) || width < 40) {
+        continue;
+      }
+      sizes[String(col)] = Math.round(width);
+    }
+    return sizes;
+  }
+
+  public static getColumnSizesForUri(context: vscode.ExtensionContext, uri: vscode.Uri): Record<string, number> {
+    const map = context.workspaceState.get<Record<string, unknown>>(CsvEditorProvider.columnSizesKey, {});
+    return CsvEditorProvider.normalizeColumnSizes(map[uri.toString()]);
+  }
+
+  public static async setColumnSizesForUri(context: vscode.ExtensionContext, uri: vscode.Uri, raw: unknown): Promise<void> {
+    const map = { ...context.workspaceState.get<Record<string, unknown>>(CsvEditorProvider.columnSizesKey, {}) };
+    const sizes = CsvEditorProvider.normalizeColumnSizes(raw);
+    if (Object.keys(sizes).length) {
+      map[uri.toString()] = sizes;
+    } else {
+      delete map[uri.toString()];
+    }
+    await context.workspaceState.update(CsvEditorProvider.columnSizesKey, map);
   }
 
   public static getSeparatorForUri(context: vscode.ExtensionContext, uri: vscode.Uri): string | undefined {
