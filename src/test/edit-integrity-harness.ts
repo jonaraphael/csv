@@ -8,6 +8,7 @@ class TestUri {
   get fsPath() { return this.path; }
   toString() { return `${this.scheme}://${this.path}`; }
   static file(filePath: string) { return new TestUri(filePath); }
+  with(changes: { path: string }) { return new TestUri(changes.path, this.scheme); }
 }
 
 let activeHarness: any;
@@ -77,6 +78,7 @@ export async function createEditorHarness(options: {
   };
   const context = {
     extensionPath: process.cwd(),
+    extensionUri: TestUri.file(process.cwd()),
     workspaceState: {
       values: {} as Record<string, unknown>,
       get(key: string, fallback: unknown) { return this.values[key] ?? fallback; },
