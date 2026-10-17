@@ -2,13 +2,13 @@
   "name": "csv",
   "displayName": "CSV",
   "publisher": "ReprEng",
-  "description": "Seamlessly Display and Edit CSVs",
+  "description": "View and edit CSV, TSV, TAB, and PSV files as tables.",
   "icon": "images/icon.jpg",
   "repository": {
     "type": "git",
     "url": "https://github.com/jonaraphael/csv.git"
   },
-  "version": "1.4.1",
+  "version": "1.4.2",
   "engines": {
     "vscode": "^1.70.0",
     "node": ">=14"
