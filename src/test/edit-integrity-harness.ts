@@ -149,6 +149,7 @@ export async function createEditorHarness(options: {
   const messages: any[] = [];
   const delayedEdits: Array<() => void> = [];
   let deferEdits = false;
+  let editFailure: 'false' | 'throw' | undefined;
   const uri = new TestUri(options.fileName ?? `/test/data.${separator === '\t' ? 'tsv' : 'csv'}`, options.untitled ? 'untitled' : options.remote ? 'vscode-remote' : 'file');
   const document = {
     uri,
@@ -186,6 +187,7 @@ export async function createEditorHarness(options: {
   await CsvEditorProvider.setFrozenPanesForUri(context as any, uri as any, { rows: options.frozenRows, columns: options.frozenColumns });
   const panel = {
     active: true,
+    viewColumn: 2,
     visible: true,
     title: 'data.csv',
     webview: {
@@ -242,12 +244,14 @@ export async function createEditorHarness(options: {
     resourceDefaults: {} as Record<string, number>,
     configurationRequests: [] as Array<TestUri | undefined>,
     enabled: true,
+    async setSeparator(separator: string) { await CsvEditorProvider.setSeparatorForUri(context as any, uri as any, separator); },
     sourceReveals: [] as string[],
     nativeSaveCommands: [] as string[],
     get controllerCount() { return CsvEditorProvider.editors.length; },
     get activeController() { return CsvEditorProvider.currentActive; },
     saveUntitledAfterCommit() { controller.saveUntitledAfterCommit(); },
     requestViewCommit() { controller.requestViewCommit(); },
+    commitPendingDraft() { return controller.commitPendingDraft() as Promise<boolean>; },
     revealSourceAfterCommit() { harness.enabled = false; controller.revealSourceAfterCommit(); },
     setEnabled(enabled: boolean) { harness.enabled = enabled; controller.refresh(); },
     getCurrentSeparator() { return controller.getCurrentSeparator() as string; },
@@ -263,9 +267,14 @@ export async function createEditorHarness(options: {
     },
     get diskText() { return diskText; },
     get pendingEdits() { return delayedEdits.length; },
+    get pendingDraftRequestId(): number | undefined { return controller?.viewCommitRequested ? controller.viewCommitSequence : undefined; },
     deferEdits() { deferEdits = true; },
+    resumeEdits() { deferEdits = false; },
+    failEdits(mode: 'false' | 'throw' | undefined) { editFailure = mode; },
     releaseEdit() { delayedEdits.shift()?.(); },
     async applyEdit(nextText: string): Promise<boolean> {
+      if (editFailure === 'false') { return false; }
+      if (editFailure === 'throw') { throw new Error('applyEdit rejected'); }
       return new Promise(resolve => {
         const apply = () => {
           text = nextText;
@@ -348,4 +357,17 @@ export function createWebviewDom(html: string) {
       selection.addRange(range);
     }
   };
+}
+
+export async function flushViewCommits(host: Awaited<ReturnType<typeof createEditorHarness>>, view: ReturnType<typeof createWebviewDom>): Promise<void> {
+  for (let round = 0; round < 10; round++) {
+    const requestId = host.pendingDraftRequestId;
+    if (requestId === undefined) { return; }
+    const request = host.messages.find(message => message.type === 'prepareViewRefresh' && message.requestId === requestId);
+    if (!request) { throw new Error('Missing prepare message'); }
+    const cursor = view.messages.length;
+    view.window.dispatchEvent(new view.window.MessageEvent('message', { data: request }));
+    await Promise.all(view.messages.slice(cursor).map(message => host.receive(message)));
+  }
+  throw new Error('View commit did not settle');
 }

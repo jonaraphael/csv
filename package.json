@@ -139,7 +139,7 @@
       "editor/title": [
         {
           "command": "csv.toggleEditor",
-          "when": "!isInDiffEditor && (activeCustomEditorId == csv.editor || activeWebviewPanelId == csv.untitledEditor || (activeEditor == workbench.editors.textEditor && (resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i || (resourceScheme == untitled && editorLangId =~ /^(csv|tsv)$/))))",
+          "when": "!isInDiffEditor && (activeCustomEditorId == csv.editor || activeWebviewPanelId == csv.untitledEditor || (activeEditor == workbench.editors.files.textFileEditor && resourceScheme != untitled && resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i) || (activeEditor == workbench.editors.textResourceEditor && resourceScheme == untitled && editorLangId =~ /^(csv|tsv)$/))",
           "group": "navigation"
         },
         {

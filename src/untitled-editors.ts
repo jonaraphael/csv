@@ -9,6 +9,7 @@ type UntitledEditor = {
 };
 const editors = new Map<string, UntitledEditor>();
 const opened = new Set<string>();
+const switchingToSource = new Set<string>();
 let extensionContext: vscode.ExtensionContext | undefined;
 
 export function isUntitledCsv(document: vscode.TextDocument): boolean {
@@ -26,6 +27,39 @@ export function saveActiveUntitledCsvEditor(): void {
   }
   CsvEditorProvider.editors.find(controller => controller.getDocumentUri().toString() === editor.document.uri.toString())
     ?.saveUntitledAfterCommit();
+}
+
+export async function showActiveUntitledCsvSource(): Promise<void> {
+  const editor = getActiveUntitledCsvEditor();
+  if (!editor) {
+    return;
+  }
+  const key = editor.document.uri.toString();
+  if (switchingToSource.has(key)) {
+    return;
+  }
+  const controller = CsvEditorProvider.editors.find(candidate => candidate.getDocumentUri().toString() === key);
+  if (!controller) {
+    return;
+  }
+  switchingToSource.add(key);
+  try {
+    if (!await controller.commitPendingDraft() || editors.get(key) !== editor || editor.document.isClosed) {
+      return;
+    }
+    const source = await vscode.window.showTextDocument(editor.document, {
+      viewColumn: controller.getViewColumn() ?? editor.panel.viewColumn, preview: false
+    });
+    if (source.document === editor.document && editors.get(key) === editor) {
+      // The native owner remains open. Only its temporary standalone table closes.
+      editor.panel.dispose();
+    }
+  } catch (error) {
+    console.error('CSV: could not reveal the untitled source', error);
+    void vscode.window.showErrorMessage('CSV: Could not switch the untitled table to text.');
+  } finally {
+    switchingToSource.delete(key);
+  }
 }
 
 export async function openUntitledCsvEditor(document: vscode.TextDocument, viewColumn?: vscode.ViewColumn): Promise<void> {
@@ -149,6 +183,7 @@ export function registerUntitledCsvEditors(context: vscode.ExtensionContext): vo
       editors.forEach(editor => editor.panel.dispose());
       editors.clear();
       opened.clear();
+      switchingToSource.clear();
       extensionContext = undefined;
     } }
   );

@@ -27,6 +27,9 @@ const state = {
   subscriptions: [] as any[],
   tokens: [] as any[],
   failResolve: false,
+  commitResult: true,
+  commitWait: undefined as Promise<boolean> | undefined,
+  commitRequests: 0,
   saveRequests: 0,
   commands: new Map<string, (...args: any[]) => any>(),
   information: [] as string[]
@@ -43,6 +46,8 @@ class FakeProvider {
       document,
       getDocumentUri: () => controller.document.uri,
       isActive: () => panel.active,
+      getViewColumn: () => panel.viewColumn,
+      commitPendingDraft: () => { state.commitRequests++; return state.commitWait ?? Promise.resolve(state.commitResult); },
       saveUntitledAfterCommit: () => { state.saveRequests += 1; },
       updateDocumentReference: (replacement: any) => { controller.document = replacement; },
       revealSourceAfterCommit: async () => {
@@ -157,6 +162,9 @@ beforeEach(() => {
   state.subscriptions = [];
   state.tokens = [];
   state.failResolve = false;
+  state.commitResult = true;
+  state.commitWait = undefined;
+  state.commitRequests = 0;
   state.saveRequests = 0;
   state.commands.clear();
   state.information = [];
@@ -200,19 +208,60 @@ describe('untitled CSV document ownership and routing', () => {
     assert.strictEqual(state.resolutions[0].document, original);
   });
 
-  it('does not steal focus after an explicit switch to source and reuses its table on return', async () => {
+  it('commits before replacing the untitled table with its native owner and recreates on return', async () => {
     const original = document();
     activate(original);
     await settle();
     const panel = state.panels[0];
-    await toggleCsvEditor();
-    assert.strictEqual(state.activeTextEditor.document, original);
+    let finish!: (success: boolean) => void;
+    state.commitWait = new Promise(resolve => { finish = resolve; });
+    const switching = toggleCsvEditor();
     await settle();
-    assert.strictEqual(panel.active, false);
-    await toggleCsvEditor();
+    assert.strictEqual(panel.disposed, false);
     assert.strictEqual(panel.active, true);
-    assert.strictEqual(state.panels.length, 1);
-    assert.strictEqual(state.resolutions.length, 1);
+    assert.strictEqual(state.activeTextEditor, undefined);
+    assert.strictEqual(state.commitRequests, 1);
+    finish(true);
+    await switching;
+    assert.strictEqual((state.activeTextEditor as any).document, original);
+    await settle();
+    assert.strictEqual(panel.disposed, true);
+    assert.strictEqual(original.isClosed, false);
+    assert.strictEqual(original.isDirty, true);
+    assert.strictEqual(state.saveRequests, 0);
+    await toggleCsvEditor();
+    assert.strictEqual(state.panels[1].active, true);
+    assert.strictEqual(state.panels.length, 2);
+    assert.strictEqual(state.resolutions.length, 2);
+    assert.strictEqual(state.resolutions[1].document, original);
+  });
+
+  it('keeps the standalone panel and native owner intact when the draft cannot commit', async () => {
+    const original = document();
+    activate(original);
+    await settle();
+    state.commitResult = false;
+    await toggleCsvEditor();
+    assert.strictEqual(state.panels[0].disposed, false);
+    assert.strictEqual(state.panels[0].active, true);
+    assert.strictEqual(state.activeTextEditor, undefined);
+    assert.strictEqual(original.isClosed, false);
+    assert.strictEqual(original.getText(), 'name,value\nalready typed,42');
+    assert.strictEqual(state.saveRequests, 0);
+  });
+
+  it('ignores a completed commit after its standalone panel is disposed', async () => {
+    const original = document();
+    activate(original);
+    await settle();
+    let finish!: (success: boolean) => void;
+    state.commitWait = new Promise(resolve => { finish = resolve; });
+    const switching = toggleCsvEditor();
+    state.panels[0].dispose();
+    finish(true);
+    await switching;
+    assert.strictEqual(state.activeTextEditor, undefined);
+    assert.strictEqual(original.isClosed, false);
   });
 
   it('respects disabled state and opens the current buffer when explicitly re-enabled', async () => {

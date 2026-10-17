@@ -14,6 +14,7 @@ Integration candidate; final contents remain subject to review. No release has b
 - Added: Bounded, paginated read-only preview for large saved UTF-8 files.
 - Added: Table/text switching and untitled CSV/TSV editing with explicit Save As support.
 - Added: Explicit read-only comparison of two files as tables.
+- Fixed: The table/text toolbar action appears in supported text files and replaces saved-file views while retaining unsaved edits.
 - Fixed: Edit/save ordering and pending multiline edits across editor changes.
 - Fixed: Cmd/Ctrl+Shift+Arrow extends the current cell, row, or column selection while retaining its starting anchor.
 - Fixed: Clipboard actions, delimiter fidelity, and CSV quote/line-ending preservation during data mutations.
