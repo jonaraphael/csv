@@ -1512,7 +1512,8 @@ class CsvEditorController {
     const totalRows = data.length;
     const offset = Math.min(Math.max(0, hiddenRows), totalRows);
 
-    const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
+    const themeKind = vscode.window.activeColorTheme.kind;
+    const isDark = themeKind === vscode.ColorThemeKind.Dark || themeKind === vscode.ColorThemeKind.HighContrast;
     let headerRow: string[] = [];
     let bodyData: string[][] = [];
     if (totalRows === 0 || offset >= totalRows) {
@@ -1530,7 +1531,8 @@ class CsvEditorController {
 
     const columnData = Array.from({ length: numColumns }, (_, i) => bodyData.map(row => row[i] || ''));
     const columnTypes = columnData.map(col => this.estimateColumnDataType(col));
-    const useThemeForeground = columnColorMode === 'theme';
+    const highContrast = themeKind === vscode.ColorThemeKind.HighContrast || themeKind === vscode.ColorThemeKind.HighContrastLight;
+    const useThemeForeground = columnColorMode === 'theme' || highContrast;
     const palette = columnColorPalette === 'cool'
       ? 'cool'
       : (columnColorPalette === 'warm' ? 'warm' : 'default');
@@ -1589,9 +1591,16 @@ class CsvEditorController {
       }
     }
 
-    const colorCss = useThemeForeground
+    // VS Code changes these classes in place. Keep both palettes available so
+    // entering/leaving high contrast never needs to reload a live cell edit.
+    const colorCss = columnColorMode === 'theme'
       ? ''
-      : columnColors.map((hex, i) => `td[data-col="${i}"], th[data-col="${i}"] { color: ${hex}; }`).join('');
+      : columnTypes.map((type, i) => {
+        const light = this.getColumnColor(type, false, i, palette);
+        const dark = this.getColumnColor(type, true, i, palette);
+        return `body.vscode-light td[data-col="${i}"], body.vscode-light th[data-col="${i}"] { color: ${light} !important; }` +
+          `body.vscode-dark td[data-col="${i}"], body.vscode-dark th[data-col="${i}"] { color: ${dark} !important; }`;
+      }).join('');
 
     let tableHtml = `<table>`;
     if (headerFlag) {
@@ -1745,7 +1754,8 @@ class CsvEditorController {
     realRowCount: number;
   }): string {
     const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, mouseWheelZoomEnabled, mouseWheelZoomInvert, columnSizes, frozenPanes, firstVisibleRow, realRowCount } = args;
-    const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
+    const themeKind = vscode.window.activeColorTheme.kind;
+    const isDark = themeKind === vscode.ColorThemeKind.Dark || themeKind === vscode.ColorThemeKind.HighContrast;
     // Build script URI using file path for compatibility (older APIs may lack Uri.joinPath)
     const scriptUri = webview.asWebviewUri(
       vscode.Uri.file(path.join(this.context.extensionPath, 'media', 'main.js'))
@@ -1753,6 +1763,9 @@ class CsvEditorController {
 
     const frozenPanesScriptUri = webview.asWebviewUri(
       vscode.Uri.file(path.join(this.context.extensionPath, 'media', 'frozen-panes.js'))
+    );
+    const contrastStyleUri = webview.asWebviewUri(
+      vscode.Uri.file(path.join(this.context.extensionPath, 'media', 'high-contrast.css'))
     );
 
     // Safe separator transport (assumes single character; see assumptions)
@@ -1971,6 +1984,7 @@ class CsvEditorController {
       /* Per-column computed colors */
       ${extraColumnColorCss}
     </style>
+    <link rel="stylesheet" href="${contrastStyleUri}">
   </head>
   <body>
     <div id="csv-root" data-frozenrows="${frozenPanes.rows}" data-frozencolumns="${frozenPanes.columns}" data-firstrow="${firstVisibleRow}" data-realrowcount="${realRowCount}" data-columnsizes="${this.escapeHtml(JSON.stringify(columnSizes))}" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
