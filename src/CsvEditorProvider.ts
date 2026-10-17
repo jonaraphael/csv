@@ -445,7 +445,15 @@ class CsvEditorController {
 
   public refresh() {
     const config = vscode.workspace.getConfiguration('csv', this.document.uri);
-    if (!config.get<boolean>('enabled', true)) {
+    const enabled = config.get<boolean>('enabled', true);
+    if (this.failedCellEdits.size) {
+      this.refreshAfterDraftCommit = true;
+      if (!enabled) {
+        void vscode.window.showErrorMessage('CSV: Retry the failed cell edit or press Escape to discard it before disabling the table view.');
+      }
+      return;
+    }
+    if (!enabled) {
       const panel = this.currentWebviewPanel;
       if (this.document.uri.scheme === 'untitled') {
         this.revealSourceAfterCommit();

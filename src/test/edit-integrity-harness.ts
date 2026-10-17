@@ -54,6 +54,7 @@ const vscodeStub = {
     },
     executeCommand: async (name: string, ...args: unknown[]) => {
       activeHarness.executedCommands.push({ name, args });
+      activeHarness.recordedCommands.push([name, ...args]);
       if (activeHarness.commandError) {
         throw activeHarness.commandError;
       }
@@ -244,6 +245,9 @@ export async function createEditorHarness(options: {
     resourceDefaults: {} as Record<string, number>,
     configurationRequests: [] as Array<TestUri | undefined>,
     enabled: true,
+    recordedCommands: [] as unknown[][],
+    refresh() { CsvEditorProvider.editors.find(controller => controller.getDocumentUri() === uri as any)!.refresh(); },
+    get isOpen() { return CsvEditorProvider.editors.some(controller => controller.getDocumentUri() === uri as any); },
     async setSeparator(separator: string) { await CsvEditorProvider.setSeparatorForUri(context as any, uri as any, separator); },
     sourceReveals: [] as string[],
     nativeSaveCommands: [] as string[],

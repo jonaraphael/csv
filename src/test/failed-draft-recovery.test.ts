@@ -11,6 +11,53 @@ function deliver(host: Awaited<ReturnType<typeof createEditorHarness>>, view: Re
 }
 
 describe('unapplied ordinary cell drafts keep source row identities intact', () => {
+  for (const separator of [',', '\t']) {
+    for (const failure of ['false', 'throw'] as const) {
+      for (const recovery of ['retry', 'discard'] as const) {
+        it(`keeps a failed ${failure} draft when disabled until ${recovery} (${JSON.stringify(separator)})`, async () => {
+          const host = await createEditorHarness({ separator });
+          const view = createWebviewDom(host.panel.webview.html);
+          try {
+            view.messages.length = 0;
+            view.start(view.cell()); view.type(' failed draft'); view.cell().blur();
+            host.failEdits(failure);
+            await Promise.all(view.messages.map(message => host.receive(message)));
+            deliver(host, view);
+            const html = host.panel.webview.html;
+            const draft = view.cell().textContent;
+            const diskText = host.diskText;
+            host.setEnabled(false);
+            host.refresh();
+            assert.strictEqual(host.isOpen, true, 'the failed draft must retain its controller and panel');
+            assert.strictEqual(host.panel.webview.html, html, 'disable must retain the current DOM');
+            assert.strictEqual(view.cell().textContent, draft);
+            assert.ok(draft.includes('failed draft'));
+            assert.deepStrictEqual(host.rows(), [['name', 'value'], ['one', 'two']]);
+            assert.strictEqual(host.diskText, diskText);
+            assert.deepStrictEqual(host.recordedCommands, [], 'disable must not open a different editor before recovery');
+            assert.match(host.errors.at(-1)!, /Retry.*Escape.*before disabling/);
+
+            host.failEdits(undefined);
+            view.messages.length = 0;
+            view.start(view.cell());
+            if (recovery === 'discard') { view.key('Escape'); }
+            else { view.cell().blur(); }
+            await Promise.all(view.messages.map(message => host.receive(message)));
+            await flushViewCommits(host, view);
+            assert.strictEqual(host.rows()[1][0], recovery === 'retry' ? 'one failed draft' : 'one');
+            assert.strictEqual(host.diskText, diskText, 'recovery must not force a save');
+            host.refresh();
+            assert.strictEqual(host.isOpen, false, 'normal disable proceeds after the failed draft is resolved');
+            assert.deepStrictEqual(host.recordedCommands, [['vscode.openWith', host.document.uri, 'default']]);
+          } finally {
+            view.close();
+            if (host.isOpen) { host.panel.dispose(); }
+          }
+        });
+      }
+    }
+  }
+
   for (const failure of ['false', 'throw'] as const) {
     it(`blocks row deletion after an ordinary ${failure} failure until Escape discards the draft`, async () => {
       const host = await createEditorHarness({ rows: [['name', 'value'], ['one', 'two'], ['three', 'four']] });
