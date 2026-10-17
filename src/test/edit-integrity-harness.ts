@@ -19,7 +19,19 @@ const vscodeStub = {
     replace(_uri: unknown, _range: unknown, text: string) { this.text = text; }
   },
   ColorThemeKind: { Dark: 1 },
-  window: { activeColorTheme: { kind: 1 }, showQuickPick: async () => activeHarness.filterChoice, showInputBox: async () => activeHarness.filterInput, showInformationMessage: (text: string) => activeHarness.notifications.push(text), showErrorMessage: (text: string) => activeHarness.notifications.push(text) },
+  window: {
+    activeColorTheme: { kind: 1 },
+    showQuickPick: async (items: any[], options: any) => {
+      activeHarness.quickPickCalls.push({ items, options });
+      return typeof activeHarness.filterChoice === 'function' ? activeHarness.filterChoice(items, options) : activeHarness.filterChoice;
+    },
+    showInputBox: async (options: any) => {
+      activeHarness.inputBoxCalls.push(options);
+      return activeHarness.filterInput;
+    },
+    showInformationMessage: (text: string) => activeHarness.notifications.push(text),
+    showErrorMessage: (text: string) => activeHarness.notifications.push(text)
+  },
   env: { clipboard: { writeText: async (text: string) => { activeHarness.clipboardText = text; }, readText: async () => activeHarness.clipboardText } },
   workspace: {
     getConfiguration: (_section: string, resource?: TestUri) => {
@@ -120,6 +132,8 @@ export async function createEditorHarness(options: {
     clipboardText: '',
     filterChoice: undefined as any,
     filterInput: undefined as string | undefined,
+    quickPickCalls: [] as Array<{ items: any[]; options: any }>,
+    inputBoxCalls: [] as any[],
     notifications: [] as string[],
     resourceDefaults: {} as Record<string, number>,
     configurationRequests: [] as Array<TestUri | undefined>,
