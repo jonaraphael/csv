@@ -21,6 +21,8 @@ export function createWebview(options: { state?: any; persistedColumns?: Record<
     isConnected = true;
     rect = { left: 0, right: 100, top: 0, bottom: 30, width: 100, height: 30 };
     getBoundingClientRect() { return this.rect; }
+    get previousElementSibling(): Element | null { return this.parentElement?.children[this.parentElement.children.indexOf(this) - 1] ?? null; }
+    get nextElementSibling(): Element | null { return this.parentElement?.children[this.parentElement.children.indexOf(this) + 1] ?? null; }
     classList = {
       add: (...names: string[]) => names.forEach(name => this.classes.add(name)),
       remove: (...names: string[]) => names.forEach(name => this.classes.delete(name)),
@@ -90,6 +92,7 @@ export function createWebview(options: { state?: any; persistedColumns?: Record<
   const root = byId('csv-root');
   const table = new Element('TABLE');
   const head = new Element('THEAD');
+  const rows = new Map<string, Element>();
   if (options.header !== false) { table.appendChild(head); }
   root.appendChild(table);
   root.dataset.columnsizes = JSON.stringify(options.persistedColumns || {});
@@ -115,13 +118,23 @@ export function createWebview(options: { state?: any; persistedColumns?: Record<
   const cell = (row: number, col: number, value: string, header = false) => {
     const el = new Element(header ? 'TH' : 'TD');
     el.rect = { left: col * 100, right: (col + 1) * 100, top: row * 30, bottom: (row + 1) * 30, width: 100, height: 30 };
-    el.style.width = ''; el.style.minWidth = '8ch'; el.style.maxWidth = '100ch';
+    el.style.width = ''; el.style.minWidth = '8ch'; el.style.maxWidth = '100ch'; el.style.boxSizing = '';
     el.setAttribute('data-row', String(row));
     el.setAttribute('data-col', String(col));
     el.textContent = value;
-    (header ? head : table).appendChild(el);
+    const key = `${header}:${row}`;
+    if (!rows.has(key)) {
+      const tr = new Element('TR');
+      (header ? head : table).appendChild(tr);
+      rows.set(key, tr);
+    }
+    rows.get(key)!.appendChild(el);
     return el;
   };
+  (document as any).elementFromPoint = (x: number, y: number) => table.querySelectorAll('td, th').find(cell => {
+    const rect = cell.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  }) ?? table;
   const dispatch = (target: Element, type: string, options: any = {}) => {
     const event: any = {
       type, target, defaultPrevented: false, stopped: false, immediate: false,
@@ -144,4 +157,3 @@ export function createWebview(options: { state?: any; persistedColumns?: Record<
     vm.runInContext(`selectRange({ row: ${startRow}, col: ${startCol} }, { row: ${endRow}, col: ${endCol} }); anchorCell = currentSelection[0];`, context);
   }};
 }
-
