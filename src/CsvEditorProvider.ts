@@ -456,6 +456,8 @@ class CsvEditorController {
           separator,
           [{ row, col, value: String(value ?? '') }]
         );
+      } else {
+        newCsvText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(oldText, separator, nextData);
       }
       if (newCsvText === undefined) {
         newCsvText = Papa.unparse(nextData, { delimiter: separator });
@@ -736,7 +738,7 @@ class CsvEditorController {
       const separator = this.getSeparator();
       const oldText = this.document.getText();
       const result = Papa.parse(oldText, { dynamicTyping: false, delimiter: separator });
-      const data = result.data as string[][];
+      const data = this.trimTrailingEmptyRows(result.data as string[][]);
 
       const pasteResult = CsvEditorController.applyPasteMatrixToData(data, matrix, anchorRow, anchorCol, selection);
       if (!pasteResult.changed) {
@@ -746,6 +748,8 @@ class CsvEditorController {
       let newCsvText: string | undefined;
       if (!pasteResult.structuralChange) {
         newCsvText = CsvEditorProvider.applyFieldUpdatesPreservingFormat(oldText, separator, pasteResult.updates);
+      } else {
+        newCsvText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(oldText, separator, this.trimTrailingEmptyRows(data));
       }
       if (newCsvText === undefined) {
         newCsvText = Papa.unparse(data, { delimiter: separator });
@@ -1323,7 +1327,7 @@ class CsvEditorController {
       const separator = this.getSeparator();
       const text = this.document.getText();
       const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-      const data = result.data as string[][];
+      const data = this.trimTrailingEmptyRows(result.data as string[][]);
       const numColumns = data.reduce((max, row) => Math.max(max, row.length), 0);
       if (numColumns <= 0) return;
 
@@ -1334,13 +1338,13 @@ class CsvEditorController {
       const reorderedData = data.map(row => {
         const normalized = Array.from({ length: numColumns }, (_, i) => row[i] ?? '');
         const next = columnOrder.map(colIdx => normalized[colIdx] ?? '');
-        while (next.length > 0 && next[next.length - 1] === '') {
-          next.pop();
-        }
-        return next;
+        // Keep explicit empty fields; omit only positions absent from the source row.
+        const lastPresent = columnOrder.reduce((last, colIdx, index) => colIdx < row.length ? index : last, -1);
+        return next.slice(0, lastPresent + 1);
       });
 
-      const newText = Papa.unparse(reorderedData, { delimiter: separator });
+      const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, reorderedData, undefined, columnOrder)
+        ?? Papa.unparse(reorderedData, { delimiter: separator });
       const fullRange = new vscode.Range(
         0, 0,
         this.document.lineCount,
@@ -1361,13 +1365,15 @@ class CsvEditorController {
       const separator = this.getSeparator();
       const text = this.document.getText();
       const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-      const data = result.data as string[][];
+      const data = this.trimTrailingEmptyRows(result.data as string[][]);
       if (!data.length) return;
 
-      const { reordered, changed } = this.reorderByIndices(data, indices, beforeIndex);
+      const { reordered: rowOrder, changed } = this.reorderByIndices(data.map((_, index) => index), indices, beforeIndex);
       if (!changed) return;
 
-      const newText = Papa.unparse(reordered, { delimiter: separator });
+      const reordered = rowOrder.map(index => data[index]);
+      const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, reordered, rowOrder)
+        ?? Papa.unparse(reordered, { delimiter: separator });
       const fullRange = new vscode.Range(
         0, 0,
         this.document.lineCount,
@@ -2418,8 +2424,8 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     const sep = delimiter && delimiter.length ? delimiter : CsvEditorProvider.DEFAULT_SEPARATOR;
     const rows: CsvFieldSpan[][] = [];
     let row: CsvFieldSpan[] = [];
-    let fieldStart = 0;
-    let i = 0;
+    let fieldStart = text.startsWith('\uFEFF') ? 1 : 0;
+    let i = fieldStart;
     let inQuotes = false;
     let quoted = false;
 
@@ -2535,6 +2541,90 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     let output = text;
     for (const edit of edits) {
       output = output.slice(0, edit.start) + edit.replacement + output.slice(edit.end);
+    }
+    return output;
+  }
+
+  public static applyStructuralUpdatesPreservingFormat(
+    text: string,
+    delimiter: string,
+    data: string[][],
+    rowOrder?: number[],
+    columnOrder?: number[]
+  ): string | undefined {
+    const parsed = Papa.parse<string[]>(text, { delimiter, dynamicTyping: false });
+    if (parsed.errors.some(error => error.type === 'Quotes')) {
+      return undefined;
+    }
+    const original = parsed.data;
+    let contentRowCount = original.length;
+    while (contentRowCount > 0 && original[contentRowCount - 1].every(value => value === '')) {
+      contentRowCount--;
+    }
+    const spans = CsvEditorProvider.parseCsvFieldSpans(text, delimiter);
+    // Pasting into the displayed append row can fill an existing empty source
+    // record. Consume that record rather than retaining it again as a suffix.
+    for (let row = 0; row < data.length; row++) {
+      const sourceRow = rowOrder?.[row] ?? row;
+      const sourceEnd = spans[sourceRow]?.slice(-1)[0]?.end;
+      const sourceStart = spans[sourceRow]?.[0]?.start;
+      if (sourceEnd !== undefined && (sourceEnd < text.length || (sourceStart ?? sourceEnd) < sourceEnd) && data[row].some(value => value !== '')) {
+        contentRowCount = Math.max(contentRowCount, sourceRow + 1);
+      }
+    }
+    const bom = text.startsWith('\uFEFF') ? '\uFEFF' : '';
+    const lastSpan = contentRowCount > 0 ? spans[contentRowCount - 1]?.slice(-1)[0] : undefined;
+    const suffix = text.slice(lastSpan?.end ?? bom.length);
+    const rowBreak = (row: number): string | undefined => {
+      const end = spans[row]?.slice(-1)[0]?.end;
+      if (end === undefined) {
+        return undefined;
+      }
+      return /^(\r\n|\n|\r)/.exec(text.slice(end))?.[0];
+    };
+    const defaultBreak = parsed.meta.linebreak || '\n';
+    const columnPrefersQuotes = (col: number): boolean => {
+      // The body supplies the convention when a header uses a different style.
+      const sample = spans.slice(contentRowCount > 1 ? 1 : 0, contentRowCount)
+        .map(row => row[col]).filter((span): span is CsvFieldSpan => !!span);
+      return sample.length > 0 && sample.every(span => span.quoted);
+    };
+    const quotedColumns = new Map<number, boolean>();
+    let output = bom;
+    for (let row = 0; row < data.length; row++) {
+      const sourceRow = rowOrder?.[row] ?? row;
+      const fields: string[] = [];
+      for (let col = 0; col < data[row].length; col++) {
+        const sourceCol = columnOrder?.[col] ?? col;
+        const span = sourceRow < contentRowCount ? spans[sourceRow]?.[sourceCol] : undefined;
+        const value = data[row][col] ?? '';
+        if (span && original[sourceRow]?.[sourceCol] === value) {
+          fields.push(text.slice(span.start, span.end));
+        } else {
+          if (!quotedColumns.has(sourceCol)) {
+            quotedColumns.set(sourceCol, columnPrefersQuotes(sourceCol));
+          }
+          fields.push(CsvEditorProvider.encodeCsvField(value, delimiter, span?.quoted ?? quotedColumns.get(sourceCol) ?? false));
+        }
+      }
+      output += fields.join(delimiter);
+      if (row < data.length - 1) {
+        output += rowBreak(sourceRow) ?? defaultBreak;
+      }
+    }
+    output += suffix;
+    // Papa Parse remains authoritative: never reuse source tokens if their
+    // reconstruction would change the requested values or field boundaries.
+    const actual = Papa.parse<string[]>(output, { delimiter, dynamicTyping: false });
+    const trimEmpty = (rows: string[][]) => {
+      const result = [...rows];
+      while (result.length > 0 && result[result.length - 1].every(value => value === '')) {
+        result.pop();
+      }
+      return result;
+    };
+    if (actual.errors.some(error => error.type === 'Quotes') || JSON.stringify(trimEmpty(actual.data)) !== JSON.stringify(trimEmpty(data))) {
+      return undefined;
     }
     return output;
   }

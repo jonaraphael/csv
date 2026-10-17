@@ -43,7 +43,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Find & Replace Overlay:** Built-in find/replace bar with match options (case, whole-word, regex), keyboard navigation, and single/all replace actions across the full file (including chunked rows).
 - **Multiline Cell Display:** Cells with embedded newlines render as wrapped multi-line content (with preserved line breaks and matching row height).
 - **Clickable Links:** URLs in cells are automatically detected and displayed as clickable links. Ctrl/Cmd+click to open them in your browser.
-- **Preserved CSV Integrity:** All modifications respect CSV formatting—no unwanted extra characters or formatting issues.
+- **Preserved CSV Integrity:** Cell edits, expanding grid pastes, and row/column moves preserve existing field quoting and line endings. Appended values follow the existing column quote style when the column uses one consistently.
 - **Optimized for Performance:** Designed for medium-sized datasets, ensuring a smooth editing experience without compromising on functionality.
 - **Large File Support:** Loads big CSVs in chunks so even large datasets open quickly.
 - **CSV/TSV/TAB/PSV Support:** `.csv`, `.tsv`, `.tab`, and `.psv` files are recognized automatically. Defaults: comma for CSV, tab for TSV/TAB, pipe for PSV.
