@@ -200,6 +200,16 @@ class CsvEditorController {
         case 'columnSizesChanged':
           await CsvEditorProvider.setColumnSizesForUri(this.context, this.document.uri, e.columnSizes);
           break;
+        case 'setHeader': {
+          if (typeof e.enabled === 'boolean') {
+            const uri = this.document.uri;
+            await CsvEditorProvider.setHeaderForUri(this.context, uri, e.enabled);
+            CsvEditorProvider.editors
+              .filter(editor => editor.getDocumentUri().toString() === uri.toString())
+              .forEach(editor => editor.refresh());
+          }
+          break;
+        }
         case 'copyCells':
           await this.copyCells(e.matrix, e.rowIds, e.startCol, e.cut === true);
           break;
@@ -1753,6 +1763,7 @@ class CsvEditorController {
       extraColumnColorCss: colorCss,
       nextChunkStart,
       hasRemoteChunks,
+      headerEnabled: treatHeader,
       mouseWheelZoomEnabled,
       mouseWheelZoomInvert,
       columnSizes: CsvEditorProvider.getColumnSizesForUri(this.context, this.document.uri),
@@ -2027,6 +2038,7 @@ class CsvEditorController {
     extraColumnColorCss: string;
     nextChunkStart: number;
     hasRemoteChunks: boolean;
+    headerEnabled: boolean;
     mouseWheelZoomEnabled: boolean;
     mouseWheelZoomInvert: boolean;
     columnSizes: Record<string, number>;
@@ -2039,7 +2051,7 @@ class CsvEditorController {
     totalFilterRows: number;
     filterHeader: string[] | undefined;
   }): string {
-    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, mouseWheelZoomEnabled, mouseWheelZoomInvert, columnSizes, frozenPanes, firstVisibleRow, realRowCount, visibleRowIds, filters, matchedRows, totalFilterRows, filterHeader } = args;
+    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, headerEnabled, mouseWheelZoomEnabled, mouseWheelZoomInvert, columnSizes, frozenPanes, firstVisibleRow, realRowCount, visibleRowIds, filters, matchedRows, totalFilterRows, filterHeader } = args;
     const themeKind = vscode.window.activeColorTheme.kind;
     const isDark = themeKind === vscode.ColorThemeKind.Dark || themeKind === vscode.ColorThemeKind.HighContrast;
     // Build script URI using file path for compatibility (older APIs may lack Uri.joinPath)
@@ -2278,7 +2290,7 @@ class CsvEditorController {
     <link rel="stylesheet" href="${contrastStyleUri}">
   </head>
   <body>
-    <div id="csv-root" data-roworder="${this.escapeHtml(JSON.stringify(visibleRowIds))}" data-filtered="${filters.length ? '1' : '0'}" data-frozenrows="${frozenPanes.rows}" data-frozencolumns="${frozenPanes.columns}" data-firstrow="${firstVisibleRow}" data-realrowcount="${realRowCount}" data-columnsizes="${this.escapeHtml(JSON.stringify(columnSizes))}" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
+    <div id="csv-root" data-headerenabled="${headerEnabled ? '1' : '0'}" data-roworder="${this.escapeHtml(JSON.stringify(visibleRowIds))}" data-filtered="${filters.length ? '1' : '0'}" data-frozenrows="${frozenPanes.rows}" data-frozencolumns="${frozenPanes.columns}" data-firstrow="${firstVisibleRow}" data-realrowcount="${realRowCount}" data-columnsizes="${this.escapeHtml(JSON.stringify(columnSizes))}" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
       ${filters.length ? `<div id="filterStatus" role="status" title="Sort and Replace All affect matching rows; saving keeps every source row."><span>Filtered: ${matchedRows} of ${totalFilterRows} rows</span><button type="button" id="clearAllFilters">Clear all filters</button>${filters.map(filter => `<button type="button" data-clear-filter="${filter.column}" title="Remove this column filter">${this.escapeHtml(filterHeader?.[filter.column] || `Column ${filter.column + 1}`)}: ${this.escapeHtml(filter.operator === 'empty' ? 'is empty' : filter.operator === 'notEmpty' ? 'is not empty' : `${filter.operator} “${filter.value}”`)} ×</button>`).join('')}</div>` : ''}
       ${tableHtml}
     </div>

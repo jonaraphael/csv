@@ -202,14 +202,14 @@ const restoreState = () => {
       }
     }
     if (typeof st.anchorRow === 'number' && typeof st.anchorCol === 'number') {
-      const tag = (hasHeader && st.anchorRow === headerSourceRow ? 'th' : 'td');
-      let sel = table.querySelector(`${tag}[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"]`);
+      const selector = `td[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"], th[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"]`;
+      let sel = table.querySelector(selector);
       // If not present yet (due to chunking), load chunks until available or exhausted
       if (!sel && typeof window.__csvLoadNextChunk === 'function') {
         let guard = 100; // prevent infinite loops
         while (!sel && typeof window.__csvLoadNextChunk === 'function' && guard-- > 0) {
           if (!window.__csvLoadNextChunk()) break;
-          sel = table.querySelector(`${tag}[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"]`);
+          sel = table.querySelector(selector);
         }
       }
       applySizeStateToRenderedCells();
@@ -391,6 +391,7 @@ const handleZoomWheel = e => {
 window.addEventListener('wheel', handleZoomWheel, { passive: false });
 
 const hasHeader = document.querySelector('thead') !== null;
+const headerEnabled = root?.dataset?.headerenabled === '1';
 const getCellCoords = cell => ({ row: parseInt(cell.getAttribute('data-row')), col: parseInt(cell.getAttribute('data-col')) });
 const clearSelection = () => { currentSelection.forEach(c => c.classList.remove('selected')); currentSelection = []; };
 const contextMenu = document.getElementById('contextMenu');
@@ -416,6 +417,11 @@ const showContextMenu = (x, y, row, col) => {
     d.style.margin = '1px 0';
     contextMenu.appendChild(d);
   };
+  item(headerEnabled ? 'Treat first row as data' : 'Use first row as header', () => {
+    persistState();
+    vscode.postMessage({ type: 'setHeader', enabled: !headerEnabled });
+  });
+  divider();
   item('Cut', () => copySelectionToClipboard(true));
   item('Copy', () => copySelectionToClipboard());
   item('Paste', () => pasteFromClipboard());
