@@ -36,6 +36,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Advanced Multi-Cell Selection:** Easily select and copy blocks of data, then paste them elsewhere as properly formatted CSV.
 - **Add/Delete Columns:** Right-click any cell to add a column left or right, or remove the selected column.
 - **Add/Delete Rows:** Insert above/below or remove the selected row via context menu.
+- **Untitled CSV/TSV:** Choose CSV or TSV language mode in a new untitled text document to open its table without saving first. Separator and other per-file commands work in this view. The native source remains open and shares unsaved edits. Saving reveals the source and uses VS Code’s normal Save As flow; the temporary table closes when the untitled document becomes a saved file.
 - **Edit Empty CSVs:** Create or open an empty CSV file and start typing immediately.
 - **Column Sorting:** Right-click a header and choose A–Z or Z–A.
 - **Custom Font Controls:** Choose a font family and optional font-size override, or inherit VS Code defaults.

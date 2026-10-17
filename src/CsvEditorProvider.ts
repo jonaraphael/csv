@@ -89,7 +89,7 @@ class CsvEditorController {
     }
 
     const proceed = await this.confirmLargeFileOpen(config, webviewPanel, _token);
-    if (!proceed) {
+    if (!proceed || _token.isCancellationRequested) {
       return;
     }
 
@@ -198,6 +198,9 @@ class CsvEditorController {
       changeDocumentSubscription.dispose();
       CsvEditorProvider.editors = CsvEditorProvider.editors.filter(ed => ed !== this);
       this.currentWebviewPanel = undefined;
+      if (CsvEditorProvider.currentActive === this) {
+        CsvEditorProvider.currentActive = undefined;
+      }
     });
   }
 
@@ -234,7 +237,11 @@ class CsvEditorController {
         preserveFocus: !webviewPanel.active,
         preview: webviewPanel.active ? webviewPanel.active : false
       };
-      await vscode.commands.executeCommand('vscode.openWith', uri, 'default', opts);
+      if (uri.scheme === 'untitled') {
+        await vscode.window.showTextDocument(this.document, opts);
+      } else {
+        await vscode.commands.executeCommand('vscode.openWith', uri, 'default', opts);
+      }
     } finally {
       try { webviewPanel.dispose(); } catch {}
     }
@@ -245,6 +252,9 @@ class CsvEditorController {
     webviewPanel: vscode.WebviewPanel,
     token: vscode.CancellationToken
   ): Promise<boolean> {
+    if (this.document.uri.scheme === 'untitled') {
+      return true;
+    }
     const maxFileSizeMB = this.getMaxFileSizeLimitMb(config);
     if (maxFileSizeMB <= 0) {
       return true;
@@ -295,8 +305,14 @@ class CsvEditorController {
   public refresh() {
     const config = vscode.workspace.getConfiguration('csv', this.document.uri);
     if (!config.get<boolean>('enabled', true)) {
-      this.currentWebviewPanel?.dispose();
-      vscode.commands.executeCommand('vscode.openWith', this.document.uri, 'default');
+      const panel = this.currentWebviewPanel;
+      if (this.document.uri.scheme === 'untitled') {
+        void vscode.window.showTextDocument(this.document, { viewColumn: panel?.viewColumn, preview: false });
+        panel?.dispose();
+      } else {
+        panel?.dispose();
+        vscode.commands.executeCommand('vscode.openWith', this.document.uri, 'default');
+      }
     } else {
       if (this.currentWebviewPanel) {
         this.forceReload();
@@ -384,6 +400,13 @@ class CsvEditorController {
       CsvEditorController.normalizeFontSize(editorFontSize) ??
       14
     );
+  }
+
+  public updateDocumentReference(document: vscode.TextDocument): void {
+    if (document.uri.toString() === this.document.uri.toString()) {
+      this.document = document;
+      this.refresh();
+    }
   }
 
   public getDocumentUri(): vscode.Uri {
@@ -949,6 +972,13 @@ class CsvEditorController {
   private async handleSave() {
     this.isSaving = true;
     try {
+      if (this.document.uri.scheme === 'untitled') {
+        // Native Save owns the actual Save As transition. The temporary grid
+        // closes when VS Code closes the original untitled document.
+        await vscode.window.showTextDocument(this.document, { viewColumn: this.currentWebviewPanel?.viewColumn, preview: false });
+        await vscode.commands.executeCommand('workbench.action.files.save');
+        return;
+      }
       const success = await this.document.save();
       console.log(success ? 'CSV: Document saved' : 'CSV: Failed to save document');
     } catch (error) {
@@ -1976,7 +2006,9 @@ class CsvEditorController {
       return this.separatorCache.separator;
     }
 
-    const filePath = this.document?.uri.fsPath || this.document?.uri.path || '';
+    const filePath = this.document.uri.scheme === 'untitled' && this.document.languageId === 'tsv'
+      ? 'untitled.tsv'
+      : this.document?.uri.fsPath || this.document?.uri.path || '';
     const text = this.document.getText();
     const separator = CsvEditorProvider.resolveInheritedSeparator(filePath, text, settings);
     this.separatorCache = { version, configKey, separator };

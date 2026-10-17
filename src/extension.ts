@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { CsvEditorProvider } from './CsvEditorProvider';
 import { registerCsvCommands } from './commands';
+import { registerUntitledCsvEditors } from './untitled-editors';
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('CSV: Extension activated');
@@ -113,6 +114,7 @@ export function activate(context: vscode.ExtensionContext) {
       { supportsMultipleEditorsPerDocument: false }
     )
   );
+  registerUntitledCsvEditors(context);
 }
 
 export function deactivate() {
