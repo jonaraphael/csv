@@ -1,8 +1,16 @@
 import Papa from 'papaparse';
 
-// Quote every field so even a single empty cell and trailing empty rows survive.
+const clipboardDelimiterCandidates = ['\t', ',', ';', '|'];
+
 export function serializeClipboardMatrix(matrix: string[][], delimiter: string): string {
-  return Papa.unparse(matrix, { delimiter, quotes: true, newline: '\r\n' });
+  const escapedCharacters = [delimiter, ...clipboardDelimiterCandidates, '"', '\r', '\n', '\uFEFF'];
+  // Keep ordinary text plain. Complex ranges retain consistent CSV quoting so
+  // paste auto-detection preserves their cell boundaries and explicit blanks.
+  const quoteAll = matrix.some(row => row.some(value =>
+    value === '' || value.startsWith(' ') || value.endsWith(' ') ||
+    escapedCharacters.some(character => value.includes(character))
+  ));
+  return Papa.unparse(matrix, { delimiter, quotes: quoteAll, newline: '\r\n' });
 }
 
 export function parseClipboardMatrix(text: string, fallbackDelimiter: string): string[][] {
@@ -12,7 +20,7 @@ export function parseClipboardMatrix(text: string, fallbackDelimiter: string): s
   const parsed = Papa.parse<string[]>(text, {
     dynamicTyping: false,
     delimiter: '',
-    delimitersToGuess: [fallbackDelimiter, '\t', ',', ';', '|'].filter((value, index, all) => all.indexOf(value) === index)
+    delimitersToGuess: [fallbackDelimiter, ...clipboardDelimiterCandidates].filter((value, index, all) => all.indexOf(value) === index)
   });
   const matrix = parsed.data.map(row => row.map(value => String(value ?? '')));
   // A terminal record separator creates one parser sentinel, not an extra record.

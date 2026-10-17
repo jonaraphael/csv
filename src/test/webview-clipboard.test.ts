@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import vm from 'vm';
 import { describe, it } from 'node:test';
+import { serializeClipboardMatrix } from '../clipboard';
 
 type Listener = { callback: (event: any) => void; capture: boolean };
 
@@ -142,6 +143,20 @@ function createWebview() {
 }
 
 describe('Shipped webview clipboard interactions', () => {
+  it('exports plain single-cell text for native paste into Search', () => {
+    const view = createWebview();
+    const cell = view.cell(1, 0, 'hello world');
+    view.select(1, 0);
+    view.dispatch(cell, 'copy');
+    const clipboardText = serializeClipboardMatrix(view.messages[0].matrix, ',');
+    assert.strictEqual(clipboardText, 'hello world');
+    const input = view.byId('findInput');
+    input.focus();
+    const event = view.dispatch(input, 'paste', { clipboardData: { getData: () => clipboardText } });
+    assert.strictEqual(event.defaultPrevented, false, 'Search must retain native text paste');
+    assert.strictEqual(view.messages.length, 1, 'Search paste must not become a grid paste');
+  });
+
   it('copies headers and multiline values without serial indices or trimmed blanks', () => {
     const view = createWebview();
     view.cell(0, -1, '#', true);
