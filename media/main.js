@@ -1819,7 +1819,7 @@ document.addEventListener('keydown', e => {
     }
   }
   if (editingCell && e.key === 'Escape') {
-    e.preventDefault(); editingCell.innerText = originalCellValue; editingCell.blur();
+    e.preventDefault(); editingCell.textContent = originalCellValue; editingCell.blur();
   }
   if (!editingCell && e.key === 'Escape') {
     clearSelection();
@@ -1858,10 +1858,10 @@ document.addEventListener('paste', e => {
 
 const selectAllCells = () => { clearSelection(); document.querySelectorAll('td, th').forEach(cell => { cell.classList.add('selected'); currentSelection.push(cell); }); };
 
-const setCursorToEnd = cell => { setTimeout(() => { 
+const setCursorToEnd = cell => {
   const range = document.createRange(); range.selectNodeContents(cell); range.collapse(false);
   const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
-}, 10); };
+};
 
 const setCursorToStart = cell => { setTimeout(() => {
   const range = document.createRange(); range.selectNodeContents(cell); range.collapse(true);
@@ -1907,11 +1907,9 @@ const placeCaretBeforeSentinel = sentinel => {
   const sel = window.getSelection();
   if (!sel) return;
   const range = document.createRange();
-  if (sentinel.firstChild) {
-    range.setStart(sentinel.firstChild, 0);
-  } else {
-    range.setStartBefore(sentinel);
-  }
+  // Keep typed text outside the disposable placeholder. A text-bearing span
+  // would absorb new input and delete that input when the placeholder is removed.
+  range.setStartBefore(sentinel);
   range.collapse(true);
   sel.removeAllRanges();
   sel.addRange(range);
@@ -1919,9 +1917,8 @@ const placeCaretBeforeSentinel = sentinel => {
 
 const appendVisibleNewlineAtEnd = cell => {
   removeNewlineSentinels(cell);
-  const sentinel = document.createElement('span');
+  const sentinel = document.createElement('br');
   sentinel.setAttribute(NEWLINE_SENTINEL_ATTR, 'true');
-  sentinel.textContent = '\u200B';
   cell.appendChild(document.createTextNode('\n'));
   cell.appendChild(sentinel);
   placeCaretBeforeSentinel(sentinel);
@@ -1944,9 +1941,8 @@ const insertNewlineAtCaret = cell => {
   const atEnd = range.collapsed && isRangeAtEndOfCell(cell, range);
   range.deleteContents();
   if (atEnd) {
-    const sentinel = document.createElement('span');
+    const sentinel = document.createElement('br');
     sentinel.setAttribute(NEWLINE_SENTINEL_ATTR, 'true');
-    sentinel.textContent = '\u200B';
     const fragment = document.createDocumentFragment();
     fragment.appendChild(document.createTextNode('\n'));
     fragment.appendChild(sentinel);
@@ -2083,7 +2079,7 @@ window.addEventListener('message', event => {
     isUpdating = true;
     const { row, col, value, rendered } = message;
     const cell = table.querySelector('td[data-row="'+row+'"][data-col="'+col+'"], th[data-row="'+row+'"][data-col="'+col+'"]');
-    if (cell) {
+    if (cell && cell !== editingCell) {
       if (typeof rendered === 'string') {
         cell.innerHTML = rendered;
       } else {
@@ -2180,7 +2176,16 @@ const maybeResumePendingEdit = () => {
 
 // Try after load and after visibility/focus restores
 setTimeout(maybeResumePendingEdit, 0);
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(maybeResumePendingEdit, 0); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    setTimeout(maybeResumePendingEdit, 0);
+  } else if (editingCell) {
+    editingCell.blur();
+  }
+});
+window.addEventListener('blur', () => {
+  if (editingCell) editingCell.blur();
+});
 window.addEventListener('focus', () => { setTimeout(maybeResumePendingEdit, 0); }, { passive: true });
 
 document.addEventListener('keydown', e => {

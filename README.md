@@ -27,7 +27,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 
 ## Features
 
-- **Interactive Editing:** Two modes — type to start a quick edit, or press Enter/double‑click for detail edit. Saves on blur.
+- **Interactive Editing:** Two modes — type to start a quick edit, or press Enter/double‑click for detail edit. Changes commit to the document when focus leaves the cell or CSV view; unsaved changes remain visible when you switch tabs.
 - **Table/Text Switching:** Use the switch action in the editor toolbar or `CSV: Switch Between Table and Text` in the Command Palette to move between views while retaining unsaved edits. Both representations may remain open; the action reuses the counterpart tab, with at most one of each view in the editor group. The table view requires `csv.enabled`.
 - **Smart Resizing:** Automatic calculation of column widths for improved readability.
 - **Dynamic Color Coding:** Visual cues based on data type help you quickly identify numbers, dates, booleans, and more (with opt‑in cool palette and theme-foreground mode settings).
@@ -136,6 +136,7 @@ Per-file (stored by the extension; set via commands):
   - Caret navigation: Arrow Left/Right move one character; Arrow Up moves caret to start; Arrow Down moves caret to end.
   - New line in cell: `Shift + Enter` inserts a line break inside the current cell.
   - Exit/save: click outside the cell or move focus to commit changes.
+  - Save the file: `Ctrl/Cmd + S` commits the active cell before saving, including all inserted line breaks.
 - Global:
   - Copy selection: `Ctrl/Cmd + C`
   - Paste selection: `Ctrl/Cmd + V` (selection mode). Pasting a single value into a selected rectangle fills that rectangle.
