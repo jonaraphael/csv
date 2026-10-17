@@ -112,7 +112,7 @@ describe('Resize boundary event hit testing', () => {
       view.fixed.set(covered, { left: 130, right: 147, top: 0, bottom: 30, width: 17, height: 30 });
       view.fixed.set(visible, { left: 150, right: 250, top: 0, bottom: 30, width: 100, height: 30 });
       view.setCover(frozen);
-      view.mouse(covered, 'mousemove', 147);
+      view.mouse(covered, 'mousemove', 143);
       assert.strictEqual(view.table.style.cursor, '', 'covered source boundary cannot resize');
       view.mouse(visible, 'mousemove', 150);
       assert.strictEqual(view.table.style.cursor, 'col-resize');
@@ -122,6 +122,56 @@ describe('Resize boundary event hit testing', () => {
       assert.strictEqual(frozen.style.width, '70px');
       assert.strictEqual(covered.style.width, '');
       assert.deepStrictEqual({ ...view.messages.filter(message => message.type === 'columnSizesChanged').at(-1).columnSizes }, { '0': 70 });
+    } finally { view.close(); }
+  });
+
+  for (const x of [149, 151]) {
+    it(`shares hover/drag/reset on either side of a partially occluded frozen seam at ${x}`, async () => {
+      const view = await fixture(false);
+      try {
+        const frozen = view.cell(0, 0), covered = view.cell(0, 1), visible = view.cell(0, 2);
+        view.fixed.set(frozen, { left: 100, right: 150, top: 0, bottom: 30, width: 50, height: 30 });
+        view.fixed.set(covered, { left: 120, right: 145, top: 0, bottom: 30, width: 25, height: 30 });
+        view.fixed.set(visible, { left: 140, right: 250, top: 0, bottom: 30, width: 110, height: 30 });
+        view.setCover(frozen);
+        const target = x < 150 ? frozen : visible;
+        view.mouse(target, 'mousemove', x);
+        assert.strictEqual(view.table.style.cursor, 'col-resize');
+        assert.strictEqual(view.mouse(target, 'mousedown', x).defaultPrevented, true);
+        view.mouse(target, 'mousemove', x + 20);
+        view.mouse(target, 'mouseup', x + 20);
+        assert.strictEqual(frozen.style.width, '70px');
+        assert.strictEqual(covered.style.width, '');
+        assert.strictEqual(visible.style.width, '');
+        assert.deepStrictEqual({ ...view.messages.filter(message => message.type === 'columnSizesChanged').at(-1).columnSizes }, { '0': 70 });
+        assert.strictEqual(view.mouse(target, 'dblclick', x).defaultPrevented, true);
+        assert.strictEqual(frozen.style.width, '');
+        assert.strictEqual(frozen.style.boxSizing, '');
+        assert.deepStrictEqual({ ...view.messages.filter(message => message.type === 'columnSizesChanged').at(-1).columnSizes }, {});
+      } finally { view.close(); }
+    });
+  }
+
+  it('keeps the painted center of a partially covered narrow cell selectable', async () => {
+    const view = await fixture(false);
+    try {
+      const frozen = view.cell(0, 0), covered = view.cell(0, 1), visible = view.cell(0, 2);
+      view.fixed.set(frozen, { left: 100, right: 150, top: 0, bottom: 30, width: 50, height: 30 });
+      view.fixed.set(covered, { left: 120, right: 145, top: 0, bottom: 30, width: 25, height: 30 });
+      view.fixed.set(visible, { left: 140, right: 158, top: 0, bottom: 30, width: 18, height: 30 });
+      view.setCover(frozen);
+      for (const x of [152.1, 154, 155.9]) {
+        view.mouse(visible, 'mousemove', x);
+        assert.strictEqual(view.table.style.cursor, '');
+      }
+      view.mouse(visible, 'mousedown', 154);
+      view.mouse(visible, 'mouseup', 154);
+      assert.ok(visible.classList.contains('selected'));
+      assert.ok(!view.messages.some(message => message.type === 'columnSizesChanged'));
+      for (const x of [150, 151.9, 156.1, 158]) {
+        view.mouse(x < 150 ? frozen : visible, 'mousemove', x);
+        assert.strictEqual(view.table.style.cursor, 'col-resize');
+      }
     } finally { view.close(); }
   });
 
@@ -137,8 +187,8 @@ describe('Resize boundary event hit testing', () => {
         control.remove();
       }
       const hidden = view.cell(0, 1);
-      view.fixed.set(hidden, { left: 130, right: 130, top: 0, bottom: 30, width: 0, height: 30 });
-      view.mouse(hidden, 'mousemove', 130);
+      view.fixed.set(hidden, { left: 140, right: 140, top: 0, bottom: 30, width: 0, height: 30 });
+      view.mouse(hidden, 'mousemove', 140);
       assert.strictEqual(view.table.style.cursor, '');
       view.start(cell);
       view.mouse(cell, 'mousemove', 130);
