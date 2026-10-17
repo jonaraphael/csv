@@ -20,6 +20,7 @@ Module.prototype.require = function (id: string) {
       workspace: {
         getConfiguration: () => ({ get: (key: string, fallback: any) => key === 'maxFileSizeMB' ? 0 : fallback }),
         onDidChangeTextDocument: () => ({ dispose() {} }),
+        onWillSaveTextDocument: () => ({ dispose() {} }),
         applyEdit: (edit: any) => applyEdit(edit)
       }
     };
