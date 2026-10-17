@@ -4,6 +4,10 @@ All notable changes to the "CSV" extension will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - Unreleased
+
+- Fixed: An explicit Text view choice is retained for subsequent Find in Files results while CSV remains enabled; returning to Table releases that file choice.
+
 ## [1.4.0] - Unreleased
 
 Integration candidate; final contents remain subject to review. No release has been published.

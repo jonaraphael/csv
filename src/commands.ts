@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { CsvEditorProvider } from './CsvEditorProvider';
 import { openLargeFilePreview } from './large-file-preview';
 import { toggleCsvEditor } from './editor-switch';
+import type { EditorSwitchRouting } from './editor-associations';
 import { compareFilesAsTable } from './table-comparison';
 import { saveActiveUntitledCsvEditor } from './untitled-editors';
 
@@ -64,13 +65,13 @@ async function toggleCsvEnabled(synchronizeRouting: () => Promise<void>): Promis
   CsvEditorProvider.editors.slice().forEach(ed => ed.refresh());
 }
 
-export function registerCsvCommands(context: vscode.ExtensionContext, synchronizeRouting: () => Promise<void> = async () => {}) {
+export function registerCsvCommands(context: vscode.ExtensionContext, synchronizeRouting: () => Promise<void> = async () => {}, prepareEditorRouting?: (uri: vscode.Uri, target: 'default' | 'csv.editor') => Promise<EditorSwitchRouting>) {
   let pendingToggle: Promise<void> = Promise.resolve();
   context.subscriptions.push(
     vscode.commands.registerCommand('csv.changeFrozenRows', () => changeFrozenPaneCount('rows')),
     vscode.commands.registerCommand('csv.changeFrozenColumns', () => changeFrozenPaneCount('columns')),
     vscode.commands.registerCommand('csv.openLargeFilePreview', openLargeFilePreview),
-    vscode.commands.registerCommand('csv.toggleEditor', toggleCsvEditor),
+    vscode.commands.registerCommand('csv.toggleEditor', () => toggleCsvEditor(prepareEditorRouting)),
     vscode.commands.registerCommand('csv.compareFilesAsTable', (resource?: vscode.Uri, selected?: vscode.Uri[]) => compareFilesAsTable(context, resource, selected)),
     vscode.commands.registerCommand('csv.saveUntitled', saveActiveUntitledCsvEditor),
     vscode.commands.registerCommand('csv.toggleExtension', () => {

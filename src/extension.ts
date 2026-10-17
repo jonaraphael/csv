@@ -121,7 +121,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // Listen before the first await so settings changes during recovery are queued.
   // Persisted Off routing must be installed before commands/provider handoffs.
   try { await synchronizeRouting(); } catch (error) { console.error('CSV: editor routing initialization failed', error); }
-  registerCsvCommands(context, synchronizeRouting);
+  registerCsvCommands(context, synchronizeRouting, (uri, target) => routing.prepareEditorSwitch(uri, target));
 
   // Register the custom editor provider for CSV/TSV
   context.subscriptions.push(

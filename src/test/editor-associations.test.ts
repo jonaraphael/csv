@@ -1,6 +1,6 @@
 import assert from 'assert';
 import { describe, it } from 'node:test';
-import { CsvEditorAssociationRouting, csvEditorSelectors } from '../editor-associations';
+import { CsvEditorAssociationRouting, csvEditorSelectors, exactFileEditorPattern } from '../editor-associations';
 
 type MapValue = Record<string, string> | undefined;
 const clone = <T>(value: T): T => value === undefined ? value : JSON.parse(JSON.stringify(value));
@@ -315,5 +315,133 @@ describe('Reversible disabled CSV editor associations', () => {
     assert.deepStrictEqual(h.data.global, { '*.csv': 'default' }, 'later user native choice remains on restart/re-enable');
     assert.ok([...h.globalValues.values()].every(value => value === undefined));
   });
+
+});
+
+
+const file = (path: string, fields: Partial<Record<string, string>> = {}) => ({ scheme: 'file', authority: '', query: '', fragment: '', path, ...fields } as any);
+describe('Continuing per-file Text view routing', () => {
+  it('uses literal scheme:path patterns and rejects URI identities the workbench cannot isolate', () => {
+    assert.strictEqual(exactFileEditorPattern(file('/one [x]*?{y}/check.csv')), 'file:/one [[]x[]][*][?][{]y[}]/check.csv');
+    for (const fields of [{ scheme: 'vscode-remote', authority: 'wsl+Ubuntu' }, { authority: 'server' }, { query: 'revision=1' }, { fragment: 'line50' }]) {
+      assert.strictEqual(exactFileEditorPattern(file('/check.csv', fields)), undefined);
+    }
+  });
+
+  it('keeps a workspace Text choice across synchronization, restart and Off→On', async () => {
+    const h = fixture(), uri = file('/one/check.csv'), pattern = exactFileEditorPattern(uri)!;
+    const text = await h.manager().prepareEditorSwitch(uri, 'default'); await text.commit();
+    assert.deepStrictEqual(h.data.workspace, { [pattern]: 'default' }); assert.strictEqual(h.data.global, undefined);
+    await h.manager().synchronize();
+    h.data.globalEnabled = false; await h.manager().synchronize();
+    h.data.globalEnabled = true; await h.manager().synchronize();
+    assert.deepStrictEqual(h.data.workspace, { [pattern]: 'default' }); assert.strictEqual(h.data.global, undefined);
+    const table = await h.manager().prepareEditorSwitch(uri, 'csv.editor');
+    await table.rollback();
+    assert.deepStrictEqual(h.data.workspace, { [pattern]: 'default' }, 'cancelled Table does not change Text routing');
+    const successfulTable = await h.manager().prepareEditorSwitch(uri, 'csv.editor'); await successfulTable.commit();
+    assert.strictEqual(h.data.workspace, undefined); assert.ok([...h.workspaceValues.values()].every(value => value === undefined));
+  });
+
+  it('releases only one file while another Text choice remains, without resurrecting older journals', async () => {
+    const h = fixture(), a = file('/one/check.csv'), b = file('/two/check.csv');
+    await (await h.manager().prepareEditorSwitch(a, 'default')).commit();
+    await (await h.manager().prepareEditorSwitch(b, 'default')).commit();
+    await (await h.manager().prepareEditorSwitch(b, 'csv.editor')).commit();
+    await h.manager().synchronize();
+    assert.deepStrictEqual(h.data.workspace, { [exactFileEditorPattern(a)!]: 'default' });
+    await (await h.manager().prepareEditorSwitch(a, 'csv.editor')).commit();
+    assert.strictEqual(h.data.workspace, undefined);
+  });
+
+  for (const original of [undefined, {}]) {
+    it(`rolls a cancelled Text switch back to an originally ${original ? 'empty' : 'absent'} preference object`, async () => {
+      const h = fixture({ workspace: original }), uri = file('/one/check.tsv');
+      const transaction = await h.manager().prepareEditorSwitch(uri, 'default');
+      await transaction.rollback();
+      assert.deepStrictEqual(h.data.workspace, original);
+      assert.ok([...h.workspaceValues.values()].every(value => value === undefined));
+    });
+  }
+
+  it('preserves an unrelated concurrent preference and a user edit to the owned key on rollback/Table return', async () => {
+    const h = fixture(), uri = file('/one/check.csv'), pattern = exactFileEditorPattern(uri)!;
+    const transaction = await h.manager().prepareEditorSwitch(uri, 'default');
+    h.data.workspace!['*.md'] = 'markdown.preview';
+    h.data.workspace![pattern] = 'external.editor';
+    await transaction.rollback();
+    await (await h.manager().prepareEditorSwitch(uri, 'csv.editor')).commit();
+    assert.deepStrictEqual(h.data.workspace, { '*.md': 'markdown.preview', [pattern]: 'external.editor' });
+  });
+
+  it('restores an existing exact CSV choice and preserves a preexisting native or external choice', async () => {
+    const uri = file('/one/check.csv'), pattern = exactFileEditorPattern(uri)!;
+    for (const prior of ['csv.editor', 'default', 'external.editor']) {
+      const h = fixture({ workspace: { [pattern]: prior } });
+      const transaction = await h.manager().prepareEditorSwitch(uri, 'default');
+      assert.strictEqual(transaction.supported, prior !== 'external.editor');
+      await transaction.commit();
+      await (await h.manager().prepareEditorSwitch(uri, 'csv.editor')).commit();
+      assert.deepStrictEqual(h.data.workspace, { [pattern]: prior });
+    }
+  });
+
+  it('internally rolls back a provisional Text write when enablement changes during preparation', async () => {
+    const h = fixture(), uri = file('/one/check.csv');
+    h.data.beforeWrite = async () => { h.data.beforeWrite = undefined; h.data.globalEnabled = false; };
+    await assert.rejects(h.manager().prepareEditorSwitch(uri, 'default'), /routing changed while switching/);
+    assert.strictEqual(h.data.workspace, undefined);
+    assert.ok([...h.workspaceValues.values()].every(value => value === undefined));
+  });
+
+  it('internally rolls back a provisional Text write if disposed while it is applying', async () => {
+    const h = fixture(), uri = file('/one/check.csv'), manager = h.manager();
+    h.data.beforeWrite = async () => { h.data.beforeWrite = undefined; manager.dispose(); };
+    await assert.rejects(manager.prepareEditorSwitch(uri, 'default'), /routing changed while switching/);
+    assert.strictEqual(h.data.workspace, undefined);
+    assert.ok([...h.workspaceValues.values()].every(value => value === undefined));
+  });
+
+  it('does not leave ownership after denied or ignored provisional writes', async () => {
+    for (const failure of ['fail', 'ignoreWrite'] as const) {
+      const h = fixture(); h.data[failure] = true;
+      await assert.rejects(h.manager().prepareEditorSwitch(file('/one/check.csv'), 'default'));
+      assert.strictEqual(h.data.workspace, undefined);
+      assert.ok([...h.workspaceValues.values()].every(value => value === undefined));
+    }
+  });
+
+  it('leaves unsupported remote view switching available without changing any associations', async () => {
+    const h = fixture();
+    const transaction = await h.manager().prepareEditorSwitch(file('/one/check.csv', { scheme: 'vscode-remote', authority: 'wsl+Ubuntu' }), 'default');
+    assert.strictEqual(transaction.supported, false); assert.match(transaction.limitation!, /Turn CSV off/);
+    await transaction.commit(); await transaction.rollback();
+    assert.strictEqual(h.data.writes.length, 0);
+  });
+  it('does not shadow an inherited exact choice of another editor', async () => {
+    const uri = file('/one/check.csv'), pattern = exactFileEditorPattern(uri)!;
+    const h = fixture({ global: { [pattern]: 'external.editor' } });
+    const transaction = await h.manager().prepareEditorSwitch(uri, 'default');
+    assert.strictEqual(transaction.supported, false);
+    assert.strictEqual(h.data.workspace, undefined);
+    assert.deepStrictEqual(h.data.global, { [pattern]: 'external.editor' });
+  });
+
+  for (const observedBy of ['table', 'rollback']) {
+    for (const userValue of ['external.editor', undefined]) {
+      it(`durably relinquishes a user ${userValue ? 'editor change' : 'deletion'} observed by ${observedBy} before the user chooses native again`, async () => {
+        const h = fixture(), uri = file('/one/check.csv'), pattern = exactFileEditorPattern(uri)!;
+        const text = await h.manager().prepareEditorSwitch(uri, 'default'); await text.commit();
+        if (userValue === undefined) { delete h.data.workspace![pattern]; }
+        else { h.data.workspace![pattern] = userValue; }
+        if (observedBy === 'table') { await (await h.manager().prepareEditorSwitch(uri, 'csv.editor')).commit(); }
+        else { await text.rollback(); }
+        h.data.workspace![pattern] = 'default';
+        await h.manager().synchronize();
+        await (await h.manager().prepareEditorSwitch(uri, 'csv.editor')).commit();
+        assert.deepStrictEqual(h.data.workspace, { [pattern]: 'default' });
+      });
+    }
+  }
 
 });
