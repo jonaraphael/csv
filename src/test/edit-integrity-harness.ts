@@ -110,6 +110,7 @@ export async function createEditorHarness(options: {
   }
   const panel = {
     active: true,
+    viewColumn: 2,
     visible: true,
     title: 'data.csv',
     webview: {
@@ -139,6 +140,7 @@ export async function createEditorHarness(options: {
     get activeController() { return CsvEditorProvider.currentActive; },
     saveUntitledAfterCommit() { controller.saveUntitledAfterCommit(); },
     requestViewCommit() { controller.requestViewCommit(); },
+    commitPendingDraft() { return controller.commitPendingDraft() as Promise<boolean>; },
     revealSourceAfterCommit() { harness.enabled = false; controller.revealSourceAfterCommit(); },
     setEnabled(enabled: boolean) { harness.enabled = enabled; controller.refresh(); },
     getCurrentSeparator() { return controller.getCurrentSeparator() as string; },
