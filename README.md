@@ -28,6 +28,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 ## Features
 
 - **Interactive Editing:** Two modes — type to start a quick edit, or press Enter/double‑click for detail edit. Saves on blur.
+- **Table/Text Switching:** Use the switch action in the editor toolbar or `CSV: Switch Between Table and Text` in the Command Palette to move between views while retaining unsaved edits. Both representations may remain open; the action reuses the counterpart tab, with at most one of each view in the editor group. The table view requires `csv.enabled`.
 - **Smart Resizing:** Automatic calculation of column widths for improved readability.
 - **Dynamic Color Coding:** Visual cues based on data type help you quickly identify numbers, dates, booleans, and more (with opt‑in cool palette and theme-foreground mode settings).
 - **Sticky Headers:** Keep column titles in view as you scroll through large datasets.
@@ -82,6 +83,7 @@ Cursor (built on VS Code 1.99) and the latest VS Code releases (1.102).
 
 Open the Command Palette and search for:
 
+- `CSV: Switch Between Table and Text` (`csv.toggleEditor`)
 - `CSV: Toggle Extension On/Off` (`csv.toggleExtension`)
 - `CSV: Toggle First Row as Header` (`csv.toggleHeader`)
 - `CSV: Toggle Serial Index Column` (`csv.toggleSerialIndex`)
