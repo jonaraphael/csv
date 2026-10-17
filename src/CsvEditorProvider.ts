@@ -1561,9 +1561,16 @@ class CsvEditorController {
       }
     }
 
-    const colorCss = useThemeForeground
+    // VS Code changes these classes in place. Keep both palettes available so
+    // entering/leaving high contrast never needs to reload a live cell edit.
+    const colorCss = columnColorMode === 'theme'
       ? ''
-      : columnColors.map((hex, i) => `td[data-col="${i}"], th[data-col="${i}"] { color: ${hex}; }`).join('');
+      : columnTypes.map((type, i) => {
+        const light = this.getColumnColor(type, false, i, palette);
+        const dark = this.getColumnColor(type, true, i, palette);
+        return `body.vscode-light td[data-col="${i}"], body.vscode-light th[data-col="${i}"] { color: ${light} !important; }` +
+          `body.vscode-dark td[data-col="${i}"], body.vscode-dark th[data-col="${i}"] { color: ${dark} !important; }`;
+      }).join('');
 
     let tableHtml = `<table>`;
     if (headerFlag) {

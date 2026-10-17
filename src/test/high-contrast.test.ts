@@ -67,11 +67,17 @@ describe('High-contrast rendering', () => {
     const panel = { title: 'fixture', active: false, webview, onDidChangeViewState() {}, onDidDispose() {} };
     const context = { extensionPath: process.cwd(), workspaceState: { get: (_key: string, fallback: any) => fallback } };
     const uri = { fsPath: '/fixture.csv', toString: () => 'file:///fixture.csv' };
-    await new CsvEditorProvider(context as any).resolveCustomTextEditor({ uri, version: 1, getText: () => 'Name\nhello' } as any, panel as any, {} as any);
+    await new CsvEditorProvider(context as any).resolveCustomTextEditor({ uri, version: 1, getText: () => 'Name,Empty\nhello,' } as any, panel as any, {} as any);
     const link = `<link rel="stylesheet" href="test-resource:${path.join(process.cwd(), 'media', 'high-contrast.css')}">`;
     assert.ok(webview.html.includes(link));
     assert.ok(webview.html.indexOf(link) > webview.html.indexOf('</style>'));
     assert.ok(fs.existsSync(path.join(process.cwd(), 'media', 'high-contrast.css')));
+    assert.ok(webview.html.includes('body.vscode-light td[data-col="0"]'));
+    assert.ok(webview.html.includes('body.vscode-dark td[data-col="0"]'));
+    assert.ok(webview.html.includes('color: #444 !important'));
+    assert.ok(webview.html.includes('color: #BBB !important'));
+    const extensionSource = fs.readFileSync(path.join(process.cwd(), 'src', 'extension.ts'), 'utf8');
+    assert.ok(!extensionSource.includes('onDidChangeActiveColorTheme'), 'theme changes must not force-reload an active cell draft');
   });
 
   it('scopes accessibility styles to high-contrast themes and covers interactive states with theme tokens', () => {
