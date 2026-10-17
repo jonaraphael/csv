@@ -95,6 +95,8 @@ const setZoomScale = (nextScale, persist = true) => {
     return false;
   }
   zoomScale = normalized;
+  const menu = document.getElementById('contextMenu');
+  if (menu) { menu.style.display = 'none'; }
   document.body.style.fontSize = `${Math.max(1, BASE_FONT_SIZE_PX * zoomScale)}px`;
   applySizeStateToRenderedCells();
   if (persist) {
