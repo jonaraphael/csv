@@ -85,10 +85,25 @@ exports.run = async function () {
     const live = await prepare(document, 'csv', 'name,value\ncancel,42');
     const panel = getActiveUntitledCsvEditor().panel;
     const controller = CsvEditorProvider.getActiveProvider();
-    await vscode.commands.executeCommand('csv.saveUntitled');
-    await waitUntil(() => vscode.window.activeTextEditor?.document.uri.toString() === live.uri.toString() && !panel.active, 'registered Save As command should reveal the native owner and finish its view-state transition');
-    await controller.enqueueOperation(() => {});
-    // VS Code's isolated extension-test host cancels the native Save As picker.
+    // Exercise the cancellation result without opening an interactive native picker.
+    // Associated-path documents above exercise actual native saving and disk bytes.
+    const executeCommand = vscode.commands.executeCommand;
+    let cancelledSaveCalls = 0;
+    vscode.commands.executeCommand = (command, ...args) => {
+      if (command === 'workbench.action.files.save') {
+        cancelledSaveCalls += 1;
+        return Promise.resolve();
+      }
+      return executeCommand(command, ...args);
+    };
+    try {
+      await vscode.commands.executeCommand('csv.saveUntitled');
+      await waitUntil(() => vscode.window.activeTextEditor?.document.uri.toString() === live.uri.toString() && !panel.active, 'registered Save As command should reveal the native owner and finish its view-state transition');
+      await controller.enqueueOperation(() => {});
+    } finally {
+      vscode.commands.executeCommand = executeCommand;
+    }
+    assert.equal(cancelledSaveCalls, 1);
     assert.equal(live.isClosed, false);
     assert.ok(vscode.window.tabGroups.all.flatMap(group => group.tabs).some(tab => tab.input.uri?.toString() === live.uri.toString() && tab.isDirty), 'cancel must retain the dirty native source');
     assert.equal(live.getText(), 'name,value\ncancel,42');
@@ -97,7 +112,7 @@ exports.run = async function () {
     panel.dispose();
     assert.equal(live.getText(), 'name,value\ncancel,42');
     assert.equal(CsvEditorProvider.currentActive, undefined);
-    console.log('CSV_UNTITLED_SMOKE_OK: pretyped CSV+TSV, language roundtrips, shared edits, source switching, disable/re-enable, registered Save As exact native saves, cancelled Save As retained');
+    console.log('CSV_UNTITLED_SMOKE_OK: pretyped CSV+TSV, language roundtrips, shared edits, source switching, disable/re-enable, registered Save As exact native saves, controlled Save As cancellation retained');
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
