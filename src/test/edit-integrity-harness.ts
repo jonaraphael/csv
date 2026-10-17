@@ -8,6 +8,7 @@ class TestUri {
   get fsPath() { return this.path; }
   toString() { return `${this.scheme}://${this.path}`; }
   static file(filePath: string) { return new TestUri(filePath); }
+  with(changes: { path: string }) { return new TestUri(changes.path, this.scheme); }
 }
 
 let activeHarness: any;
@@ -21,6 +22,7 @@ const vscodeStub = {
   ColorThemeKind: { Dark: 1 },
   window: {
     activeColorTheme: { kind: 1 },
+    visibleTextEditors: [],
     showErrorMessage(message: string) { activeHarness.errors.push(message); }
   },
   commands: {
@@ -88,6 +90,7 @@ export async function createEditorHarness(options: {
   };
   const context = {
     extensionPath: process.cwd(),
+    extensionUri: TestUri.file(process.cwd()),
     workspaceState: {
       values: {} as Record<string, unknown>,
       get(key: string, fallback: unknown) { return this.values[key] ?? fallback; },
@@ -96,6 +99,7 @@ export async function createEditorHarness(options: {
   };
   await CsvEditorProvider.setHeaderForUri(context as any, uri as any, options.header ?? true);
   const panel = {
+    disposed: false,
     active: true,
     visible: true,
     title: 'data.csv',
@@ -110,7 +114,7 @@ export async function createEditorHarness(options: {
     },
     onDidChangeViewState: (listener: (event: unknown) => void) => { viewListeners.push(listener); },
     onDidDispose(listener: () => void) { disposeListeners.push(listener); },
-    dispose() { disposeListeners.forEach(listener => listener()); }
+    dispose() { if (!panel.disposed) { panel.disposed = true; disposeListeners.forEach(listener => listener()); } }
   };
   const harness = {
     document, panel, messages, changeListeners, saveListeners,
@@ -118,6 +122,7 @@ export async function createEditorHarness(options: {
     commands: [] as unknown[][],
     enabled: true,
     setEnabled(enabled: boolean) { this.enabled = enabled; },
+    dispose() { panel.dispose(); },
     refresh() { CsvEditorProvider.editors.find(controller => controller.getDocumentUri() === uri as any)!.refresh(); },
     get isOpen() { return CsvEditorProvider.editors.some(controller => controller.getDocumentUri() === uri as any); },
     async setSeparator(separator: string) { await CsvEditorProvider.setSeparatorForUri(context as any, uri as any, separator); },

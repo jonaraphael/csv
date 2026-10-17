@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { CsvEditorProvider } from './CsvEditorProvider';
+import type { EditorSwitchRouting } from './editor-associations';
 
 const switchingTabs = new Set<string>();
 const supportedExtensions = new Set(['.csv', '.tsv', '.tab', '.psv']);
@@ -26,7 +27,32 @@ function showUpdateGuidance(dirty: boolean): void {
   );
 }
 
-export async function toggleCsvEditor(): Promise<void> {
+function observeEditorReplacement(uri: vscode.Uri, source: string, target: string, viewColumn: vscode.ViewColumn) {
+  let resolve!: (complete: boolean) => void;
+  let subscription: vscode.Disposable | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
+  const promise = new Promise<boolean>(finish => { resolve = finish; });
+  const finish = (complete: boolean) => {
+    if (settled) { return; }
+    settled = true;
+    subscription?.dispose();
+    if (timer) { clearTimeout(timer); }
+    resolve(complete);
+  };
+  const check = () => {
+    const group = vscode.window.tabGroups.all.find(candidate => candidate.viewColumn === viewColumn);
+    if (group?.tabs.some(tab => getInputUri(tab.input, target)?.toString() === uri.toString()) &&
+        !group.tabs.some(tab => getInputUri(tab.input, source)?.toString() === uri.toString())) { finish(true); }
+  };
+  // Native command completion can precede extension-host TabGroups events.
+  subscription = vscode.window.tabGroups.onDidChangeTabs(check);
+  return { promise, check, startTimeout: () => {
+    if (!settled) { timer = setTimeout(() => finish(false), 5000); }
+  }, cancel: () => finish(false) };
+}
+
+export async function toggleCsvEditor(prepareRouting?: (uri: vscode.Uri, target: 'default' | 'csv.editor') => Promise<EditorSwitchRouting>): Promise<void> {
   const group = vscode.window.tabGroups.activeTabGroup;
   const tab = group.activeTab;
   if (!tab) {
@@ -53,6 +79,9 @@ export async function toggleCsvEditor(): Promise<void> {
   }
 
   switchingTabs.add(switchKey);
+  let routing: EditorSwitchRouting | undefined;
+  let replaced = false;
+  let replacement: ReturnType<typeof observeEditorReplacement> | undefined;
   try {
     if (!(await vscode.commands.getCommands(true)).includes('reopenActiveEditorWith')) {
       showUpdateGuidance(false);
@@ -95,11 +124,21 @@ export async function toggleCsvEditor(): Promise<void> {
         return;
       }
     }
-    // Resolve the target while the original is still pinned and owns its edits.
-    // Provider cancellation or initialization failure must not remove the source.
-    await vscode.commands.executeCommand('vscode.openWith', uri, target, {
-      viewColumn: group.viewColumn, preserveFocus: false, preview: false
-    });
+    routing = await prepareRouting?.(uri, target);
+    const afterRouting = vscode.window.tabGroups.activeTabGroup;
+    if (afterRouting.viewColumn !== group.viewColumn || getInputUri(afterRouting.activeTab?.input, source)?.toString() !== uri.toString()) { return; }
+    if (routing?.limitation) { void vscode.window.showInformationMessage(routing.limitation); }
+    // An unqualified open proves that the per-file association actually wins;
+    // explicit openWith would hide a longer user association taking precedence.
+    if (target === 'default' && routing?.supported) {
+      await vscode.commands.executeCommand('vscode.open', uri, {
+        viewColumn: group.viewColumn, preserveFocus: false, preview: false
+      });
+    } else {
+      await vscode.commands.executeCommand('vscode.openWith', uri, target, {
+        viewColumn: group.viewColumn, preserveFocus: false, preview: false
+      });
+    }
     const targetGroup = vscode.window.tabGroups.activeTabGroup;
     let targetReady = targetGroup.viewColumn === group.viewColumn &&
       getInputUri(targetGroup.activeTab?.input, target)?.toString() === uri.toString();
@@ -120,6 +159,7 @@ export async function toggleCsvEditor(): Promise<void> {
       return;
     }
     if (!targetReady) {
+      if (target === 'default' && routing?.supported) { void vscode.window.showInformationMessage('CSV: Your editor associations still choose another view. They have been preserved; turn CSV off before using Find in Files.'); }
       const original = vscode.window.tabGroups.all.find(candidate => candidate.viewColumn === group.viewColumn);
       if (original?.tabs.some(candidate => getInputUri(candidate.input, source)?.toString() === uri.toString()) &&
         afterReady.viewColumn === group.viewColumn &&
@@ -148,11 +188,20 @@ export async function toggleCsvEditor(): Promise<void> {
     }
     // Native replacement opens the target before removing the source and retains
     // the shared dirty text working copy. A separate tab close can prompt/discard.
+    replacement = observeEditorReplacement(uri, source, target, group.viewColumn);
     await vscode.commands.executeCommand('reopenActiveEditorWith', target);
+    replacement.check();
+    replacement.startTimeout();
+    replaced = await replacement.promise;
+    if (replaced) { await routing?.commit(); }
   } catch (error) {
     console.error('CSV: could not switch editor', error);
     void vscode.window.showErrorMessage('CSV: Could not switch between the table and text editor.');
   } finally {
+    replacement?.cancel();
+    if (!replaced) {
+      try { await routing?.rollback(); } catch (error) { console.error('CSV: could not restore file routing after a cancelled switch', error); }
+    }
     switchingTabs.delete(switchKey);
   }
 }
