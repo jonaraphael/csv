@@ -148,6 +148,16 @@ class CsvEditorController {
         case 'save':
           await this.handleSave();
           break;
+        case 'setHeader': {
+          if (typeof e.enabled === 'boolean') {
+            const uri = this.document.uri;
+            await CsvEditorProvider.setHeaderForUri(this.context, uri, e.enabled);
+            CsvEditorProvider.editors
+              .filter(editor => editor.getDocumentUri().toString() === uri.toString())
+              .forEach(editor => editor.refresh());
+          }
+          break;
+        }
         case 'copyCells':
           await this.copyCells(e.matrix, e.startRow, e.startCol, e.cut === true);
           break;
@@ -1451,6 +1461,7 @@ class CsvEditorController {
       extraColumnColorCss: colorCss,
       nextChunkStart,
       hasRemoteChunks,
+      headerEnabled: treatHeader,
       mouseWheelZoomEnabled,
       mouseWheelZoomInvert
     });
@@ -1703,10 +1714,11 @@ class CsvEditorController {
     extraColumnColorCss: string;
     nextChunkStart: number;
     hasRemoteChunks: boolean;
+    headerEnabled: boolean;
     mouseWheelZoomEnabled: boolean;
     mouseWheelZoomInvert: boolean;
   }): string {
-    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, mouseWheelZoomEnabled, mouseWheelZoomInvert } = args;
+    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, headerEnabled, mouseWheelZoomEnabled, mouseWheelZoomInvert } = args;
     const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
     // Build script URI using file path for compatibility (older APIs may lack Uri.joinPath)
     const scriptUri = webview.asWebviewUri(
@@ -1918,7 +1930,7 @@ class CsvEditorController {
     </style>
   </head>
   <body>
-    <div id="csv-root" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
+    <div id="csv-root" class="table-container" data-headerenabled="${headerEnabled ? '1' : '0'}" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
       ${tableHtml}
     </div>
 
