@@ -607,6 +607,7 @@ class CsvEditorController {
         document,
         separator: this.pendingDocumentReference?.separator ?? this.renderedSeparator ?? this.getSeparator()
       };
+      this.refreshAfterDraftCommit = true;
       this.requestViewCommit();
     }
   }

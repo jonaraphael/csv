@@ -142,4 +142,42 @@ describe('awaitable untitled draft commit', () => {
       assert.deepStrictEqual(host.nativeSaveCommands, ['workbench.action.files.save']);
     } finally { view.close(); host.panel.dispose(); }
   });
+
+  it('discards a failed draft against the live language-rebound owner before updating its grammar', async () => {
+    const host = await createEditorHarness({ untitled: true });
+    const view = createWebviewDom(host.panel.webview.html);
+    try {
+      view.start(view.cell());
+      view.key('Enter', { shiftKey: true });
+      view.type('unapplied draft');
+      const replacement = host.rebindDocument('tsv');
+      host.document.isClosed = true;
+      host.document.getText = () => { throw new Error('captured owner is closed'); };
+      host.failEdits('false');
+      const start = host.messages.length;
+      const commit = host.commitPendingDraft();
+      await deliver(host, view);
+      assert.strictEqual(await commit, false);
+      assert.strictEqual(host.getCurrentSeparator(), ',');
+      for (const message of host.messages.slice(start)) {
+        if (message.type === 'editCellFailed') {
+          view.window.dispatchEvent(new view.window.MessageEvent('message', { data: message }));
+        }
+      }
+      const beforeEscape = view.messages.length;
+      view.key('Escape');
+      const discarded = view.messages.slice(beforeEscape);
+      assert.ok(discarded.some(message => message.type === 'discardCellDraft'));
+      assert.ok(!discarded.some(message => message.type === 'editCell'));
+      for (const message of discarded) { await host.receive(message); }
+      assert.strictEqual(replacement.getText(), 'name,value\r\none,two');
+      assert.deepStrictEqual(host.nativeSaveCommands, []);
+      host.failEdits(undefined);
+      const retry = host.commitPendingDraft();
+      await deliver(host, view);
+      assert.strictEqual(await retry, true);
+      assert.strictEqual(host.getCurrentSeparator(), '\t');
+      assert.ok(!host.panel.webview.html.includes('unapplied draft'));
+    } finally { view.close(); host.panel.dispose(); }
+  });
 });
