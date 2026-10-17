@@ -4,7 +4,7 @@ CSV does not implement an upload service, analytics client, or extension-specifi
 
 ## Where processing happens
 
-VS Code supplies the file's decoded text to the extension. The extension parses that text with the bundled Papa Parse library, sends table content to its VS Code webview, and applies edits through VS Code's document APIs. Saving uses VS Code's normal file-saving behavior and the selected file encoding.
+Normal editable CSV views receive the file's decoded text from VS Code. The extension parses that text with the bundled Papa Parse library, sends table content to its VS Code webview, and applies edits through VS Code's document APIs. Saving in these views uses VS Code's normal file-saving behavior and the selected file encoding.
 
 For a normal local workspace, these operations run on your computer. In Remote SSH, WSL, Dev Containers, or another remote workspace, the extension host and files can be on that remote environment. File contents travel through your existing VS Code connection to display and edit them in the webview. “No external processing service” does not mean that a remote workspace's data stays on your local computer.
 
@@ -24,7 +24,7 @@ The extension writes diagnostic messages to the extension host's console. Routin
 
 CSV's code does not send those logs or cell contents to a telemetry endpoint. This statement does not describe or override VS Code's own telemetry, logging, crash reporting, or another extension's behavior. Consult your editor's privacy policy and settings for those services.
 
-CSV stores per-file view preferences in VS Code workspace state, keyed by the file URI: header mode, serial-index visibility, separator overrides, and hidden leading rows. Its webview state remembers scroll/selection positions, column widths, row heights, and zoom. These preference records are not a separate copy of the CSV contents. VS Code independently manages the document, undo history, unsaved-file backups, autosave, and any platform synchronization you enable.
+CSV stores per-file view preferences in VS Code workspace state, keyed by the file URI: header mode, serial-index visibility, separator overrides, and hidden leading rows. Its webview state remembers scroll/selection positions, column widths, row heights, and zoom. View preferences and saved state can themselves contain sensitive metadata; they are not intended as full-document backups. VS Code independently manages the document, undo history, unsaved-file backups, autosave, and any platform synchronization you enable.
 
 ## Scope of these statements
 
