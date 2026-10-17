@@ -16,6 +16,7 @@ Integration candidate; final contents remain subject to review. No release has b
 - Added: Explicit read-only comparison of two files as tables.
 - Fixed: The table/text toolbar action appears in supported text files and replaces saved-file views while retaining unsaved edits.
 - Fixed: Edit/save ordering and pending multiline edits across editor changes.
+- Fixed: Dark high contrast uses the existing dark datatype palette; accessibility styling is limited to high-contrast themes and preserves the selected palette and color mode.
 - Fixed: Precise column resize boundaries, editable centers in narrow columns, and drag widths that follow the pointer.
 - Fixed: Context menus keep their natural width, open toward available space, and remain scrollable in small editor panes.
 - Fixed: Frozen rows cover the top border seam so scrolling text cannot peek above the pinned header.
