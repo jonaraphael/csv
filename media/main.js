@@ -6,6 +6,14 @@ try { document.body.focus({ preventScroll: true }); } catch { try { document.bod
 const vscode = acquireVsCodeApi();
 
 const root = document.getElementById('csv-root');
+let visibleRowOrder = [];
+try { visibleRowOrder = JSON.parse(root?.dataset?.roworder || '[]'); } catch {}
+const headerSourceRow = Number(root?.dataset?.firstrow || '0');
+const adjacentVisibleRow = (row, direction) => {
+  if (!visibleRowOrder.length) return row + direction;
+  const index = visibleRowOrder.indexOf(row);
+  return visibleRowOrder[index + direction] ?? (row >= Number(root?.dataset?.realrowcount || '0') ? row + direction : row);
+};
 let frozenRowCount = Number(root?.dataset?.frozenrows || '0');
 let frozenColumnCount = Number(root?.dataset?.frozencolumns || '0');
 const parsePositiveNumber = value => {
@@ -194,7 +202,7 @@ const restoreState = () => {
       }
     }
     if (typeof st.anchorRow === 'number' && typeof st.anchorCol === 'number') {
-      const tag = (hasHeader && st.anchorRow === 0 ? 'th' : 'td');
+      const tag = (hasHeader && st.anchorRow === headerSourceRow ? 'th' : 'td');
       let sel = table.querySelector(`${tag}[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"]`);
       // If not present yet (due to chunking), load chunks until available or exhausted
       if (!sel && typeof window.__csvLoadNextChunk === 'function') {
@@ -416,6 +424,7 @@ const showContextMenu = (x, y, row, col) => {
     item('Freeze rows through this row', () => changeFrozenPanes({ rows: row - Number(root?.dataset?.firstrow || '0') + 1 }));
   }
   if (Number.isInteger(col) && col >= 0) {
+    item('Filter this column…', () => vscode.postMessage({ type: 'configureColumnFilter', column: col }));
     item('Freeze columns through this column', () => changeFrozenPanes({ columns: col + 1 }));
   }
   if (frozenRowCount > 0) item('Unfreeze rows', () => changeFrozenPanes({ rows: 0 }));
@@ -434,9 +443,9 @@ const showContextMenu = (x, y, row, col) => {
 
   /* Header-only: SORT functionality */
   if (lastContextIsHeader) {
-    item('Sort: A-Z', () =>
+    item(root?.dataset?.filtered === '1' ? 'Sort matching rows: A-Z' : 'Sort: A-Z', () =>
       vscode.postMessage({ type: 'sortColumn', index: col, ascending: true }));
-    item('Sort: Z-A', () =>
+    item(root?.dataset?.filtered === '1' ? 'Sort matching rows: Z-A' : 'Sort: Z-A', () =>
       vscode.postMessage({ type: 'sortColumn', index: col, ascending: false }));
   }        
 
@@ -981,9 +990,10 @@ const selectRange = (start, end) => {
   clearSelection();
   const minRow = Math.min(start.row, end.row), maxRow = Math.max(start.row, end.row);
   const minCol = Math.min(start.col, end.col), maxCol = Math.max(start.col, end.col);
-  for(let r = minRow; r <= maxRow; r++){
+  const selectedRows = visibleRowOrder.length ? visibleRowOrder.filter(row => row >= minRow && row <= maxRow) : Array.from({ length: maxRow - minRow + 1 }, (_, index) => minRow + index);
+  for (const r of selectedRows) {
     for(let c = minCol; c <= maxCol; c++){
-      const selector = (hasHeader && r === 0 ? 'th' : 'td') + '[data-row="'+r+'"][data-col="'+c+'"]';
+      const selector = (hasHeader && r === headerSourceRow ? 'th' : 'td') + '[data-row="'+r+'"][data-col="'+c+'"]';
       const selCell = table.querySelector(selector);
       if(selCell){ selCell.classList.add('selected'); currentSelection.push(selCell); }
     }
@@ -1036,7 +1046,8 @@ const getDataSelectionBounds = () => {
   const maxRow = Math.max(...rows);
   const minCol = Math.min(...cols);
   const maxCol = Math.max(...cols);
-  const expectedCount = (maxRow - minRow + 1) * (maxCol - minCol + 1);
+  const rowIds = [...new Set(rows)].sort((a, b) => a - b);
+  const expectedCount = rowIds.length * (maxCol - minCol + 1);
   const rectangular = keys.size === expectedCount;
   return { minRow, maxRow, minCol, maxCol, rectangular };
 };
@@ -1094,6 +1105,7 @@ const isFindWidgetTarget = target => {
   const el = getElementTarget(target);
   return !!(el && el.closest('#findReplaceWidget'));
 };
+const isGridControlTarget = target => isFindWidgetTarget(target) || !!getElementTarget(target)?.closest('#filterStatus');
 const clearFindHighlights = () => {
   document.querySelectorAll('.highlight, .active-match').forEach(el => {
     el.classList.remove('highlight');
@@ -1463,7 +1475,7 @@ window.addEventListener('csvChunkLoaded', () => {
 
 // Capture-phase handler to intercept Cmd/Ctrl + Arrow and move to extremes
 document.addEventListener('keydown', e => {
-  if (isFindWidgetTarget(e.target)) {
+  if (isGridControlTarget(e.target)) {
     return;
   }
   const isArrowKey = (k) => ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Up','Down','Left','Right','Home','End'].includes(k);
@@ -1496,13 +1508,13 @@ document.addEventListener('keydown', e => {
     if (ref) {
       const { row, col } = getCellCoords(ref);
       if (['ArrowLeft','Left','Home'].includes(e.key)) {
-        const tag = (hasHeader && row === 0 ? 'th' : 'td');
+        const tag = (hasHeader && row === headerSourceRow ? 'th' : 'td');
         const rowCells = Array.from(table.querySelectorAll(tag + '[data-row="'+row+'"]'))
           .filter(el => el.getAttribute('data-col') !== null && el.getAttribute('data-col') !== '-1');
         const min = rowCells.reduce((acc, el) => Math.min(acc, parseInt(el.getAttribute('data-col'))), Infinity);
         target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === min) || ref;
       } else if (['ArrowRight','Right','End'].includes(e.key)) {
-        const tag = (hasHeader && row === 0 ? 'th' : 'td');
+        const tag = (hasHeader && row === headerSourceRow ? 'th' : 'td');
         const rowCells = Array.from(table.querySelectorAll(tag + '[data-row="'+row+'"]'))
           .filter(el => el.getAttribute('data-col') !== null && el.getAttribute('data-col') !== '-1');
         const max = rowCells.reduce((acc, el) => Math.max(acc, parseInt(el.getAttribute('data-col'))), -1);
@@ -1569,7 +1581,7 @@ document.addEventListener('keydown', e => {
     closeFindReplace();
     return;
   }
-  if (isFindWidgetTarget(e.target)) {
+  if (isGridControlTarget(e.target)) {
     return;
   }
   if ((e.ctrlKey || e.metaKey) && e.key === 'a' && !editingCell) {
@@ -1615,22 +1627,22 @@ document.addEventListener('keydown', e => {
     if (refCell) {
       const { row, col } = getCellCoords(refCell);
       if (['ArrowLeft','Left','Home'].includes(e.key)) {
-        const tag = (hasHeader && row === 0 ? 'th' : 'td');
+        const tag = (hasHeader && row === headerSourceRow ? 'th' : 'td');
         const rowCells = Array.from(table.querySelectorAll(tag + '[data-row="'+row+'"]'))
           .filter(el => el.getAttribute('data-col') !== null && el.getAttribute('data-col') !== '-1');
         const min = rowCells.reduce((acc, el) => Math.min(acc, parseInt(el.getAttribute('data-col'))), Infinity);
         target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === min) || refCell;
       } else if (['ArrowRight','Right','End'].includes(e.key)) {
-        const tag = (hasHeader && row === 0 ? 'th' : 'td');
+        const tag = (hasHeader && row === headerSourceRow ? 'th' : 'td');
         const rowCells = Array.from(table.querySelectorAll(tag + '[data-row="'+row+'"]'))
           .filter(el => el.getAttribute('data-col') !== null && el.getAttribute('data-col') !== '-1');
         const max = rowCells.reduce((acc, el) => Math.max(acc, parseInt(el.getAttribute('data-col'))), -1);
         target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === max) || refCell;
       } else if (['ArrowUp','Up'].includes(e.key)) {
         if (hasHeader) {
-          target = table.querySelector('th[data-row="0"][data-col="'+col+'"]') || refCell;
+          target = table.querySelector('th[data-row="'+headerSourceRow+'"][data-col="'+col+'"]') || refCell;
         } else {
-          target = table.querySelector('td[data-row="0"][data-col="'+col+'"]') || refCell;
+          target = table.querySelector('td[data-row="'+getFirstDataRow()+'"][data-col="'+col+'"]') || refCell;
         }
       } else if (['ArrowDown','Down'].includes(e.key)) {
         const colCells = Array.from(table.querySelectorAll('td[data-col="'+col+'"]'));
@@ -1667,13 +1679,13 @@ document.addEventListener('keydown', e => {
     let targetRow = coords.row;
     let targetCol = coords.col + (isBackward ? -1 : 1);
     if (!isBackward && targetCol > maxCol) {
-      targetRow += 1;
+      targetRow = adjacentVisibleRow(targetRow, 1);
       targetCol = minCol;
     } else if (isBackward && targetCol < minCol) {
       if (targetRow <= firstDataRow) {
         return;
       }
-      targetRow -= 1;
+      targetRow = adjacentVisibleRow(targetRow, -1);
       targetCol = maxCol;
     }
     const nextCell = ensureRenderedCellByCoords(targetRow, targetCol);
@@ -1714,14 +1726,14 @@ document.addEventListener('keydown', e => {
     const { row, col } = getCellCoords(rangeEndCell || anchorCell);
     let targetRow = row, targetCol = col;
     switch(e.key){
-      case 'ArrowUp':   targetRow = row - 1; break;
-      case 'ArrowDown': targetRow = row + 1; break;
+      case 'ArrowUp':   targetRow = adjacentVisibleRow(row, -1); break;
+      case 'ArrowDown': targetRow = adjacentVisibleRow(row, 1); break;
       case 'ArrowLeft': targetCol = col - 1; break;
       case 'ArrowRight':targetCol = col + 1; break;
     }
     if(targetRow < 0 || targetCol < 0) return;
-    const tag = (hasHeader && targetRow === 0 ? 'th' : 'td');
-    const nextCell = table.querySelector(`${tag}[data-row="${targetRow}"][data-col="${targetCol}"]`);
+    const tag = (hasHeader && targetRow === headerSourceRow ? 'th' : 'td');
+    const nextCell = ensureRenderedCellByCoords(targetRow, targetCol);
     if(nextCell){
       e.preventDefault();
       rangeEndCell = nextCell;
@@ -1737,14 +1749,14 @@ document.addEventListener('keydown', e => {
     const { row, col } = getCellCoords(anchorCell);
     let targetRow = row, targetCol = col;
     switch(e.key){
-      case 'ArrowUp':   targetRow = row - 1; break;
-      case 'ArrowDown': targetRow = row + 1; break;
+      case 'ArrowUp':   targetRow = adjacentVisibleRow(row, -1); break;
+      case 'ArrowDown': targetRow = adjacentVisibleRow(row, 1); break;
       case 'ArrowLeft': targetCol = col - 1; break;
       case 'ArrowRight':targetCol = col + 1; break;
     }
     if(targetRow < 0 || targetCol < 0) return;
-    const tag = (hasHeader && targetRow === 0 ? 'th' : 'td');
-    const nextCell = table.querySelector(`${tag}[data-row="${targetRow}"][data-col="${targetCol}"]`);
+    const tag = (hasHeader && targetRow === headerSourceRow ? 'th' : 'td');
+    const nextCell = ensureRenderedCellByCoords(targetRow, targetCol);
     if(nextCell){
       e.preventDefault();
       clearSelection();
@@ -1765,14 +1777,14 @@ document.addEventListener('keydown', e => {
     const { row, col } = getCellCoords(editingCell);
     let targetRow = row, targetCol = col;
     switch(e.key){
-      case 'ArrowUp':   targetRow = row - 1; break;
-      case 'ArrowDown': targetRow = row + 1; break;
+      case 'ArrowUp':   targetRow = adjacentVisibleRow(row, -1); break;
+      case 'ArrowDown': targetRow = adjacentVisibleRow(row, 1); break;
       case 'ArrowLeft': targetCol = col - 1; break;
       case 'ArrowRight':targetCol = col + 1; break;
     }
     if (targetRow >= 0 && targetCol >= 0) {
-      const tag = (hasHeader && targetRow === 0 ? 'th' : 'td');
-      const nextCell = table.querySelector(`${tag}[data-row="${targetRow}"][data-col="${targetCol}"]`);
+      const tag = (hasHeader && targetRow === headerSourceRow ? 'th' : 'td');
+      const nextCell = ensureRenderedCellByCoords(targetRow, targetCol);
       if (nextCell) {
         const commitAndMove = () => {
           clearSelection();
@@ -1821,7 +1833,7 @@ document.addEventListener('keydown', e => {
     }
     const { row, col } = getCellCoords(editingCell);
     editingCell.blur();
-    const targetRow = row + 1;
+    const targetRow = adjacentVisibleRow(row, 1);
     // Editing Enter commits and moves selection down (no auto-edit).
     const nextCell = ensureRenderedCellByCoords(targetRow, col);
     if (nextCell) {
@@ -1846,13 +1858,13 @@ document.addEventListener('keydown', e => {
     if (bounds) {
       targetCol = col + (isBackward ? -1 : 1);
       if (!isBackward && targetCol > bounds.maxCol) {
-        targetRow += 1;
+        targetRow = adjacentVisibleRow(targetRow, 1);
         targetCol = bounds.minCol;
       } else if (isBackward && targetCol < bounds.minCol) {
         if (targetRow <= firstDataRow) {
           canMove = false;
         } else {
-          targetRow -= 1;
+          targetRow = adjacentVisibleRow(targetRow, -1);
           targetCol = bounds.maxCol;
         }
       }
@@ -1891,12 +1903,12 @@ const pasteFromClipboard = () => {
 };
 for (const type of ['copy', 'cut']) {
   document.addEventListener(type, e => {
-    if (editingCell || isTextInputTarget(e.target) || isFindWidgetTarget(e.target)) return;
+    if (editingCell || isTextInputTarget(e.target) || isGridControlTarget(e.target)) return;
     if (copySelectionToClipboard(type === 'cut')) e.preventDefault();
   });
 }
 document.addEventListener('paste', e => {
-  if (isTextInputTarget(e.target) || isFindWidgetTarget(e.target)) {
+  if (isTextInputTarget(e.target) || isGridControlTarget(e.target)) {
     return;
   }
   if (editingCell) {
@@ -2086,9 +2098,10 @@ table.addEventListener('dblclick', e => {
 const copySelectionToClipboard = (cut = false) => {
   const bounds = getDataSelectionBounds();
   if (!bounds) return false;
-  const { minRow, maxRow, minCol, maxCol } = bounds;
+  const { minCol, maxCol } = bounds;
   const matrix = [];
-  for (let row = minRow; row <= maxRow; row++) {
+  const rowIds = [...new Set(currentSelection.map(getDataCellCoords).filter(Boolean).map(coords => coords.row))].sort((a, b) => a - b);
+  for (const row of rowIds) {
     const values = [];
     for (let col = minCol; col <= maxCol; col++) {
       const cell = getRenderedCellByCoords(row, col);
@@ -2096,16 +2109,16 @@ const copySelectionToClipboard = (cut = false) => {
     }
     matrix.push(values);
   }
-  vscode.postMessage({ type: 'copyCells', matrix, startRow: minRow, startCol: minCol, cut });
+  vscode.postMessage({ type: 'copyCells', matrix, rowIds, startCol: minCol, cut });
   return true;
 };
 
 window.addEventListener('message', event => {
   const message = event.data;
-  if (message.type === 'prepareHiddenRowsRefresh') {
+  if (message.type === 'prepareViewRefresh') {
     if (editingCell) editingCell.blur();
     persistState();
-    vscode.postMessage({ type: 'hiddenRowsRefreshReady' });
+    vscode.postMessage({ type: 'viewRefreshReady' });
   } else if (message.type === 'frozenPanes') {
     frozenRowCount = Number(message.rows);
     frozenColumnCount = Number(message.columns);
@@ -2234,7 +2247,7 @@ const maybeResumePendingEdit = () => {
   try {
     const st = vscode.getState() || {};
     if (st && typeof st.anchorRow === 'number' && typeof st.anchorCol === 'number' && st.pendingEdit === 'detail') {
-      const tag = (hasHeader && st.anchorRow === 0 ? 'th' : 'td');
+      const tag = (hasHeader && st.anchorRow === headerSourceRow ? 'th' : 'td');
       const sel = table.querySelector(`${tag}[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"]`);
       if (sel) {
         editCell(sel, undefined, 'detail');
@@ -2276,6 +2289,8 @@ if (typeof window.createFrozenPaneManager === 'function') {
     table,
     firstRow: Number(root?.dataset?.firstrow || '0'),
     realRowCount: Number(root?.dataset?.realrowcount || '0'),
+    rowOrder: visibleRowOrder,
+    topInset: () => document.getElementById('filterStatus')?.getBoundingClientRect().height || 0,
     onNeedRows: () => loadNextChunk()
   });
   window.csvFrozenPanes.update(frozenRowCount, frozenColumnCount);
@@ -2283,3 +2298,8 @@ if (typeof window.createFrozenPaneManager === 'function') {
   window.addEventListener('resize', () => window.csvFrozenPanes.schedule());
   window.addEventListener('pagehide', () => window.csvFrozenPanes.dispose(), { once: true });
 }
+
+document.getElementById('clearAllFilters')?.addEventListener('click', () => vscode.postMessage({ type: 'clearAllFilters' }));
+document.querySelectorAll('[data-clear-filter]').forEach(button => button.addEventListener('click', () => {
+  vscode.postMessage({ type: 'clearColumnFilter', column: Number(button.getAttribute('data-clear-filter')) });
+}));

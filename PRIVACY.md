@@ -1,10 +1,12 @@
 # Privacy and data handling
 
-CSV does not implement an upload service, analytics client, or extension-specific telemetry collection. Viewing, parsing, searching, sorting, and editing a file use the VS Code document and the extension's bundled code. No account or external processing service is required by CSV.
+CSV does not implement an upload service, analytics client, or extension-specific telemetry collection. Normal editable views parse, search, sort, and edit files through the VS Code document and the extension's bundled code. No account or external processing service is required by CSV.
 
 ## Where processing happens
 
 Normal editable CSV views receive the file's decoded text from VS Code. The extension parses that text with the bundled Papa Parse library, sends table content to its VS Code webview, and applies edits through VS Code's document APIs. Saving in these views uses VS Code's normal file-saving behavior and the selected file encoding.
+
+The read-only large-file preview supports host-local UTF-8 files and reads bounded blocks directly from the saved file. It does not write the saved file.
 
 For a normal local workspace, these operations run on your computer. In Remote SSH, WSL, Dev Containers, or another remote workspace, the extension host and files can be on that remote environment. File contents travel through your existing VS Code connection to display and edit them in the webview. “No external processing service” does not mean that a remote workspace's data stays on your local computer.
 
@@ -24,7 +26,7 @@ The extension writes diagnostic messages to the extension host's console. Routin
 
 CSV's code does not send those logs or cell contents to a telemetry endpoint. This statement does not describe or override VS Code's own telemetry, logging, crash reporting, or another extension's behavior. Consult your editor's privacy policy and settings for those services.
 
-CSV stores per-file view preferences in VS Code workspace state, keyed by the file URI: header mode, serial-index visibility, separator overrides, and hidden leading rows. Its webview state remembers scroll/selection positions, column widths, row heights, and zoom. View preferences and saved state can themselves contain sensitive metadata; they are not intended as full-document backups. VS Code independently manages the document, undo history, unsaved-file backups, autosave, and any platform synchronization you enable.
+CSV stores per-file view preferences in VS Code workspace state on the extension host, keyed by the file URI: header mode, serial-index visibility, separator overrides, hidden leading rows, manual column widths, frozen rows/columns, and column filters. Filter conditions include any text you enter and may contain sensitive CSV values; Clear all filters removes the saved conditions for that file. Its webview state remembers scroll/selection positions, column widths, row heights, and zoom. View preferences and saved state can themselves contain sensitive data and metadata; they are not intended as full-document backups. VS Code independently manages the document, undo history, unsaved-file backups, autosave, and any platform synchronization you enable.
 
 ## Scope of these statements
 
