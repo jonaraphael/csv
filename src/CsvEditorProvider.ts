@@ -158,6 +158,18 @@ class CsvEditorController {
           }
           break;
         }
+        case 'setSerialIndex': {
+          if (typeof e.enabled === 'boolean') {
+            const uri = this.getDocumentUri();
+            if (CsvEditorProvider.getSerialIndexForUri(this.context, uri) !== e.enabled) {
+              await CsvEditorProvider.setSerialIndexForUri(this.context, uri, e.enabled);
+              CsvEditorProvider.editors
+                .filter(editor => editor.getDocumentUri().toString() === uri.toString())
+                .forEach(editor => editor.refresh());
+            }
+          }
+          break;
+        }
         case 'copyCells':
           await this.copyCells(e.matrix, e.startRow, e.startCol, e.cut === true);
           break;
@@ -1575,7 +1587,7 @@ class CsvEditorController {
     if (headerFlag) {
       tableHtml += `<thead><tr>${
         addSerialIndex
-          ? `<th tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: #888;"></th>`
+          ? `<th tabindex="0" data-serial-index="1" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: #888;"></th>`
           : ''
       }`;
       for (let i = 0; i < numColumns; i++) {
