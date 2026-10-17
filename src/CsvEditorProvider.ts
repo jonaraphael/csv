@@ -1,6 +1,7 @@
 import Papa from 'papaparse';
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { parseClipboardMatrix, serializeClipboardMatrix } from './clipboard';
 
 type SeparatorMode = 'extension' | 'auto' | 'default';
 type SeparatorSettings = {
@@ -147,9 +148,11 @@ class CsvEditorController {
         case 'save':
           await this.handleSave();
           break;
-        case 'copyToClipboard':
-          await vscode.env.clipboard.writeText(e.text);
-          console.log('CSV: Copied to clipboard');
+        case 'copyCells':
+          await this.copyCells(e.matrix, e.startRow, e.startCol, e.cut === true);
+          break;
+        case 'pasteFromClipboard':
+          await this.pasteCells(await vscode.env.clipboard.readText(), e.anchorRow, e.anchorCol, e.selection);
           break;
         case 'insertColumn':
           await this.insertColumn(e.index);
@@ -551,34 +554,32 @@ class CsvEditorController {
     }
   }
 
-  private parseClipboardMatrix(text: string): string[][] {
-    if (!text || text.length === 0) {
-      return [];
+  private async copyCells(rawMatrix: unknown, rawStartRow: unknown, rawStartCol: unknown, cut: boolean): Promise<void> {
+    if (!Array.isArray(rawMatrix) || rawMatrix.length === 0 || !rawMatrix.every(row =>
+      Array.isArray(row) && row.length > 0 && row.every(value => typeof value === 'string')
+    )) {
+      return;
     }
-    const parsed = Papa.parse(text, { dynamicTyping: false, delimiter: '' });
-    const rowsRaw = Array.isArray(parsed.data) ? parsed.data : [];
-    const matrix: string[][] = rowsRaw.map(rawRow => {
-      if (Array.isArray(rawRow)) {
-        return rawRow.map(cell => String(cell ?? ''));
-      }
-      return [String(rawRow ?? '')];
-    });
-    while (matrix.length > 0 && matrix[matrix.length - 1].every(value => value === '')) {
-      matrix.pop();
+    const matrix = rawMatrix as string[][];
+    const startRow = Number(rawStartRow);
+    const startCol = Number(rawStartCol);
+    if (!Number.isInteger(startRow) || startRow < 0 || !Number.isInteger(startCol) || startCol < 0) {
+      return;
     }
-    if (matrix.length === 0) {
-      return [];
+    const documentVersion = this.document.version;
+    try {
+      await vscode.env.clipboard.writeText(serializeClipboardMatrix(matrix, this.getSeparator()));
+    } catch {
+      void vscode.window.showErrorMessage('CSV: Unable to write to the clipboard. The selected cells were kept.');
+      return;
     }
-    const width = matrix.reduce((max, row) => Math.max(max, row.length), 0);
-    if (width <= 0) {
-      return [];
+    if (cut && this.document.version === documentVersion) {
+      await this.replaceCells(matrix.flatMap((row, rowOffset) => row.map((_value, colOffset) => ({
+        row: startRow + rowOffset,
+        col: startCol + colOffset,
+        value: ''
+      }))));
     }
-    matrix.forEach(row => {
-      while (row.length < width) {
-        row.push('');
-      }
-    });
-    return matrix;
   }
 
   private static parsePasteSelectionBounds(raw: unknown): PasteSelectionBounds | undefined {
@@ -721,7 +722,7 @@ class CsvEditorController {
     if (!Number.isInteger(anchorRow) || anchorRow < 0 || !Number.isInteger(anchorCol) || anchorCol < 0) {
       return;
     }
-    const matrix = this.parseClipboardMatrix(text);
+    const matrix = parseClipboardMatrix(text, this.getSeparator());
     if (!matrix.length || !matrix[0].length) {
       return;
     }

@@ -6,7 +6,6 @@ try { document.body.focus({ preventScroll: true }); } catch { try { document.bod
 const vscode = acquireVsCodeApi();
 
 const root = document.getElementById('csv-root');
-const CSV_SEPARATOR = String.fromCodePoint(parseInt(root?.dataset?.sepcode || '44', 10)); // default ','
 const parsePositiveNumber = value => {
   const parsed = typeof value === 'string' ? Number.parseFloat(value) : Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
@@ -387,6 +386,10 @@ const showContextMenu = (x, y, row, col) => {
     d.style.margin = '1px 0';
     contextMenu.appendChild(d);
   };
+  item('Cut', () => copySelectionToClipboard(true));
+  item('Copy', () => copySelectionToClipboard());
+  item('Paste', () => pasteFromClipboard());
+  divider();
   // Derive multi-row/column selection counts
   const selectedIndexCells = currentSelection.filter(el => el && el.getAttribute && el.getAttribute('data-col') === '-1');
   const selectedRowIds = Array.from(new Set(selectedIndexCells.map(el => parseInt(el.getAttribute('data-row') || '-1', 10)).filter(n => !isNaN(n)))).sort((a,b)=>a-b);
@@ -747,7 +750,7 @@ document.addEventListener('click', (e) => {
 /* ──────── UPDATED contextmenu listener ──────── */
 table.addEventListener('contextmenu', e => {
   const target = getCellTarget(e.target);
-  if (!target) return;
+  if (!target || editingCell) return;
   const colAttr = target.getAttribute('data-col');
   const rowAttr = target.getAttribute('data-row');
   const col = parseInt(colAttr);
@@ -1313,41 +1316,46 @@ const closeFindReplace = () => {
 
 findInput.addEventListener('input', () => scheduleFind(false));
 findInput.addEventListener('keydown', e => {
-  e.stopPropagation();
   if (e.key === 'Escape') {
     e.preventDefault();
+    e.stopPropagation();
     closeFindReplace();
     return;
   }
   if (e.key === 'Enter') {
     e.preventDefault();
+    e.stopPropagation();
     navigateFind(e.shiftKey);
     return;
   }
   if (e.key === 'F3') {
     e.preventDefault();
+    e.stopPropagation();
     navigateFind(e.shiftKey);
     return;
   }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') {
     e.preventDefault();
+    e.stopPropagation();
     navigateFind(e.shiftKey);
   }
 });
 replaceInput.addEventListener('keydown', e => {
-  e.stopPropagation();
   if (e.key === 'Escape') {
     e.preventDefault();
+    e.stopPropagation();
     closeFindReplace();
     return;
   }
   if (e.key === 'F3') {
     e.preventDefault();
+    e.stopPropagation();
     navigateFind(e.shiftKey);
     return;
   }
   if (e.key === 'Enter') {
     e.preventDefault();
+    e.stopPropagation();
     replaceCurrentMatch();
   }
 });
@@ -1528,8 +1536,9 @@ document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'a' && !editingCell) {
     e.preventDefault(); selectAllCells(); return;
   }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'c' && currentSelection.length > 0) {
-    e.preventDefault(); copySelectionToClipboard(); return;
+  if ((e.ctrlKey || e.metaKey) && !editingCell && !isTextInputTarget(e.target) &&
+      (key === 'c' || key === 'x') && currentSelection.length > 0) {
+    e.preventDefault(); copySelectionToClipboard(key === 'x'); return;
   }
 
   // Clear contents of selected cells when not editing
@@ -1826,8 +1835,29 @@ document.addEventListener('keydown', e => {
   }
 });
 
+const isTextInputTarget = target => {
+  const el = getElementTarget(target);
+  return !!(el && (el.closest('input, textarea, select') || el.isContentEditable));
+};
+const pasteFromClipboard = () => {
+  if (editingCell) return;
+  const anchor = getPasteAnchorCoords();
+  if (!anchor) return;
+  vscode.postMessage({
+    type: 'pasteFromClipboard',
+    anchorRow: anchor.row,
+    anchorCol: anchor.col,
+    selection: getDataSelectionBounds() || undefined
+  });
+};
+for (const type of ['copy', 'cut']) {
+  document.addEventListener(type, e => {
+    if (editingCell || isTextInputTarget(e.target) || isFindWidgetTarget(e.target)) return;
+    if (copySelectionToClipboard(type === 'cut')) e.preventDefault();
+  });
+}
 document.addEventListener('paste', e => {
-  if (isFindWidgetTarget(e.target)) {
+  if (isTextInputTarget(e.target) || isFindWidgetTarget(e.target)) {
     return;
   }
   if (editingCell) {
@@ -2013,27 +2043,21 @@ table.addEventListener('dblclick', e => {
   editCell(target, e);
 });
 
-const copySelectionToClipboard = () => {
-  if (currentSelection.length === 0) return;
-
-  // Only copy real data/header columns; skip serial index column (col === -1)
-  const coords = currentSelection
-    .map(cell => getCellCoords(cell))
-    .filter(c => !isNaN(c.row) && !isNaN(c.col) && c.col >= 0);
-  if (coords.length === 0) return;
-  const minRow = Math.min(...coords.map(c => c.row)), maxRow = Math.max(...coords.map(c => c.row));
-  const minCol = Math.min(...coords.map(c => c.col)), maxCol = Math.max(...coords.map(c => c.col));
-  let csv = '';
-  for(let r = minRow; r <= maxRow; r++){
-    let rowVals = [];
-    for(let c = minCol; c <= maxCol; c++){
-      const selector = (hasHeader && r === 0 ? 'th' : 'td') + '[data-row="'+r+'"][data-col="'+c+'"]';
-      const cell = table.querySelector(selector);
-      rowVals.push(cell ? cell.innerText : '');
+const copySelectionToClipboard = (cut = false) => {
+  const bounds = getDataSelectionBounds();
+  if (!bounds) return false;
+  const { minRow, maxRow, minCol, maxCol } = bounds;
+  const matrix = [];
+  for (let row = minRow; row <= maxRow; row++) {
+    const values = [];
+    for (let col = minCol; col <= maxCol; col++) {
+      const cell = getRenderedCellByCoords(row, col);
+      values.push(cell ? cell.textContent : '');
     }
-    csv += rowVals.join(CSV_SEPARATOR) + '\n';
+    matrix.push(values);
   }
-  vscode.postMessage({ type: 'copyToClipboard', text: csv.trimEnd() });
+  vscode.postMessage({ type: 'copyCells', matrix, startRow: minRow, startCol: minCol, cut });
+  return true;
 };
 
 window.addEventListener('message', event => {
