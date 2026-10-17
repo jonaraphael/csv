@@ -9,9 +9,14 @@ async function fixture(separator = ',') {
   const menu = window.document.getElementById('contextMenu');
   let naturalSize: { width: number; height: number } | undefined;
   const measurements: Array<{ left: string; top: string; display: string }> = [];
-  const natural = () => naturalSize ?? {
-    width: Math.max(...Array.from(menu.children).map((item: any) => item.textContent.length * 8 + 26)),
-    height: Array.from(menu.children).reduce((sum: number, item: any) => sum + (item.textContent ? 24 : 4), 2)
+  const baseFontSize = Number.parseFloat(window.getComputedStyle(window.document.body).fontSize);
+  const natural = () => {
+    if (naturalSize) { return naturalSize; }
+    const scale = Number.parseFloat(window.getComputedStyle(window.document.body).fontSize) / baseFontSize;
+    return {
+      width: Math.max(...Array.from(menu.children).map((item: any) => item.textContent.length * 8 * scale + 26)),
+      height: Array.from(menu.children).reduce((sum: number, item: any) => sum + (item.textContent ? 24 * scale : 4), 2)
+    };
   };
   const size = () => ({
     width: Math.min(natural().width, Number.parseFloat(menu.style.maxWidth)),
@@ -153,6 +158,26 @@ describe('Context menu viewport positioning', () => {
       assert.strictEqual(view.messages.at(-1).type, 'deleteColumn');
       assert.strictEqual(view.messages.at(-1).index, 0);
       assert.strictEqual(view.menu.style.display, 'none');
+    } finally { view.close(); }
+  });
+
+  it('dismisses only when CSV zoom changes and measures the enlarged menu on reopen', async () => {
+    const view = await fixture();
+    try {
+      const original = view.open(100, 100);
+      const x = 1000 - 8 - original.width;
+      assert.strictEqual(view.open(x, 100).left, x);
+      view.key('0', { ctrlKey: true });
+      assert.strictEqual(view.menu.style.display, 'block', 'reset at the existing zoom leaves the menu open');
+      const originalFontSize = Number.parseFloat(view.window.getComputedStyle(view.window.document.body).fontSize);
+      view.key('+', { ctrlKey: true });
+      assert.strictEqual(view.menu.style.display, 'none');
+      assert.ok(Number.parseFloat(view.window.document.body.style.fontSize) > originalFontSize);
+      const enlarged = view.open(x, 100);
+      assert.ok(enlarged.width > original.width);
+      assert.strictEqual(enlarged.left, x - enlarged.width);
+      assert.ok(enlarged.left + enlarged.width <= 992);
+      assert.strictEqual(view.menu.style.display, 'block');
     } finally { view.close(); }
   });
 
