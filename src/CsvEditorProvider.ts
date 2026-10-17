@@ -2421,7 +2421,7 @@ class CsvEditorController {
         font-size: inherit;
       }
       #findReplaceWidget .fr-overflow-item:hover { background: rgba(255,255,255,0.05); }
-      #contextMenu { position: absolute; display: none; background: ${isDark ? '#2d2d2d' : '#ffffff'}; border: 1px solid ${isDark ? '#555' : '#ccc'}; z-index: 10000; font-family: ${this.escapeCss(fontFamily)}; font-size: inherit; }
+      #contextMenu { position: fixed; display: none; width: max-content; box-sizing: border-box; overflow: auto; overflow-wrap: anywhere; background: ${isDark ? '#2d2d2d' : '#ffffff'}; border: 1px solid ${isDark ? '#555' : '#ccc'}; z-index: 10000; font-family: ${this.escapeCss(fontFamily)}; font-size: inherit; }
       #contextMenu div { padding: 4px 12px; cursor: pointer; }
       #contextMenu div:hover { background: ${isDark ? '#3d3d3d' : '#eeeeee'}; }
 
