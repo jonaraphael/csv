@@ -112,7 +112,7 @@ Global (Settings UI or `settings.json`):
 - `csv.defaultSeparator` (string, default `,`): Fallback separator. Use `\\t` in `settings.json` for tabs.
 - `csv.separatorByExtension` (object): Extension-to-separator mapping (defaults include `.csv`→`,`, `.tsv`/`.tab`→tab, `.psv`→`|`).
 - `csv.maxFileSizeMB` (number, default `10`): Soft limit for opening files in CSV view. If exceeded, CSV prompts: `Cancel`, `Continue This Time`, or `Ignore Forever` (sets this setting to `0`).
-- Per-file encoding: use `CSV: Change File Encoding` to set a file's encoding (e.g., `utf8`, `utf16le`, `windows1250`, `gbk`). The extension will reopen the file using the chosen encoding.
+- Per-file encoding: `CSV: Change File Encoding` opens VS Code's encoding picker. Use **Reopen with Encoding** and select the source file's encoding to correct incorrectly displayed characters before editing or saving.
 
 Per-file (stored by the extension; set via commands):
 
@@ -120,6 +120,16 @@ Per-file (stored by the extension; set via commands):
 - Serial index column (default `true`) — `CSV: Toggle Serial Index Column`
 - CSV separator override — `CSV: Change CSV Separator` (or clear it with `CSV: Reset CSV Separator (Inherit)`)
 - Hide first N rows (default `0`) — `CSV: Hide First N Rows`
+
+### File encodings and accented characters
+
+CSV displays the Unicode text supplied by VS Code; VS Code controls decoding the file's bytes and encoding saved files. If accents look wrong, run `CSV: Change File Encoding`, choose **Reopen with Encoding**, and select the encoding used by the source. Check the names before saving. Cancelling the unsaved-changes prompt stops the command and preserves your open edits.
+
+The editor shows a nonmodal warning once per opened document when it contains the replacement character `�`, offering the same encoding command. This character can be legitimate text, so the warning indicates a possible mismatch and does not guess an encoding or change any data. Some incorrect decodings produce other characters instead and will not trigger this warning.
+
+For example, the original attachment in [issue #76](https://github.com/jonaraphael/csv/issues/76) is not valid UTF-8. Explicitly decoding it as **DOS (CP 437)** or **Western European DOS (CP 850)** restores names such as `Knäckebröd` and `Thüringer`; both encodings produce the same text for that particular file, so its bytes do not uniquely identify which one created it. Use the source's documented encoding for other files. Available picker labels depend on your VS Code version.
+
+**Save with Encoding** changes how the current text is written; it cannot restore characters already decoded incorrectly. If a corrupted version was saved, reopen the original source or a backup using the correct encoding first.
 
 ---
 
