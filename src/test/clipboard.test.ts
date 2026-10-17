@@ -18,10 +18,10 @@ describe('Clipboard matrix fidelity', () => {
     assert.strictEqual(serializeClipboardMatrix(matrix, '\t'), 'name\tvalue\r\nalpha\t42');
   });
 
-  it('retains consistent escaping for complex ranges', () => {
+  it('quotes complex fields without wrapping their ordinary neighbors', () => {
     assert.strictEqual(
       serializeClipboardMatrix([['hello', 'with,comma', 'say "hi"', 'line\nvalue']], ','),
-      '"hello","with,comma","say ""hi""","line\nvalue"'
+      'hello,"with,comma","say ""hi""","line\nvalue"'
     );
   });
 
@@ -96,4 +96,29 @@ describe('Clipboard matrix fidelity', () => {
     assert.deepStrictEqual(parseClipboardMatrix('"\n"', ','), [['\n']]);
     assert.deepStrictEqual(parseClipboardMatrix('', ','), []);
   });
+  it('keeps external literal quotes and quoted later fields out of delimiter guesses', () => {
+    assert.deepStrictEqual(parseClipboardMatrix('left"quote\tright\nother\tvalue', ','), [['left"quote', 'right'], ['other', 'value']]);
+    assert.deepStrictEqual(parseClipboardMatrix('plain\t"a,b,c"\nother\t"d,e,f"', ','), [['plain', 'a,b,c'], ['other', 'd,e,f']]);
+    assert.deepStrictEqual(parseClipboardMatrix('plain||"a,b,c"\nother||""', '||'), [['plain', 'a,b,c'], ['other', '']]);
+  });
+
+  it('round-trips diverse rectangular matrices across common delimiters and within custom formats', () => {
+    const values = ['plain', '42', '', 'a,b', 'a\tb', 'a;b', 'a|b', 'say "hi"', 'a\nb', 'a\r\nb', ' edge ', '\uFEFFvalue', 'a^b', 'a::b', 'a||b'];
+    const common = [',', '\t', ';', '|'];
+    let seed = 1729;
+    const next = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed; };
+    for (let sample = 0; sample < 100; sample++) {
+      const height = 1 + next() % 4;
+      const width = 1 + next() % 4;
+      const matrix = Array.from({ length: height }, () => Array.from({ length: width }, () => values[next() % values.length]));
+      for (const delimiter of [...common, '^', '||', '::']) {
+        const text = serializeClipboardMatrix(matrix, delimiter);
+        assert.deepStrictEqual(Papa.parse(text, { delimiter }).data, matrix);
+        for (const target of common.includes(delimiter) ? common : [delimiter]) {
+          assert.deepStrictEqual(parseClipboardMatrix(text, target), matrix, `source ${JSON.stringify(delimiter)}, target ${JSON.stringify(target)}, sample ${sample}`);
+        }
+      }
+    }
+  });
+
 });

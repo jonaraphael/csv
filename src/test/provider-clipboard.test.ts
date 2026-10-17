@@ -74,6 +74,15 @@ describe('Provider system clipboard integration', () => {
     }
   });
 
+  it('writes a mixed column with plain neighbors unquoted and real blanks explicit', async () => {
+    for (const extension of ['csv', 'tsv']) {
+      const editor = await createEditor('Name,Other\nplain,1\n"with,comma",2\nlast,3', extension);
+      await editor.receive({ type: 'copyCells', matrix: [['Name'], ['plain'], ['with,comma'], [''], ['last']], startRow: 0, startCol: 0, cut: false });
+      assert.deepStrictEqual(editor.clipboardWrites, ['Name\r\nplain\r\n"with,comma"\r\n""\r\nlast']);
+      assert.strictEqual(editor.events.includes('edit'), false);
+    }
+  });
+
   it('writes quoted CSV/TSV to the system clipboard and round-trips paste through the document', async () => {
     for (const extension of ['csv', 'tsv']) {
       const delimiter = extension === 'csv' ? ',' : '\t';

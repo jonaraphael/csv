@@ -19,7 +19,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Smart Column Sizing & Dynamic Color Coding:** Columns automatically adjust to fit content while being visually distinguished by data type. Whether it’s boolean, date, integer, float, or text, each column gets its own adaptive color that adjusts for light and dark themes.
 - **Sticky Headers & Fluid Navigation:** Keep your header row always visible as you scroll. Effortlessly move through cells using intuitive keyboard shortcuts like `Tab`, `Shift + Tab`, and arrow keys—just like a full-featured spreadsheet.
 - **Efficient Multi-Cell Selection & Clipboard Integration:** Select a range of cells with click-and-drag and copy them as well-formatted CSV data using `Ctrl/Cmd + C`.
-- **Clipboard Actions:** Use Ctrl/Cmd + C or X, or right-click a selection and choose Copy or Cut, to copy properly quoted data to the system clipboard. Right-click Paste inserts clipboard data into the grid. Ordinary cell text is copied without surrounding quotes. CSV escaping still preserves separators, line breaks, literal quotes, surrounding whitespace, and empty cells. Clipboard shortcuts in Find, Replace, and cell text edits keep their normal text-editing behavior.
+- **Clipboard Actions:** Use Ctrl/Cmd + C or X, or right-click a selection and choose Copy or Cut, to copy properly quoted data to the system clipboard. Right-click Paste inserts clipboard data into the grid. Ordinary cells stay unquoted even beside complex values. The final append row is never copied or cut; real empty cells remain part of the selection. CSV escaping still preserves separators, line breaks, literal quotes, surrounding whitespace, and empty cells. Clipboard shortcuts in Find, Replace, and cell text edits keep their normal text-editing behavior.
 - **Grid Paste Support:** Paste copied ranges directly into the selected cell/range with `Ctrl/Cmd + V` in selection mode.
 - **Robust Data Handling:** Leveraging the power of [Papa Parse](https://www.papaparse.com/), the extension handles complex CSV structures, special characters, and various data types gracefully.
 - **Theme-Optimized Interface:** Whether you prefer light or dark mode, CSV automatically adapts its styles for an optimal viewing experience.
@@ -75,8 +75,8 @@ Cursor (built on VS Code 1.99) and the latest VS Code releases (1.102).
   - Quick edit: start typing any character to edit the selected cell immediately. Press any Arrow key to save and move the selection to the next cell in that direction.
   - Detail edit: press `Enter` on a selected cell or double‑click to enter a focused edit. Arrow Left/Right move the text caret; Arrow Up goes to start; Arrow Down goes to end. Click outside the cell (or blur) to save.
 - **Keyboard Navigation:** Use Arrow keys to move between cells when not editing. Use `Tab`/`Shift+Tab` to move horizontally (wrapping across rows as needed). Holding an arrow keeps the active cell in view; with `Shift`, the viewport follows the moving end of the selection.
-- **Multi-Cell Selection:** Cells show their selected color as soon as you press the mouse button. Drag or use `Shift + Click` to select multiple cells, then copy them as CSV using `Ctrl/Cmd + C`.
-- **Find & Replace:** Press `Ctrl/Cmd + F` to open Find, or `Ctrl/Cmd + H` to open Find + Replace.
+- **Multi-Cell Selection:** Cells show their selected color as soon as you press the mouse button. Drag or use `Shift + Click` to select multiple cells, then copy them as CSV using `Ctrl/Cmd + C`. Click a header once to select its column; a second separate click on the same header selects only that header cell. Double-click edits the header. Drag an already selected header to reorder its column or selected column group.
+- **Find & Replace:** Press `Ctrl/Cmd + F` to open Find, or `Ctrl/Cmd + H` to open Find + Replace. Add `Shift` to use VS Code’s native Find/Replace in Files; shortcuts with `Alt` also stay outside the table overlay.
 
 ---
 
