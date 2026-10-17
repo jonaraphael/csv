@@ -84,6 +84,7 @@ Open the Command Palette and search for:
 
 - `CSV: Toggle Extension On/Off` (`csv.toggleExtension`)
 - `CSV: Open Large File Preview (Read-only)` (`csv.openLargeFilePreview`)
+- `CSV: Compare Files as Table` (`csv.compareFilesAsTable`)
 - `CSV: Toggle First Row as Header` (`csv.toggleHeader`)
 - `CSV: Toggle Serial Index Column` (`csv.toggleSerialIndex`)
 - `CSV: Change CSV Separator` (`csv.changeSeparator`)
@@ -144,6 +145,16 @@ The preview reads the saved bytes in bounded chunks and displays one page at a t
 `csv.largeFilePreviewRows` limits a page to 1–10,000 records (default 1,000). Independent limits cap a page at 512 KiB of source records and 20,000 cells, one record at 256 KiB, and a record at 1,000 columns. Pages may contain fewer records. Oversized or malformed records produce a visible error instead of being truncated. Only the current page and at most 32 page positions are retained; Previous reaches the retained history, and Back to Start always restarts the file. If the file changes between reads, Back to Start reloads it.
 
 This preview currently supports **valid UTF-8 and host-local `file:` URIs**. It decodes saved bytes directly in the extension host instead of requesting VS Code's decoded TextDocument. A UTF-8 BOM is accepted; other encodings must use the normal editor's encoding workflow. The extension host can be remote; arbitrary remote filesystem providers are unsupported. Separators follow the per-file override or extension/default settings. Automatic separator detection requires an explicit override or a change to `csv.separatorMode`; otherwise the preview shows an actionable error. Normal editable CSV views retain their existing full-document behavior.
+
+## Compare Files as Table
+
+Run **CSV: Compare Files as Table** from an active CSV/text editor and choose the modified file, or select two files in Explorer and use that context-menu command. With no active source file, the command asks for an original and a modified file. Both panes are read-only; edit a source in its normal editor and the comparison refreshes from VS Code's current document text, including unsaved edits and its selected encoding.
+
+The comparison aligns unchanged records around inserted/deleted records, highlights changed original cells in red and modified cells in green, and leaves a placeholder where the other side has no record or field. Both scroll axes stay synchronized, and paired rows share their height so quoted multiline values remain aligned. Use **Previous/Next Change** to find differences and **Previous/Next Page** to browse. The first record is displayed as data. It compares parsed values and field presence; quoting and line-ending formatting are not compared.
+
+There are no new settings. The existing `csv.maxFileSizeMB` limit applies. Independent hard limits are 10 MiB of saved bytes before opening a new input and 5 MiB of decoded text, plus 10,000 records, 100,000 cells, and 1,000 columns per input; individual values are limited to 64 Ki characters and records to 256 Ki characters. Providers that cannot report source size must already have the document open in VS Code; its decoded text is still checked. Larger or malformed inputs show an error without truncating data. Each page contains at most 200 aligned records, 20,000 body cells, and 512 Ki characters. Unique-row anchors and a fixed alignment-work budget keep computation bounded; if a large changed section cannot be aligned within that budget, a visible notice explains that it is paired by position.
+
+**Native diff limitation:** this command opens CSV's own table comparison. It does not replace VS Code's native Git/PR comparison. Stable custom-editor APIs do not expose a reliable original/modified URI pair for native comparisons made of two custom webviews, so the native highlighting/scrolling requests in [#67](https://github.com/jonaraphael/csv/issues/67) and [#86](https://github.com/jonaraphael/csv/issues/86) remain limited by that API. The command provides table comparison when the two input URIs are known explicitly. CSV's source stays in the extension-host/webview environment; the comparison does not upload data, write files, or persist cell values in global/workspace state.
 
 ## Editing Modes and Shortcuts
 
