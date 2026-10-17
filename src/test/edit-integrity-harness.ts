@@ -48,6 +48,7 @@ export async function createEditorHarness(options: {
   rows?: string[][];
   separator?: string;
   header?: boolean;
+  serialIndex?: boolean;
   remote?: boolean;
 } = {}) {
   const separator = options.separator ?? ',';
@@ -84,6 +85,7 @@ export async function createEditorHarness(options: {
     }
   };
   await CsvEditorProvider.setHeaderForUri(context as any, uri as any, options.header ?? true);
+  await CsvEditorProvider.setSerialIndexForUri(context as any, uri as any, options.serialIndex ?? true);
   const panel = {
     active: true,
     visible: true,
@@ -100,7 +102,7 @@ export async function createEditorHarness(options: {
     onDidDispose() {}
   };
   const harness = {
-    document, panel, messages, changeListeners, saveListeners,
+    context, document, panel, messages, changeListeners, saveListeners,
     get diskText() { return diskText; },
     get pendingEdits() { return delayedEdits.length; },
     deferEdits() { deferEdits = true; },
