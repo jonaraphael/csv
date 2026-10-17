@@ -150,6 +150,72 @@ const persistState = () => {
   } catch {}
 };
 
+// Coalesce repeated navigation to the latest cell before paint. Native smooth
+// scrolling restarts on every key repeat and can leave selection offscreen.
+let pendingCellReveal = null;
+let cellRevealScheduled = false;
+const scheduleCellReveal = (cell, center = false) => {
+  pendingCellReveal = { cell, center };
+  if (cellRevealScheduled) return;
+  cellRevealScheduled = true;
+  requestAnimationFrame(() => {
+    cellRevealScheduled = false;
+    const request = pendingCellReveal;
+    pendingCellReveal = null;
+    if (!request?.cell?.isConnected || !scrollContainer) return;
+    const width = scrollContainer.clientWidth;
+    const height = scrollContainer.clientHeight;
+    if (width <= 0 || height <= 0) return;
+    const viewport = scrollContainer.getBoundingClientRect();
+    const viewportLeft = viewport.left + scrollContainer.clientLeft;
+    const viewportTop = viewport.top + scrollContainer.clientTop;
+    let left = Math.max(0, viewportLeft);
+    let top = Math.max(0, viewportTop);
+    const right = Math.min(window.innerWidth, viewportLeft + width);
+    const bottom = Math.min(window.innerHeight, viewportTop + height);
+    const target = request.cell;
+    let fixedTop = target.classList.contains('csv-frozen-row');
+    const fixedLeft = target.classList.contains('csv-frozen-column');
+
+    const filterBar = document.getElementById('filterStatus');
+    if (filterBar) top = Math.max(top, filterBar.getBoundingClientRect().bottom);
+    const headerCell = table.tHead?.rows[0]?.cells[0];
+    if (headerCell) {
+      const style = getComputedStyle(headerCell);
+      if (style.position === 'sticky' && style.top && style.top !== 'auto') {
+        top = Math.max(top, headerCell.getBoundingClientRect().bottom);
+        fixedTop = fixedTop || table.tHead.contains(target);
+      }
+    }
+    // Frozen panes are leading rows/columns. Read one representative per
+    // boundary, rather than scanning every rendered cell on each repeat.
+    for (const row of table.rows) {
+      const first = row.cells[0];
+      if (!first?.classList.contains('csv-frozen-row')) break;
+      top = Math.max(top, first.getBoundingClientRect().bottom);
+    }
+    for (const cell of table.rows[0]?.cells || []) {
+      if (!cell.classList.contains('csv-frozen-column')) break;
+      left = Math.max(left, cell.getBoundingClientRect().right);
+    }
+
+    const rect = target.getBoundingClientRect();
+    const revealDelta = (start, end, min, max) => {
+      if (max <= min) return 0;
+      // A cell larger than the available pane cannot fit; keep its leading
+      // edge usable instead of alternating between opposite edges.
+      if (end - start > max - min) return start - min;
+      if (request.center) return (start + end - min - max) / 2;
+      return start < min ? start - min : end > max ? end - max : 0;
+    };
+    const x = fixedLeft ? 0 : revealDelta(rect.left, rect.right, left, right);
+    const y = fixedTop ? 0 : revealDelta(rect.top, rect.bottom, top, bottom);
+    // Even zero delta cancels any native animation already in flight.
+    scrollContainer.scrollTo({ left: scrollContainer.scrollLeft + x, top: scrollContainer.scrollTop + y, behavior: 'instant' });
+    persistState();
+  });
+};
+
 const restoreState = () => {
   try {
     const st = vscode.getState() || {};
@@ -1226,7 +1292,7 @@ const setActiveFindMatch = (index, shouldScroll = true) => {
     cell.classList.add('highlight');
     cell.classList.add('active-match');
     if (shouldScroll) {
-      cell.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+      scheduleCellReveal(cell, true);
     }
   }
   updateFindStatus();
@@ -1496,25 +1562,6 @@ document.addEventListener('keydown', e => {
       return;
     }
 
-    const sc = document.querySelector('.table-container');
-    if (sc) {
-      if (['ArrowLeft','Left','Home'].includes(e.key))  sc.scrollTo({ left: 0, behavior: 'smooth' });
-      if (['ArrowRight','Right','End'].includes(e.key)) sc.scrollTo({ left: sc.scrollWidth, behavior: 'smooth' });
-      if (['ArrowUp','Up'].includes(e.key))    sc.scrollTo({ top: 0, behavior: 'smooth' });
-      if (['ArrowDown','Down'].includes(e.key))  sc.scrollTo({ top: sc.scrollHeight, behavior: 'smooth' });
-    } else {
-      if (['ArrowUp','Up'].includes(e.key)) {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }
-      if (['ArrowDown','Down'].includes(e.key)) {
-        const h = Math.max(
-          document.body.scrollHeight,
-          document.documentElement.scrollHeight
-        );
-        window.scrollTo({ top: h, behavior: 'smooth' });
-      }
-    }
-
     const fixedAnchor = anchorCell || currentSelection.find(cell => {
       const { row, col } = getCellCoords(cell);
       return Number.isInteger(row) && Number.isInteger(col);
@@ -1555,17 +1602,7 @@ document.addEventListener('keydown', e => {
       }
       persistState();
       (e.shiftKey ? anchorCell : target).focus({preventScroll:true});
-      if (['ArrowUp','Up'].includes(e.key)) {
-        const topRow = getFirstDataRow();
-        const below = table.querySelector('td[data-row="'+topRow+'"][data-col="'+getCellCoords(target).col+'"]');
-        if (below) {
-          below.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
-        } else {
-          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
-        }
-      } else {
-        target.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
-      }
+      scheduleCellReveal(target);
     }
   }
 }, true);
@@ -1703,7 +1740,7 @@ document.addEventListener('keydown', e => {
       extendSelectionTo(nextCell);
       persistState();
       anchorCell.focus({preventScroll:true});
-      rangeEndCell.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
+      scheduleCellReveal(rangeEndCell);
     }
     return;
   }
@@ -1729,7 +1766,7 @@ document.addEventListener('keydown', e => {
       rangeEndCell = nextCell;
       persistState();
       nextCell.focus({preventScroll:true});
-      nextCell.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
+      scheduleCellReveal(nextCell);
     }
     return;
   }
@@ -1757,7 +1794,7 @@ document.addEventListener('keydown', e => {
           rangeEndCell = nextCell;
           persistState();
           nextCell.focus({preventScroll:true});
-          nextCell.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
+          scheduleCellReveal(nextCell);
         };
         const cellRef = editingCell;
         cellRef && cellRef.blur();
@@ -1938,7 +1975,7 @@ const setSingleSelection = cell => {
   rangeEndCell = cell;
   persistState();
   try { cell.focus({ preventScroll: true }); } catch { try { cell.focus(); } catch {} }
-  cell.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+  scheduleCellReveal(cell);
 };
 
 const NEWLINE_SENTINEL_ATTR = 'data-csv-newline-sentinel';
@@ -2150,7 +2187,7 @@ window.addEventListener('message', event => {
     selectRange({ row: startRow, col: startCol }, { row: endRow, col: endCol });
     persistState();
     try { startCell.focus({ preventScroll: true }); } catch { try { startCell.focus(); } catch {} }
-    endCell.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
+    scheduleCellReveal(endCell);
   } else if (message.type === 'findMatchesResult') {
     if (!findReplaceState.open) {
       return;
