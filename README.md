@@ -29,7 +29,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 ## Features
 
 - **Interactive Editing:** Two modes — type to start a quick edit, or press Enter/double‑click for detail edit. Changes commit to the document when focus leaves the cell or CSV view; unsaved changes remain visible when you switch tabs.
-- **Smart Resizing:** Automatic widths follow the longest line in multiline cells. Drag within 10 pixels on either side of a column boundary to resize; widths are remembered per file across closing and reopening. Double-click a column boundary to restore automatic sizing. Resizing also works with the header row hidden.
+- **Smart Resizing:** Automatic widths follow the longest line in multiline cells. Drag close to a column boundary to resize; the narrow grab area leaves small columns selectable. Widths are remembered per file across closing and reopening. Double-click a column boundary to restore automatic sizing. Resizing also works with the header row hidden.
 - **Dynamic Color Coding:** Visual cues based on data type help you quickly identify numbers, dates, booleans, and more (with opt‑in cool palette and theme-foreground mode settings).
 - **Frozen Rows and Columns:** Keep any number of leading visible rows and data columns in view. Right-click a cell to freeze through its row/column or unfreeze; counts are remembered per file. Frozen rows use measured heights, including multiline cells and zoom. The serial index stays visible alongside frozen data columns.
 - **Enhanced Keyboard Navigation:** Navigate cells with arrows and Tab/Shift+Tab; quick edits can commit with arrow keys; `Ctrl/Cmd + A` selects all; `Ctrl/Cmd + C` copies selection.
