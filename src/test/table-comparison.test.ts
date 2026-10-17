@@ -201,6 +201,36 @@ describe('Readonly table comparison provider and command', () => {
 });
 
 describe('Table comparison frontend', () => {
+  it('positions a focused change below the sticky header using actual pane geometry', async () => {
+    const fixture = await comparisonFixture();
+    const dom = new JSDOM(fixture.panel.webview.html, { runScripts: 'outside-only', pretendToBeVisual: true });
+    const { window } = dom;
+    let align!: () => void;
+    window.requestAnimationFrame = (callback: () => void) => { align = callback; return 1; };
+    window.cancelAnimationFrame = () => {};
+    window.acquireVsCodeApi = () => ({ postMessage() {} });
+    try {
+      window.eval(fs.readFileSync(path.join(process.cwd(), 'media', 'table-comparison.js'), 'utf8'));
+      window.dispatchEvent(new window.MessageEvent('message', { data: { ...fixture.messages.at(-1), focusRecord: 1 } }));
+      const panes = ['original', 'modified'].map(id => window.document.getElementById(id));
+      for (const pane of panes) {
+        pane.scrollTop = 140;
+        pane.getBoundingClientRect = () => ({ top: 115.5, height: 600 });
+        Object.defineProperty(pane, 'clientTop', { value: 1 });
+        pane.querySelector('thead').getBoundingClientRect = () => ({ height: 47 });
+        const row = pane.querySelector('[data-align="1"]');
+        Object.defineProperty(row, 'offsetTop', { value: 179 });
+        row.getBoundingClientRect = () => ({ top: 350.5 - pane.scrollTop, height: 50 });
+      }
+      align();
+      for (const pane of panes) {
+        assert.strictEqual(pane.scrollTop, 187);
+        assert.strictEqual(pane.querySelector('[data-align="1"]').getBoundingClientRect().top, 163.5);
+        assert.ok(pane.querySelector('[data-align="1"]').classList.contains('focused'));
+      }
+    } finally { dom.window.close(); fixture.dispose(); }
+  });
+
   it('synchronizes both scroll axes, aligns multiline row heights, replaces pages and recovers controls', async () => {
     const fixture = await comparisonFixture('id,value\n1,"one\ntwo"\n2,old', 'id,value\n1,short\n2,new');
     const dom = new JSDOM(fixture.panel.webview.html, { runScripts: 'outside-only', pretendToBeVisual: true });

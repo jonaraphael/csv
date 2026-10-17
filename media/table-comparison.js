@@ -22,7 +22,7 @@ const alignRows = () => {
       if (row) {
         row.classList.add('focused');
         const header = pane.querySelector('thead');
-        pane.scrollTop = Math.max(0, row.offsetTop - (header?.getBoundingClientRect().height || 0));
+        pane.scrollTop = Math.max(0, pane.scrollTop + row.getBoundingClientRect().top - pane.getBoundingClientRect().top - pane.clientTop - (header?.getBoundingClientRect().height || 0));
       }
     });
     pendingFocus = undefined;
