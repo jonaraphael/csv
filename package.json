@@ -24,6 +24,7 @@
     "onCommand:csv.toggleExtension",
     "onCommand:csv.openLargeFilePreview",
     "onCustomEditor:csv.largeFilePreview",
+    "onCommand:csv.toggleEditor",
     "onCommand:csv.toggleHeader",
     "onCommand:csv.toggleSerialIndex",
     "onCommand:csv.changeSeparator",
@@ -73,6 +74,11 @@
         "title": "CSV: Open Large File Preview (Read-only)"
       },
       {
+        "command": "csv.toggleEditor",
+        "title": "CSV: Switch Between Table and Text",
+        "icon": "$(arrow-swap)"
+      },
+      {
         "command": "csv.toggleExtension",
         "title": "CSV: Toggle Extension On/Off"
       },
@@ -117,6 +123,22 @@
         "title": "CSV: Freeze Leading Columns"
       }
     ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "csv.toggleEditor",
+          "when": "!isInDiffEditor && (activeCustomEditorId == csv.editor || (activeEditor == workbench.editors.textEditor && resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i))",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "csv.openLargeFilePreview",
+          "when": "resourceScheme == file && resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i && config.csv.enabled",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "type": "object",
       "title": "CSV Extension Configuration",
@@ -240,15 +262,6 @@
           "description": "Maximum records per read-only Large File Preview page. Byte/cell safety limits can produce smaller pages."
         }
       }
-    },
-    "menus": {
-      "explorer/context": [
-        {
-          "command": "csv.openLargeFilePreview",
-          "when": "resourceScheme == file && resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i && config.csv.enabled",
-          "group": "navigation"
-        }
-      ]
     },
     "customEditors": [
       {
