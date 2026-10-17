@@ -50,7 +50,7 @@ async function createLiveView(mode: string, palette: string) {
   let state = {};
   dom.window.acquireVsCodeApi = () => ({ postMessage: (message: unknown) => messages.push(message), getState: () => state, setState: (value: object) => { state = value; } });
   dom.window.HTMLElement.prototype.scrollIntoView = () => {};
-  dom.window.IntersectionObserver = class { observe() {} };
+  dom.window.IntersectionObserver = class { observe() {} disconnect() {} };
   dom.window.eval(`${fs.readFileSync(path.join(process.cwd(), 'media', 'main.js'), 'utf8')}\nwindow.themeTestApi = { editCell, setSingleSelection };`);
   return { dom, messages, document };
 }

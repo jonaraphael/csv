@@ -6,9 +6,14 @@ try { document.body.focus({ preventScroll: true }); } catch { try { document.bod
 const vscode = acquireVsCodeApi();
 
 const root = document.getElementById('csv-root');
+let filterMetadata = {};
+try { filterMetadata = JSON.parse(document.getElementById('__csvFilters')?.textContent || '{}'); } catch {}
+const filterSession = filterMetadata.session;
 let visibleRowOrder = [];
 try { visibleRowOrder = JSON.parse(root?.dataset?.roworder || '[]'); } catch {}
-const headerSourceRow = Number(root?.dataset?.firstrow || '0');
+let headerSourceRow = Number(root?.dataset?.firstrow || '0');
+let filterEpoch = 0;
+let filterSnapshotPending = false;
 const adjacentVisibleRow = (row, direction) => {
   if (!visibleRowOrder.length) return row + direction;
   const index = visibleRowOrder.indexOf(row);
@@ -174,6 +179,7 @@ const persistState = () => {
 };
 
 const restoreState = () => {
+  if (document.activeElement?.closest?.('#filterStatus')) return;
   try {
     const st = vscode.getState() || {};
     const restoredZoom = parsePositiveNumber(st.zoomScale);
@@ -261,73 +267,46 @@ const requestRemoteChunk = () => {
   remoteChunkRequestInFlight = true;
   remoteChunkRequestedStart = remoteNextChunkStart;
   remoteChunkRequestSeq += 1;
-  vscode.postMessage({ type: 'requestChunk', start: remoteNextChunkStart, requestId: remoteChunkRequestSeq });
+  vscode.postMessage({ type: 'requestChunk', start: remoteNextChunkStart, requestId: remoteChunkRequestSeq, filterEpoch, session: filterSession });
 };
 
-if (csvChunks.length || remoteHasMoreChunks) {
+let chunkObserver = null;
+let chunkLoading = false;
+const primeChunks = () => {
+  chunkObserver?.disconnect();
+  const last = table.tBodies[0]?.querySelector('tr:last-child');
+  if (last && (csvChunks.length || remoteHasMoreChunks)) chunkObserver?.observe(last);
+};
+loadNextChunk = () => {
   const tbody = table.tBodies[0];
-  let loading = false;
-
-  loadNextChunk = () => {
-    if (loading || !tbody) return false;
-    if (!csvChunks.length) {
-      requestRemoteChunk();
-      return false;
+  if (chunkLoading || !tbody) return false;
+  if (!csvChunks.length) { requestRemoteChunk(); return false; }
+  chunkLoading = true;
+  try {
+    const html = csvChunks.shift();
+    if (html) {
+      tbody.insertAdjacentHTML('beforeend', html);
+      applySizeStateToRenderedCells();
+      window.dispatchEvent(new Event('csvChunkLoaded'));
     }
-    loading = true;
-    try {
-      const html = csvChunks.shift();
-      if (html) {
-        tbody.insertAdjacentHTML('beforeend', html);
-        applySizeStateToRenderedCells();
-        window.dispatchEvent(new Event('csvChunkLoaded'));
-      }
-      if (!csvChunks.length) {
-        requestRemoteChunk();
-      }
-      return !!html;
-    } finally {
-      loading = false;
-    }
-  };
-  // Expose for restoration logic
-  window.__csvLoadNextChunk = loadNextChunk;
-
-  nearBottom = () => {
-    if (!scrollContainer) return false;
-    const remain = scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight;
-    return remain < 300; // px threshold
-  };
-
-  const io = new IntersectionObserver((entries)=>{
-    if (entries[0] && entries[0].isIntersecting) {
-      loadNextChunk();
-      const last = tbody && tbody.querySelector('tr:last-child');
-      if (last) io.observe(last);
-    }
-  }, { root: scrollContainer || null, rootMargin: '0px 0px 300px 0px' });
-
-  const prime = () => {
-    const last = tbody && tbody.querySelector('tr:last-child');
-    if (last) { io.observe(last); }
-  };
-  prime();
-
-  // Fallback: scroll-driven loader to ensure progress even if IO misses
-  const scrollHandler = () => {
-    if (!csvChunks.length && !remoteHasMoreChunks) return;
-    if (nearBottom()) {
-      // Load until we create headroom or exhaust currently available chunks
-      let guard = 10;
-      while (nearBottom() && guard-- > 0) {
-        if (!loadNextChunk()) break;
-      }
-      prime();
-    }
-  };
-  if (scrollContainer) scrollContainer.addEventListener('scroll', scrollHandler, { passive: true });
-  else window.addEventListener('scroll', scrollHandler, { passive: true });
-}
+    if (!csvChunks.length) requestRemoteChunk();
+    primeChunks();
+    return !!html;
+  } finally { chunkLoading = false; }
+};
+window.__csvLoadNextChunk = loadNextChunk;
+nearBottom = () => !!scrollContainer && scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight < 300;
+chunkObserver = new IntersectionObserver(entries => {
+  if (entries[0]?.isIntersecting) loadNextChunk();
+}, { root: scrollContainer || null, rootMargin: '0px 0px 300px 0px' });
+primeChunks();
+const scrollChunkLoader = () => {
+  if (!csvChunks.length && !remoteHasMoreChunks) return;
+  let guard = 10;
+  while (nearBottom() && guard-- > 0) { if (!loadNextChunk()) break; }
+  primeChunks();
+};
+(scrollContainer || window).addEventListener('scroll', scrollChunkLoader, { passive: true });
 
 const ensureTargetStep = () => {
   if (!pendingEnsureTarget) return;
@@ -391,7 +370,7 @@ const handleZoomWheel = e => {
 };
 window.addEventListener('wheel', handleZoomWheel, { passive: false });
 
-const hasHeader = document.querySelector('thead') !== null;
+let hasHeader = document.querySelector('thead') !== null;
 const getCellCoords = cell => ({ row: parseInt(cell.getAttribute('data-row')), col: parseInt(cell.getAttribute('data-col')) });
 const clearSelection = () => { currentSelection.forEach(c => c.classList.remove('selected')); currentSelection = []; };
 const contextMenu = document.getElementById('contextMenu');
@@ -408,7 +387,10 @@ const showContextMenu = (x, y, row, col) => {
   const item = (label, cb) => {
     const d = document.createElement('div');
     d.textContent = label;
-    d.addEventListener('click', () => { cb(); contextMenu.style.display = 'none'; });
+    d.addEventListener('click', () => {
+      if (!filterSnapshotPending) cb();
+      contextMenu.style.display = 'none';
+    });
     contextMenu.appendChild(d);
   };
   const divider = () => {
@@ -417,6 +399,10 @@ const showContextMenu = (x, y, row, col) => {
     d.style.margin = '1px 0';
     contextMenu.appendChild(d);
   };
+  if (Number.isInteger(col) && col >= 0) {
+    item('Filter this column…', () => window.csvColumnFilters?.add(col));
+    divider();
+  }
   item('Cut', () => copySelectionToClipboard(true));
   item('Copy', () => copySelectionToClipboard());
   item('Paste', () => pasteFromClipboard());
@@ -425,7 +411,6 @@ const showContextMenu = (x, y, row, col) => {
     item('Freeze rows through this row', () => changeFrozenPanes({ rows: row - Number(root?.dataset?.firstrow || '0') + 1 }));
   }
   if (Number.isInteger(col) && col >= 0) {
-    item('Filter this column…', () => vscode.postMessage({ type: 'configureColumnFilter', column: col }));
     item('Freeze columns through this column', () => changeFrozenPanes({ columns: col + 1 }));
   }
   if (frozenRowCount > 0) item('Unfreeze rows', () => changeFrozenPanes({ rows: 0 }));
@@ -1141,6 +1126,18 @@ const isFindWidgetTarget = target => {
   return !!(el && el.closest('#findReplaceWidget'));
 };
 const isGridControlTarget = target => isFindWidgetTarget(target) || !!getElementTarget(target)?.closest('#filterStatus');
+const preventPendingGridAction = event => {
+  if (!filterSnapshotPending || isGridControlTarget(event.target)) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+};
+for (const type of ['keydown', 'copy', 'cut', 'paste']) {
+  document.addEventListener(type, preventPendingGridAction, true);
+}
+for (const type of ['mousedown', 'mouseup', 'dblclick', 'contextmenu', 'beforeinput']) {
+  table.addEventListener(type, preventPendingGridAction, true);
+}
+
 const clearFindHighlights = () => {
   document.querySelectorAll('.highlight, .active-match').forEach(el => {
     el.classList.remove('highlight');
@@ -1323,6 +1320,7 @@ const replaceInText = (text, replaceAllMatches) => {
   return text.replace(regex, matched => preserveReplacementCase(replacementText, matched));
 };
 const replaceCurrentMatch = () => {
+  if (filterSnapshotPending) return;
   if (!findMatches.length || findReplaceState.invalidRegex) return;
   const match = findMatches[currentMatchIndex];
   if (!match) {
@@ -1343,6 +1341,7 @@ const replaceCurrentMatch = () => {
   runFind(true);
 };
 const replaceAllMatches = () => {
+  if (filterSnapshotPending) return;
   if (findReplaceState.invalidRegex || !findInput.value || !findMatches.length) return;
   const seen = new Set();
   if (!findMatches.length) return;
@@ -1587,6 +1586,7 @@ document.addEventListener('keydown', e => {
 }, true);
 
 document.addEventListener('keydown', e => {
+  if (getElementTarget(e.target)?.closest('#filterStatus')) return;
   if (maybeHandleZoomShortcut(e)) {
     return;
   }
@@ -2154,11 +2154,14 @@ window.addEventListener('message', event => {
     if (editingCell) editingCell.blur();
     persistState();
     vscode.postMessage({ type: 'viewRefreshReady' });
+  } else if (message.type === 'columnFiltersResult') {
+    applyColumnFiltersResult(message);
   } else if (message.type === 'frozenPanes') {
     frozenRowCount = Number(message.rows);
     frozenColumnCount = Number(message.columns);
     window.csvFrozenPanes?.update(frozenRowCount, frozenColumnCount);
   } else if(message.type === 'focus'){
+    if (document.activeElement?.closest?.('#filterStatus')) return;
     if (anchorCell) {
       try { anchorCell.focus({ preventScroll: true }); } catch { try { anchorCell.focus(); } catch {} }
     } else {
@@ -2167,6 +2170,7 @@ window.addEventListener('message', event => {
   } else if (message.type === 'chunkData') {
     const requestId = Number(message.requestId);
     const start = Number(message.start);
+    if (message.session !== filterSession || Number(message.filterEpoch) !== filterEpoch) return;
     if (remoteChunkRequestInFlight) {
       if (!Number.isInteger(requestId) || requestId !== remoteChunkRequestSeq) {
         return;
@@ -2212,6 +2216,7 @@ window.addEventListener('message', event => {
       scheduleFind(true);
     }
   } else if (message.type === 'pasteApplied') {
+    if (filterSnapshotPending || document.activeElement?.closest?.('#filterStatus')) return;
     const startRow = Number(message.startRow);
     const startCol = Number(message.startCol);
     const endRow = Number(message.endRow);
@@ -2279,6 +2284,7 @@ window.addEventListener('message', event => {
 
 // After initial restoreState, if there's a pending edit request, perform it
 const maybeResumePendingEdit = () => {
+  if (document.activeElement?.closest?.('#filterStatus')) return;
   try {
     const st = vscode.getState() || {};
     if (st && typeof st.anchorRow === 'number' && typeof st.anchorCol === 'number' && st.pendingEdit === 'detail') {
@@ -2310,7 +2316,7 @@ window.addEventListener('blur', () => {
 window.addEventListener('focus', () => { setTimeout(maybeResumePendingEdit, 0); }, { passive: true });
 
 document.addEventListener('keydown', e => {
-  if (findReplaceState.open) {
+  if (findReplaceState.open || isGridControlTarget(e.target)) {
     return;
   }
   if(!editingCell && e.key === 'Escape'){
@@ -2318,8 +2324,10 @@ document.addEventListener('keydown', e => {
   }
 });
 
-// Freeze layout never replaces cells or moves focus, including during a live edit.
-if (typeof window.createFrozenPaneManager === 'function') {
+// A partial filter redraw keeps the delegated table and focused controls alive.
+const initializeFrozenPanes = () => {
+  window.csvFrozenPanes?.dispose();
+  if (typeof window.createFrozenPaneManager !== 'function') return;
   window.csvFrozenPanes = window.createFrozenPaneManager({
     table,
     firstRow: Number(root?.dataset?.firstrow || '0'),
@@ -2329,12 +2337,107 @@ if (typeof window.createFrozenPaneManager === 'function') {
     onNeedRows: () => loadNextChunk()
   });
   window.csvFrozenPanes.update(frozenRowCount, frozenColumnCount);
-  window.addEventListener('csvChunkLoaded', () => window.csvFrozenPanes.schedule());
-  window.addEventListener('resize', () => window.csvFrozenPanes.schedule());
-  window.addEventListener('pagehide', () => window.csvFrozenPanes.dispose(), { once: true });
+};
+initializeFrozenPanes();
+window.addEventListener('csvChunkLoaded', () => window.csvFrozenPanes?.schedule());
+window.addEventListener('resize', () => window.csvFrozenPanes?.schedule());
+window.addEventListener('pagehide', () => window.csvFrozenPanes?.dispose(), { once: true });
+const invalidateFilterFind = () => {
+  clearTimeout(findDebounce);
+  latestFindRequestId = ++findRequestSeq;
+  pendingFindRequests.clear();
+  clearFindHighlights();
+  findMatches = [];
+  findMatchKeySet = new Set();
+  currentMatchIndex = -1;
+  updateFindStatus();
+  updateFindControls();
+};
+const setFilterPending = pending => {
+  filterSnapshotPending = pending;
+  table.toggleAttribute('inert', pending);
+  table.setAttribute('aria-busy', String(pending));
+  if (pending) {
+    if (editingCell) editingCell.blur();
+    invalidateFilterFind();
+  }
+};
+const submitColumnFilters = snapshot => {
+  if (editingCell) editingCell.blur();
+  vscode.postMessage({ type: 'updateColumnFilters', ...snapshot, session: filterSession });
+};
+const applyColumnFiltersResult = message => {
+  if (message.session !== filterSession || !window.csvColumnFilters || message.revision !== window.csvColumnFilters.latestRevision) return;
+  // A newly started draft must reach the host before any replacement render.
+  if (editingCell) {
+    editingCell.blur();
+    window.csvColumnFilters.retry();
+    return;
+  }
+  if (!window.csvColumnFilters.receive(message)) return;
+  const epoch = Number(message.filterEpoch);
+  if (typeof message.tableHtml === 'string' && Number.isSafeInteger(epoch) && epoch >= 0 &&
+      (!(message.error || message.errors?.length) || epoch !== filterEpoch)) {
+    const parsed = document.createElement('template');
+    parsed.innerHTML = message.tableHtml;
+    const replacement = parsed.content.querySelector('table');
+    if (!replacement) return;
+    const priorAnchor = anchorCell ? getCellCoords(anchorCell) : null;
+    clearSelection();
+    anchorCell = rangeEndCell = startCell = endCell = null;
+    isSelecting = false;
+    selectionMode = 'cell';
+    resizeState = reorderState = null;
+    table.style.cursor = '';
+    hideDragIndicator();
+    pendingEnsureTarget = null;
+    invalidateFilterFind();
+    chunkObserver?.disconnect();
+    remoteChunkRequestInFlight = false;
+    remoteChunkRequestedStart = -1;
+    remoteChunkRequestSeq += 1;
+    filterEpoch = epoch;
+    table.replaceChildren(...Array.from(replacement.childNodes));
+    hasHeader = !!table.tHead;
+    headerSourceRow = Number(message.firstVisibleRow);
+    root.dataset.firstrow = String(message.firstVisibleRow);
+    root.dataset.realrowcount = String(message.realRowCount);
+    visibleRowOrder.length = 0;
+    for (const row of Array.isArray(message.visibleRowIds) ? message.visibleRowIds : []) visibleRowOrder.push(row);
+    root.dataset.roworder = JSON.stringify(visibleRowOrder);
+    root.dataset.filtered = message.filters?.length ? '1' : '0';
+    try { csvChunks = JSON.parse(message.chunksJson || '[]'); } catch { csvChunks = []; }
+    remoteNextChunkStart = Number.isInteger(message.nextChunkStart) ? message.nextChunkStart : -1;
+    remoteHasMoreChunks = !!message.hasRemoteChunks && remoteNextChunkStart >= 0;
+    root.dataset.nextchunkstart = remoteNextChunkStart >= 0 ? String(remoteNextChunkStart) : '';
+    root.dataset.hasmorechunks = remoteHasMoreChunks ? '1' : '0';
+    if (chunkTemplate) chunkTemplate.textContent = JSON.stringify(csvChunks);
+    const colors = document.getElementById('__csvColumnColors');
+    if (colors && typeof message.colorCss === 'string') colors.textContent = message.colorCss;
+    if (priorAnchor) {
+      const cell = getRenderedCellByCoords(priorAnchor.row, priorAnchor.col);
+      if (cell) { cell.classList.add('selected'); currentSelection.push(cell); anchorCell = rangeEndCell = cell; }
+    }
+    applySizeStateToRenderedCells();
+    initializeFrozenPanes();
+    primeChunks();
+    persistState();
+    replaceAll.title = message.filters?.length ? 'Replace All in matching filtered rows' : 'Replace All';
+  }
+  setFilterPending(false);
+  if (findReplaceState.open && findInput.value) runFind(true);
+};
+const filterStatus = document.getElementById('filterStatus');
+if (filterStatus && typeof window.createColumnFilterControls === 'function') {
+  window.csvColumnFilters = window.createColumnFilterControls({
+    root: filterStatus,
+    metadata: filterMetadata,
+    onChange: submitColumnFilters,
+    onPending: setFilterPending,
+    onLayout: () => window.csvFrozenPanes?.schedule()
+  });
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => window.csvFrozenPanes?.schedule()).observe(filterStatus);
 }
-
-document.getElementById('clearAllFilters')?.addEventListener('click', () => vscode.postMessage({ type: 'clearAllFilters' }));
-document.querySelectorAll('[data-clear-filter]').forEach(button => button.addEventListener('click', () => {
-  vscode.postMessage({ type: 'clearColumnFilter', column: Number(button.getAttribute('data-clear-filter')) });
-}));
+for (const button of [replaceOne, replaceAll]) button.addEventListener('click', event => {
+  if (filterSnapshotPending) { event.preventDefault(); event.stopImmediatePropagation(); }
+}, true);

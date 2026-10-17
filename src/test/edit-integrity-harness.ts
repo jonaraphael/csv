@@ -181,10 +181,11 @@ export function createWebviewDom(html: string) {
     setState: (nextState: unknown) => { state = nextState; }
   });
   window.HTMLElement.prototype.scrollIntoView = () => {};
-  window.IntersectionObserver = class { observe() {} };
+  window.IntersectionObserver = class { observe() {} disconnect() {} };
   const source = fs.readFileSync(path.join(process.cwd(), 'media', 'main.js'), 'utf8');
   const freezeSource = fs.readFileSync(path.join(process.cwd(), 'media', 'frozen-panes.js'), 'utf8');
   window.eval(freezeSource);
+  window.eval(fs.readFileSync(path.join(process.cwd(), 'media', 'column-filters.js'), 'utf8'));
   window.eval(`${source}\nwindow.editingTestApi = { editCell, setSingleSelection, selectRange, selectFullRowRange };`);
   return {
     window, messages,

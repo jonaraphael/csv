@@ -192,8 +192,12 @@ describe('Document operations use current unsaved contents', () => {
     await host.view(true, true);
     assert.ok(host.panel.webview.html.includes('unsaved-first'));
     assert.ok(!host.diskText.includes('unsaved'));
-    await host.receive({ type: 'requestChunk', start: 1001, requestId: 1 });
-    assert.ok(host.messages.find(message => message.type === 'chunkData').html.includes('unsaved-later'));
+    const current = createWebviewDom(host.panel.webview.html);
+    try {
+      const metadata = JSON.parse(current.window.document.getElementById('__csvFilters').textContent);
+      await host.receive({ type: 'requestChunk', start: 1001, requestId: 1, filterEpoch: 0, session: metadata.session });
+      assert.ok(host.messages.find(message => message.type === 'chunkData').html.includes('unsaved-later'));
+    } finally { current.close(); }
   });
 
   it('keeps one virtual row and ignores an empty edit on it after multiline editing', async () => {
