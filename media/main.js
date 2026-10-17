@@ -45,7 +45,7 @@ let discardingFailedDraft = false;
 let editMode = null; // 'quick' | 'detail' | null
 const DRAG_THRESHOLD_PX = 4;
 const RESIZE_HANDLE_PX = 6;
-const COLUMN_RESIZE_HANDLE_PX = 10;
+const COLUMN_RESIZE_HANDLE_PX = 4;
 let resizeState = null;
 let reorderState = null;
 
@@ -79,8 +79,9 @@ const normalizeSizeState = (raw, minSize) => {
 
 const setRenderedColumnWidth = (cell, px) => {
   if (!automaticColumnSizes.has(cell)) {
-    automaticColumnSizes.set(cell, { width: cell.style.width, minWidth: cell.style.minWidth, maxWidth: cell.style.maxWidth });
+    automaticColumnSizes.set(cell, { width: cell.style.width, minWidth: cell.style.minWidth, maxWidth: cell.style.maxWidth, boxSizing: cell.style.boxSizing });
   }
+  cell.style.boxSizing = 'border-box';
   cell.style.width = `${px}px`;
   cell.style.minWidth = `${px}px`;
   cell.style.maxWidth = `${px}px`;
@@ -610,22 +611,54 @@ const getRowDropTarget = clientY => {
   return { beforeIndex, indicatorY };
 };
 const getResizeEdgeInfo = (target, e) => {
-  if (!target) return null;
-  const coords = getDataCellCoords(target);
-  if (coords) {
+  if (editingCell || !Number.isFinite(e.clientX) || !Number.isFinite(e.clientY)) return null;
+  const element = getElementTarget(e.target);
+  if (element?.closest('a, .csv-link, input, textarea, select, button, [contenteditable="true"], [role="button"]')) return null;
+  const paintedCellAt = (x, y) => {
+    const hit = document.elementFromPoint(x, y);
+    return hit && table.contains(hit) ? getCellTarget(hit) : null;
+  };
+  const candidates = new Set();
+  const add = cell => { if (cell && table.contains(cell)) candidates.add(cell); };
+  if (target) {
+    add(target);
     const rect = target.getBoundingClientRect();
-    const rightDistance = rect.right - e.clientX;
-    if (rightDistance >= 0 && rightDistance <= COLUMN_RESIZE_HANDLE_PX) {
-      return { axis: 'column', index: coords.col, rect };
+    if (rect.width > 0 && Math.abs(e.clientX - rect.left) <= COLUMN_RESIZE_HANDLE_PX) {
+      // Hit the painted neighbor, which can differ from col-1 at a frozen seam.
+      add(paintedCellAt(rect.left - 0.5, e.clientY));
+      add(paintedCellAt(rect.left - 1, e.clientY));
+      add(target.previousElementSibling);
     }
-    const leftDistance = e.clientX - rect.left;
-    if (coords.col > 0 && leftDistance >= 0 && leftDistance <= COLUMN_RESIZE_HANDLE_PX) {
-      const previous = getRenderedCellByCoords(coords.row, coords.col - 1);
-      if (previous) {
-        return { axis: 'column', index: coords.col - 1, rect: previous.getBoundingClientRect() };
-      }
+  } else {
+    // Collapsed/fractional borders can target TR/TABLE rather than either cell.
+    for (const delta of [0, -0.5, 0.5, -1, 1]) {
+      add(paintedCellAt(e.clientX + delta, e.clientY));
     }
   }
+  let closest = null;
+  let closestDistance = Infinity;
+  for (const cell of candidates) {
+    const coords = getDataCellCoords(cell);
+    if (!coords) continue;
+    const rect = cell.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0 || e.clientY < rect.top - 0.5 || e.clientY > rect.bottom + 0.5 || Math.abs(e.clientX - rect.right) > COLUMN_RESIZE_HANDLE_PX + 0.75) continue;
+    const sampleY = clamp(e.clientY, rect.top + Math.min(0.5, rect.height / 4), rect.bottom - Math.min(0.5, rect.height / 4));
+    // A scrolled cell can share the frozen column's x coordinate while covered.
+    if (paintedCellAt(rect.right - Math.min(0.5, rect.width / 4), sampleY) !== cell) continue;
+    const neighbor = paintedCellAt(rect.right + 0.5, sampleY);
+    const next = neighbor && neighbor !== cell && neighbor.parentElement === cell.parentElement ? neighbor : cell.nextElementSibling;
+    const nextRect = next && getDataCellCoords(next) ? next.getBoundingClientRect() : null;
+    const contiguous = nextRect && nextRect.width > 0 && Math.abs(nextRect.left - rect.right) <= 1.5;
+    const boundary = contiguous ? (rect.right + nextRect.left) / 2 : rect.right;
+    // Each side uses at most a quarter of a narrow cell, leaving its center usable.
+    const band = Math.min(COLUMN_RESIZE_HANDLE_PX, rect.width / 4, contiguous ? nextRect.width / 4 : Infinity);
+    const distance = Math.abs(e.clientX - boundary);
+    if (distance <= band && distance < closestDistance) {
+      closestDistance = distance;
+      closest = { axis: 'column', index: coords.col, rect };
+    }
+  }
+  if (closest) return closest;
   if (isRowIndexCell(target)) {
     const row = parseInt(target.getAttribute('data-row') || 'NaN', 10);
     if (!Number.isNaN(row)) {
@@ -827,6 +860,10 @@ table.addEventListener('mousedown', e => {
     return;
   }
   const target = getCellTarget(e.target);
+  if (e.button === 0 && startResizeDrag(target, e)) {
+    e.preventDefault();
+    return;
+  }
   if (!target) return;
 
   // Preserve selection on right-click; select target if outside current selection
@@ -845,10 +882,6 @@ table.addEventListener('mousedown', e => {
     return; // do not start drag selection on right-click
   }
   if (e.button !== 0) return;
-  if (!editingCell && startResizeDrag(target, e)) {
-    e.preventDefault();
-    return;
-  }
   if (!editingCell && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && startReorderDrag(target, e)) {
     e.preventDefault();
     return;
@@ -955,10 +988,6 @@ table.addEventListener('mousemove', e => {
     return;
   }
   const target = getCellTarget(e.target);
-  if (!target) {
-    table.style.cursor = '';
-    return;
-  }
   const edge = getResizeEdgeInfo(target, e);
   if (edge) {
     table.style.cursor = edge.axis === 'column' ? 'col-resize' : 'row-resize';
