@@ -42,8 +42,14 @@ window.createFrozenPaneManager = ({ table, firstRow, realRowCount, onNeedRows })
         left += cell.getBoundingClientRect().width;
       }
     }
-    let top = 0;
     const lastFrozenRow = Math.min(firstRow + rows, realRowCount) - 1;
+    const firstFrozenCell = rendered.find(({ index }) => index >= firstRow && index <= lastFrozenRow)?.element.cells[0];
+    // A collapsed border straddles the sticky edge. Cover its inner half once,
+    // keeping the measured spacing between frozen rows unchanged.
+    const topBorder = firstFrozenCell && getComputedStyle(table).borderCollapse === 'collapse'
+      ? parseFloat(getComputedStyle(firstFrozenCell).borderTopWidth) || 0
+      : 0;
+    let top = -topBorder / 2;
     for (const { element, index } of rendered) {
       const frozenRow = index >= firstRow && index <= lastFrozenRow;
       const height = element.getBoundingClientRect().height || Math.max(0, ...Array.from(element.cells).map(cell => cell.getBoundingClientRect().height));
