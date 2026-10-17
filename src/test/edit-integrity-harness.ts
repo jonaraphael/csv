@@ -15,6 +15,7 @@ class TestUri {
 let activeHarness: any;
 const vscodeStub = {
   Uri: TestUri,
+  TabInputText: class { constructor(readonly uri: TestUri) {} },
   ConfigurationTarget: { Global: 1, Workspace: 2 },
   ViewColumn: { Active: -1 },
   Range: class {},
@@ -49,6 +50,7 @@ const vscodeStub = {
     get activeTextEditor() { return activeHarness.activeTextDocument ? { document: activeHarness.activeTextDocument } : undefined; },
     createWebviewPanel: (...args: unknown[]) => activeHarness.createPanel(...args),
     tabGroups: {
+      get activeTabGroup() { return this.all[0]; },
       get all() { return activeHarness.tabGroups ?? [{ tabs: [{ input: { uri: activeHarness.document.uri, viewType: 'csv.editor' } }] }]; },
       close: async () => activeHarness.closeResult
     },

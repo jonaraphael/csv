@@ -2,6 +2,7 @@ import assert from 'assert';
 import Module from 'module';
 import { describe, it } from 'node:test';
 
+class TabInputText { constructor(readonly uri: any) {} }
 class Uri {
   readonly scheme = 'file';
   constructor(readonly fsPath: string) {}
@@ -22,9 +23,11 @@ function fixture(initial: { enabled?: boolean; workspaceEnabled?: boolean; assoc
     const values = new Map();
     return { keys: () => [...values.keys()].filter(key => values.get(key) !== undefined), get: (key: string) => clone(values.get(key)), update: async (key: string, value: unknown) => { values.set(key, clone(value)); } };
   };
-  const group: any = { viewColumn: 1, tabs: [] };
+  const group: any = { viewColumn: 1, tabs: [], activeTab: undefined };
+  const groups = [group];
+  let activeGroup = group;
   const api: any = {
-    Uri, ConfigurationTarget: { Global: 1, Workspace: 2 },
+    Uri, TabInputText, ConfigurationTarget: { Global: 1, Workspace: 2 },
     workspace: {
       workspaceFolders: [{}], workspaceFile: undefined, textDocuments: [],
       onDidOpenTextDocument: () => ({ dispose() {} }),
@@ -46,8 +49,9 @@ function fixture(initial: { enabled?: boolean; workspaceEnabled?: boolean; assoc
       onDidChangeConfiguration: (listener: (e: any) => Promise<void>) => { listeners.push(listener); return { dispose() {} }; }
     },
     window: {
+      visibleTextEditors: [],
       onDidChangeActiveTextEditor: () => ({ dispose() {} }),
-      tabGroups: { all: [group], close: async (tab: any) => { data.closed.push(tab); group.tabs = group.tabs.filter((candidate: any) => candidate !== tab); return true; } },
+      tabGroups: { get all() { return groups; }, get activeTabGroup() { return activeGroup; }, close: async (tab: any) => { data.closed.push(tab); group.tabs = group.tabs.filter((candidate: any) => candidate !== tab); return true; } },
       showErrorMessage: (message: string) => { data.errors.push(message); },
       showInformationMessage: (message: string) => { data.infos.push(message); },
       registerCustomEditorProvider: () => ({ dispose() {} })
@@ -58,7 +62,8 @@ function fixture(initial: { enabled?: boolean; workspaceEnabled?: boolean; assoc
         data.opened.push(args);
         await data.beforeOpen?.();
         if (args[0] === 'vscode.open' && args[1].fsPath !== '/keep-native.csv') {
-          group.tabs.push({ input: { uri: args[1], viewType: 'csv.editor' } });
+          const table = { input: { uri: args[1], viewType: 'csv.editor' } };
+          group.tabs.push(table); group.activeTab = table;
         }
       }
     }
@@ -90,10 +95,11 @@ function fixture(initial: { enabled?: boolean; workspaceEnabled?: boolean; assoc
     throw new Error('configuration events did not settle');
   };
   const addText = (path: string, dirty = false) => {
-    const tab = { input: { uri: new Uri(path) }, isActive: true, isPreview: false, isDirty: dirty };
-    group.tabs.push(tab); return tab;
+    group.tabs.forEach((tab: any) => { tab.isActive = false; });
+    const tab = { input: new TabInputText(new Uri(path)), isActive: true, isPreview: false, isDirty: dirty };
+    group.tabs.push(tab); group.activeTab = tab; return tab;
   };
-  return { data, group, handlers, api, idle, addText, activate: () => activate(context), updateEnabled: (value: boolean) => api.workspace.getConfiguration('csv').update('enabled', value, 1) };
+  return { data, group, groups, setActiveGroup: (next: any) => { activeGroup = next; }, handlers, api, idle, addText, activate: () => activate(context), updateEnabled: (value: boolean) => api.workspace.getConfiguration('csv').update('enabled', value, 1) };
 }
 
 describe('CSV routing toggle and native resolver handoff', () => {
@@ -128,7 +134,9 @@ describe('CSV routing toggle and native resolver handoff', () => {
     const external = { input: { uri: new Uri('/external.csv'), viewType: 'other.editor' } }; h.group.tabs.push(external);
     await h.updateEnabled(true); await h.idle();
     assert.ok(h.data.opened.every(args => args[0] === 'vscode.open'));
-    assert.deepStrictEqual(h.data.closed, [clean]);
+    assert.deepStrictEqual(h.data.closed, [], 'the active dirty owner stays open; inactive clean tabs are untouched');
+    assert.ok(h.group.tabs.includes(clean));
+    assert.deepStrictEqual(h.data.opened.map(args => args[1].fsPath), ['/dirty.tsv']);
     assert.ok(h.group.tabs.includes(native)); assert.ok(h.group.tabs.includes(dirty)); assert.ok(h.group.tabs.includes(external));
     assert.ok(h.data.opened.every(args => args[1].fsPath !== '/external.csv'));
   });
@@ -151,6 +159,37 @@ describe('CSV routing toggle and native resolver handoff', () => {
     await h.updateEnabled(true); await h.idle();
     assert.ok(h.group.tabs.includes(source)); assert.ok(h.group.tabs.includes(table));
     assert.deepStrictEqual(h.data.closed, []);
+  });
+
+  it('does not upgrade an inactive saved CSV over the invoking untitled owner', async () => {
+    const h = fixture({ enabled: false }); await h.activate();
+    const saved = h.addText('/old.csv');
+    const owner = { input: new TabInputText({ scheme: 'untitled', fsPath: '/new.tsv', toString: () => 'untitled:/new.tsv' }), isActive: true, isDirty: true };
+    saved.isActive = false; h.group.tabs.push(owner); h.group.activeTab = owner;
+    await h.updateEnabled(true); await h.idle();
+    assert.deepStrictEqual(h.data.opened, []);
+    assert.deepStrictEqual(h.data.closed, []);
+    assert.strictEqual(h.group.activeTab, owner);
+  });
+  it('upgrades only the active saved owner and leaves other groups intact', async () => {
+    const h = fixture({ enabled: false }); await h.activate();
+    const inactive = h.addText('/inactive.csv'), current = h.addText('/current.csv');
+    const other = { viewColumn: 2, tabs: [{ input: new TabInputText(new Uri('/other.tsv')), isActive: true, isDirty: false }], activeTab: undefined as any };
+    other.activeTab = other.tabs[0]; h.groups.push(other);
+    await h.updateEnabled(true); await h.idle();
+    assert.deepStrictEqual(h.data.opened.map(args => args[1].fsPath), ['/current.csv']);
+    assert.deepStrictEqual(h.data.closed, [current]);
+    assert.ok(h.group.tabs.includes(inactive)); assert.strictEqual(other.tabs.length, 1);
+  });
+  it('does not follow a captured saved owner after the user changes groups during routing', async () => {
+    const h = fixture({ enabled: false }); await h.activate();
+    const original = h.addText('/original.csv');
+    const other = { viewColumn: 2, tabs: [] as any[], activeTab: undefined as any };
+    h.groups.push(other);
+    // The settings promise yields after the event starts but before routing completes.
+    await h.updateEnabled(true); h.setActiveGroup(other);
+    await h.idle();
+    assert.deepStrictEqual(h.data.opened, []); assert.ok(h.group.tabs.includes(original));
   });
 
 });
