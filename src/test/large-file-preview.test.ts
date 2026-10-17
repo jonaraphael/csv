@@ -77,6 +77,20 @@ describe('Read-only large file provider', () => {
     });
   });
 
+  it('rejects unsupported automatic separator mode explicitly rather than displaying wrong columns', async () => {
+    await previewFixture(async fixture => {
+      fixture.host.configuration.separatorMode = 'auto';
+      await fixture.receive({ type: 'ready' });
+      assert.match(fixture.messages.at(-1).error, /does not support automatic separator detection/);
+      assert.match(fixture.messages.at(-1).error, /csv.separatorMode/);
+      assert.strictEqual(fixture.messages.at(-1).html, '');
+      fixture.host.configuration.separatorMode = 'extension';
+      await fixture.receive({ type: 'start' });
+      assert.strictEqual(fixture.messages.at(-1).error, '');
+      assert.ok(fixture.messages.at(-1).html.includes('name'));
+    });
+  });
+
   it('opens directly as a readonly custom document and never writes saved bytes', async () => {
     await previewFixture(async fixture => {
       fixture.host.registerCommands();

@@ -69,8 +69,11 @@ export class LargeFilePreviewProvider implements vscode.CustomReadonlyEditorProv
         throw new Error('CSV is disabled. Enable it before opening Large File Preview.');
       }
       const settings = CsvEditorProvider.getSeparatorSettings(document.uri);
-      const delimiter = CsvEditorProvider.getSeparatorForUri(this.context, document.uri)
-        ?? CsvEditorProvider.resolveInheritedSeparator(document.uri.fsPath, '', settings);
+      const override = CsvEditorProvider.getSeparatorForUri(this.context, document.uri);
+      if (!override && settings.mode === 'auto') {
+        throw new Error('Large File Preview does not support automatic separator detection. Set a per-file separator override in the normal editor, or set csv.separatorMode to extension/default, then choose Back to Start.');
+      }
+      const delimiter = override ?? CsvEditorProvider.resolveInheritedSeparator(document.uri.fsPath, '', settings);
       if (!reset && selectedDelimiter !== delimiter) {
         throw new Error('The separator changed. Choose Back to Start to reload the preview.');
       }
