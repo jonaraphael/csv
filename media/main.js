@@ -585,6 +585,8 @@ const getResizeEdgeInfo = (target, e) => {
   const add = cell => { if (cell && table.contains(cell)) candidates.add(cell); };
   if (target) {
     add(target);
+    // A sticky seam can lie inside a partially covered scrolling cell's rect.
+    add(paintedCellAt(e.clientX - COLUMN_RESIZE_HANDLE_PX - 0.5, e.clientY));
     const rect = target.getBoundingClientRect();
     if (rect.width > 0 && Math.abs(e.clientX - rect.left) <= COLUMN_RESIZE_HANDLE_PX) {
       // Hit the painted neighbor, which can differ from col-1 at a frozen seam.
@@ -611,10 +613,14 @@ const getResizeEdgeInfo = (target, e) => {
     const neighbor = paintedCellAt(rect.right + 0.5, sampleY);
     const next = neighbor && neighbor !== cell && neighbor.parentElement === cell.parentElement ? neighbor : cell.nextElementSibling;
     const nextRect = next && getDataCellCoords(next) ? next.getBoundingClientRect() : null;
-    const contiguous = nextRect && nextRect.width > 0 && Math.abs(nextRect.left - rect.right) <= 1.5;
+    const adjacent = nextRect && nextRect.width > 0 && nextRect.left <= rect.right + 1.5 && nextRect.right > rect.right;
+    const contiguous = adjacent && Math.abs(nextRect.left - rect.right) <= 1.5;
     const boundary = contiguous ? (rect.right + nextRect.left) / 2 : rect.right;
-    // Each side uses at most a quarter of a narrow cell, leaving its center usable.
-    const band = Math.min(COLUMN_RESIZE_HANDLE_PX, rect.width / 4, contiguous ? nextRect.width / 4 : Infinity);
+    const leftCover = paintedCellAt(rect.left + Math.min(0.5, rect.width / 4), sampleY);
+    const visibleLeft = leftCover && leftCover !== cell ? Math.min(rect.right, Math.max(rect.left, leftCover.getBoundingClientRect().right)) : rect.left;
+    const nextWidth = adjacent ? nextRect.right - Math.max(nextRect.left, rect.right) : Infinity;
+    // Use the painted span at sticky seams so even partially covered cells retain a center.
+    const band = Math.min(COLUMN_RESIZE_HANDLE_PX, (rect.right - visibleLeft) / 4, nextWidth / 4);
     const distance = Math.abs(e.clientX - boundary);
     if (distance <= band && distance < closestDistance) {
       closestDistance = distance;
