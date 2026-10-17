@@ -22,7 +22,7 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Clipboard Actions:** Use Ctrl/Cmd + C or X, or right-click a selection and choose Copy or Cut, to copy properly quoted data to the system clipboard. Right-click Paste inserts clipboard data into the grid. Clipboard shortcuts in Find, Replace, and cell text edits keep their normal text-editing behavior.
 - **Grid Paste Support:** Paste copied ranges directly into the selected cell/range with `Ctrl/Cmd + V` in selection mode.
 - **Robust Data Handling:** Leveraging the power of [Papa Parse](https://www.papaparse.com/), the extension handles complex CSV structures, special characters, and various data types gracefully.
-- **Theme-Optimized Interface:** Whether you prefer light or dark mode, CSV automatically adapts its styles for an optimal viewing experience.
+- **Theme-Optimized Interface:** CSV adapts to light, dark, and high-contrast themes. High-contrast themes use your theme’s foreground colors for cells, selection, Find/Replace, and menus automatically.
 
 ---
 
