@@ -22,6 +22,8 @@
     "onLanguage:csv",
     "onLanguage:tsv",
     "onCommand:csv.toggleExtension",
+    "onCommand:csv.openLargeFilePreview",
+    "onCustomEditor:csv.largeFilePreview",
     "onCommand:csv.toggleHeader",
     "onCommand:csv.toggleSerialIndex",
     "onCommand:csv.changeSeparator",
@@ -64,6 +66,10 @@
       }
     ],
     "commands": [
+      {
+        "command": "csv.openLargeFilePreview",
+        "title": "CSV: Open Large File Preview (Read-only)"
+      },
       {
         "command": "csv.toggleExtension",
         "title": "CSV: Toggle Extension On/Off"
@@ -207,10 +213,38 @@
           "default": 10,
           "minimum": 0,
           "description": "Soft max size in MB for opening files in CSV view. 0 disables the limit. When exceeded, CSV prompts to cancel, continue this time, or disable the limit."
+        },
+        "csv.largeFilePreviewRows": {
+          "type": "integer",
+          "default": 1000,
+          "minimum": 1,
+          "maximum": 10000,
+          "scope": "resource",
+          "description": "Maximum records per read-only Large File Preview page. Byte/cell safety limits can produce smaller pages."
         }
       }
     },
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "csv.openLargeFilePreview",
+          "when": "resourceScheme == file && resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i && config.csv.enabled",
+          "group": "navigation"
+        }
+      ]
+    },
     "customEditors": [
+      {
+        "viewType": "csv.largeFilePreview",
+        "displayName": "CSV Large File Preview (Read-only)",
+        "priority": "option",
+        "selector": [
+          { "filenamePattern": "*.csv" },
+          { "filenamePattern": "*.tsv" },
+          { "filenamePattern": "*.tab" },
+          { "filenamePattern": "*.psv" }
+        ]
+      },
       {
         "viewType": "csv.editor",
         "displayName": "CSV",

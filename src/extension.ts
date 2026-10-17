@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { CsvEditorProvider } from './CsvEditorProvider';
 import { registerCsvCommands } from './commands';
+import { LargeFilePreviewProvider } from './large-file-preview';
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('CSV: Extension activated');
@@ -30,6 +31,7 @@ export function activate(context: vscode.ExtensionContext) {
             console.log(`[CSV(enable)]: group[${gi}] tab[${ti}] vt=${viewType ?? '(text?)'} uri=${path} active=${tab.isActive} preview=${tab.isPreview}`);
             if (!input) return;
             if (viewType === CsvEditorProvider.viewType) return; // already our editor
+            if (viewType === LargeFilePreviewProvider.viewType) { return; }
             if (!uri) return;
             const fsPath = uri.fsPath?.toLowerCase?.() || '';
             const isCsvLike = fsPath.endsWith('.csv') || fsPath.endsWith('.tsv') || fsPath.endsWith('.tab') || fsPath.endsWith('.psv');
@@ -68,7 +70,7 @@ export function activate(context: vscode.ExtensionContext) {
                 const vt = inp?.viewType;
                 const u: vscode.Uri | undefined = inp?.uri instanceof vscode.Uri ? (inp.uri as vscode.Uri) : undefined;
                 const key = u?.toString();
-                if (key && processed.has(key) && vt !== CsvEditorProvider.viewType) {
+                if (key && processed.has(key) && vt !== CsvEditorProvider.viewType && vt !== LargeFilePreviewProvider.viewType) {
                   console.log(`[CSV(enable)]: final-sweep closing group[${gi}] tab[${ti}] uri=${u?.fsPath} vt=${vt}`);
                   stale.push(t);
                 }
@@ -107,6 +109,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Register the custom editor provider for CSV/TSV
   context.subscriptions.push(
+    vscode.window.registerCustomEditorProvider(LargeFilePreviewProvider.viewType, new LargeFilePreviewProvider(context)),
     vscode.window.registerCustomEditorProvider(
       CsvEditorProvider.viewType,
       new CsvEditorProvider(context),

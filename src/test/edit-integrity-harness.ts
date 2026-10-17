@@ -27,8 +27,12 @@ const vscodeStub = {
     },
     showInformationMessage() {},
     tabGroups: {
-      get all() { return [{ tabs: [{ input: { uri: activeHarness.document.uri, viewType: 'csv.editor' } }] }]; },
+      get all() { return activeHarness.tabGroups ?? [{ tabs: [{ input: { uri: activeHarness.document.uri, viewType: 'csv.editor' } }] }]; },
       close: async () => activeHarness.closeResult
+    },
+    registerCustomEditorProvider: (viewType: string) => {
+      activeHarness.providers.push(viewType);
+      return { dispose() {} };
     }
   },
   commands: {
@@ -47,10 +51,15 @@ const vscodeStub = {
     }
   },
   workspace: {
-    getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'maxFileSizeMB' ? 0 : fallback }),
+    getConfiguration: () => ({ get: (key: string, fallback: unknown) =>
+      key in activeHarness.configuration ? activeHarness.configuration[key] : key === 'maxFileSizeMB' ? 0 : fallback }),
     applyEdit: (edit: { text: string }) => activeHarness.applyEdit(edit.text),
     onDidChangeTextDocument: (listener: (event: unknown) => void) => {
       activeHarness.changeListeners.push(listener);
+      return { dispose() {} };
+    },
+    onDidChangeConfiguration: (listener: (event: any) => void) => {
+      activeHarness.configurationListeners.push(listener);
       return { dispose() {} };
     },
     onWillSaveTextDocument: (listener: (event: unknown) => void) => {
@@ -131,6 +140,10 @@ export async function createEditorHarness(options: {
   };
   const harness = {
     document, panel, messages, changeListeners, saveListeners,
+    configuration: {} as Record<string, unknown>,
+    configurationListeners: [] as Array<(event: any) => void>,
+    providers: [] as string[],
+    tabGroups: undefined as any[] | undefined,
     warnings: [] as string[],
     warningChoice: options.warningChoice,
     commandError: undefined as Error | undefined,
