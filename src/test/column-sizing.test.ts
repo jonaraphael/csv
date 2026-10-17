@@ -42,9 +42,14 @@ describe('Column sizing behavior', () => {
     const cell = view.cell(1, 0, 'initial');
     vm.runInContext('applySizeStateToRenderedCells();', view.context);
     assert.strictEqual(cell.style.width, '210px');
+    assert.strictEqual(cell.style.boxSizing, 'border-box');
     const chunkCell = view.cell(1001, 0, 'later chunk');
     vm.runInContext('applySizeStateToRenderedCells();', view.context);
     assert.strictEqual(chunkCell.style.minWidth, '210px');
+    assert.strictEqual(chunkCell.style.boxSizing, 'border-box');
+    vm.runInContext('resetColumnWidth(0);', view.context);
+    assert.strictEqual(cell.style.boxSizing, '');
+    assert.strictEqual(chunkCell.style.boxSizing, '');
   });
 
   it('honors an explicit webview reset over durable values and restores automatic CSS', () => {
@@ -61,6 +66,22 @@ describe('Column sizing behavior', () => {
     assert.deepStrictEqual(view.messages, [{ type: 'columnSizesChanged', columnSizes: {} }]);
   });
 
+  it("restores each cell's original box sizing after repeated resizes", () => {
+    const view = createWebview();
+    const header = view.cell(0, 0, 'header', true);
+    const body = view.cell(1, 0, 'body');
+    header.style.boxSizing = 'content-box';
+    body.style.boxSizing = 'border-box';
+    vm.runInContext('applyColumnWidth(0, 140); applyColumnWidth(0, 180);', view.context);
+    assert.strictEqual(header.style.boxSizing, 'border-box');
+    assert.strictEqual(body.style.boxSizing, 'border-box');
+    vm.runInContext('resetColumnWidth(0);', view.context);
+    assert.strictEqual(header.style.boxSizing, 'content-box');
+    assert.strictEqual(body.style.boxSizing, 'border-box');
+    assert.strictEqual(header.style.minWidth, '8ch');
+    assert.strictEqual(body.style.maxWidth, '100ch');
+  });
+
   it('starts and saves a resize from both sides of a boundary with headers on or off', () => {
     for (const header of [true, false]) {
       for (const side of ['left', 'right']) {
@@ -68,11 +89,12 @@ describe('Column sizing behavior', () => {
         const first = view.cell(header ? 0 : 1, 0, 'one', header);
         const second = view.cell(header ? 0 : 1, 1, 'two', header);
         const target = side === 'left' ? first : second;
-        const clientX = side === 'left' ? 91 : 109;
-        const event = view.dispatch(target, 'mousedown', { button: 0, clientX, clientY: 15 });
+        const clientX = side === 'left' ? 97 : 103;
+        const clientY = header ? 15 : 45;
+        const event = view.dispatch(target, 'mousedown', { button: 0, clientX, clientY });
         assert.strictEqual(event.defaultPrevented, true);
         assert.strictEqual(view.table.style.cursor, 'col-resize');
-        view.dispatch(target, 'mousemove', { clientX: clientX + 50, clientY: 15 });
+        view.dispatch(target, 'mousemove', { clientX: clientX + 50, clientY });
         view.dispatch(target, 'mouseup');
         assert.strictEqual(first.style.width, '150px');
         assert.strictEqual(second.style.width, '');
