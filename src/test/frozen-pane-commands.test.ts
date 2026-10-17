@@ -23,7 +23,7 @@ registerCsvCommands({ subscriptions: [] } as any);
 
 describe('Frozen-pane commands', () => {
   it('updates the requested axis with validated counts and leaves cancellation unchanged', async () => {
-    CsvEditorProvider.currentActive = { getCurrentFrozenPanes: () => ({ rows: 3, columns: 1 }), setFrozenPanes: async (change: any) => changes.push(change) } as any;
+    CsvEditorProvider.currentActive = { isActive: () => true, getCurrentFrozenPanes: () => ({ rows: 3, columns: 1 }), setFrozenPanes: async (change: any) => changes.push(change) } as any;
     input = '2';
     await commands.get('csv.changeFrozenRows')!();
     assert.strictEqual(prompt.value, '3');

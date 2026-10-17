@@ -10,6 +10,7 @@ Integration candidate; final contents remain subject to review. No release has b
 
 - Added: Context actions for first-row header state and serial-index visibility, using the existing per-file preferences.
 - Fixed: Mouse selection uses its selected color immediately on mouse-down, including row and column selection.
+- Fixed: Disabling CSV routes search results directly to native text and restores prior editor associations when re-enabled; the handoff preserves unsaved cell drafts.
 - Fixed: Copy quotes each value only as needed and excludes the extra append row from every Copy/Cut route.
 - Fixed: A second separate header click selects just the header cell; modified Find/Replace shortcuts stay with VS Code.
 - Added: Inline column filters that update matching rows as you type, with multiple AND conditions (including on the same column), inferred number/date comparisons, Does Not Contain, regular expressions, per-file persistence, and full-source saves.

@@ -1,3 +1,4 @@
+import { TestExtensionUri } from './test-extension-uri';
 import assert from 'assert';
 import fs from 'fs';
 import path from 'path';
@@ -49,7 +50,7 @@ async function render(options: {
   const uri = { fsPath: `/fixture.${separator === '\t' ? 'tsv' : 'csv'}`, toString: () => `vscode-remote://fixture/table.${separator === '\t' ? 'tsv' : 'csv'}` };
   const values: Record<string, unknown> = {};
   const context = {
-    extensionPath: process.cwd(),
+    extensionPath: process.cwd(), extensionUri: new TestExtensionUri(),
     workspaceState: {
       get: (key: string, fallback: unknown) => values[key] ?? fallback,
       update: async (key: string, value: unknown) => { values[key] = value; }
@@ -206,7 +207,7 @@ describe('High-contrast rendering', () => {
 
   it('loads the packaged accessibility stylesheet after generated table styles', async () => {
     const view = await render();
-    const link = `<link rel="stylesheet" href="test-resource:${path.join(process.cwd(), 'media', 'high-contrast.css')}">`;
+    const link = `<link rel="stylesheet" href="${new TestExtensionUri().with({ path: path.posix.join(process.cwd(), 'media', 'high-contrast.css') })}">`;
     assert.ok(view.html.includes(link));
     assert.ok(view.html.indexOf(link) > view.html.indexOf('</style>'));
     assert.ok(fs.existsSync(path.join(process.cwd(), 'media', 'high-contrast.css')));

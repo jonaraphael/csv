@@ -93,6 +93,7 @@ class CsvEditorController {
   private isUpdatingDocument = false;
   private isSaving = false;
   private disposed = false;
+  private defaultEditorHandoff: Promise<void> | undefined;
   private pendingViewAction: (() => Promise<void>) | undefined;
   private pendingDocumentReference: { document: vscode.TextDocument; separator: string } | undefined;
   private renderedSeparator: string | undefined;
@@ -129,6 +130,26 @@ class CsvEditorController {
     _token: vscode.CancellationToken
   ): Promise<void> {
     this.document = document;
+    this.currentWebviewPanel = webviewPanel;
+    let changeDocumentSubscription: vscode.Disposable | undefined;
+    let saveDocumentSubscription: vscode.Disposable | undefined;
+    // Register before remote stat/prompt awaits: a closed panel stays closed.
+    webviewPanel.onDidDispose(() => {
+      this.disposed = true;
+      changeDocumentSubscription?.dispose();
+      saveDocumentSubscription?.dispose();
+      CsvEditorProvider.editors = CsvEditorProvider.editors.filter(ed => ed !== this);
+      this.currentWebviewPanel = undefined;
+      this.pendingFilterDraft = undefined;
+      this.pendingViewAction = undefined;
+      this.pendingDocumentReference = undefined;
+      this.viewCommitRequested = false;
+      this.resolveDraftCommitWaiters(false);
+      if (CsvEditorProvider.currentActive === this) {
+        CsvEditorProvider.currentActive = undefined;
+      }
+    });
+    if (_token.isCancellationRequested) { return; }
 
     const config = vscode.workspace.getConfiguration('csv', this.document.uri);
     if (!config.get<boolean>('enabled', true)) {
@@ -138,17 +159,19 @@ class CsvEditorController {
     }
 
     const proceed = await this.confirmLargeFileOpen(config, webviewPanel, _token);
-    if (!proceed || _token.isCancellationRequested || document.isClosed) {
+    if (!proceed || this.disposed || _token.isCancellationRequested || document.isClosed) {
       return;
     }
 
-    this.currentWebviewPanel = webviewPanel;
+    if (!vscode.workspace.getConfiguration('csv', document.uri).get<boolean>('enabled', true)) {
+      await this.openWithDefaultEditorAndClose(webviewPanel, document.uri);
+      return;
+    }
     CsvEditorProvider.editors.push(this);
 
     webviewPanel.webview.options = {
       enableScripts: true,
-      // Use file path for compatibility with older VS Code types (no Uri.joinPath)
-      localResourceRoots: [vscode.Uri.file(path.join(this.context.extensionPath, 'media'))]
+      localResourceRoots: [this.getMediaUri()]
     };
 
     this.refreshDiffContext(webviewPanel);
@@ -175,6 +198,8 @@ class CsvEditorController {
         }
         e.webviewPanel.webview.postMessage({ type: 'focus' });
         CsvEditorProvider.currentActive = this;
+      } else if (CsvEditorProvider.currentActive === this) {
+        CsvEditorProvider.currentActive = undefined;
       }
     });
 
@@ -328,7 +353,7 @@ class CsvEditorController {
       });
     });
 
-    const changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument(e => {
+    changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument(e => {
       if (
         e.document.uri.toString() === document.uri.toString() &&
         !this.isUpdatingDocument &&
@@ -338,27 +363,11 @@ class CsvEditorController {
       }
     });
 
-    const saveDocumentSubscription = vscode.workspace.onWillSaveTextDocument(e => {
+    saveDocumentSubscription = vscode.workspace.onWillSaveTextDocument(e => {
       if (e.document.uri.toString() === document.uri.toString() && !this.isSaving) {
         // Native File > Save can run while the webview's blur edit is applying.
         // The custom save command is already in this queue and must not await itself.
         e.waitUntil(this.pendingOperation);
-      }
-    });
-
-    webviewPanel.onDidDispose(() => {
-      this.disposed = true;
-      changeDocumentSubscription.dispose();
-      saveDocumentSubscription.dispose();
-      CsvEditorProvider.editors = CsvEditorProvider.editors.filter(ed => ed !== this);
-      this.currentWebviewPanel = undefined;
-      this.pendingFilterDraft = undefined;
-      this.pendingViewAction = undefined;
-      this.pendingDocumentReference = undefined;
-      this.viewCommitRequested = false;
-      this.resolveDraftCommitWaiters(false);
-      if (CsvEditorProvider.currentActive === this) {
-        CsvEditorProvider.currentActive = undefined;
       }
     });
   }
@@ -415,20 +424,26 @@ class CsvEditorController {
   }
 
   private async openWithDefaultEditorAndClose(webviewPanel: vscode.WebviewPanel, uri: vscode.Uri): Promise<void> {
-    try {
-      const opts: any = {
-        viewColumn: webviewPanel.viewColumn,
-        preserveFocus: !webviewPanel.active,
-        preview: webviewPanel.active ? webviewPanel.active : false
-      };
-      if (uri.scheme === 'untitled') {
-        await vscode.window.showTextDocument(this.document, opts);
-      } else {
-        await vscode.commands.executeCommand('vscode.openWith', uri, 'default', opts);
-      }
-    } finally {
-      try { webviewPanel.dispose(); } catch {}
+    if (this.disposed) { return; }
+    if (!this.defaultEditorHandoff) {
+      this.defaultEditorHandoff = (async () => {
+        try {
+          const opts = { viewColumn: webviewPanel.viewColumn, preserveFocus: !webviewPanel.active };
+          if (uri.scheme === 'untitled') {
+            await vscode.window.showTextDocument(this.document, { ...opts, preview: false });
+          } else {
+            const existing = vscode.window.visibleTextEditors.find(editor =>
+              editor.document.uri.toString() === uri.toString() && editor.viewColumn === webviewPanel.viewColumn);
+            if (!existing) {
+              await vscode.commands.executeCommand('vscode.openWith', uri, 'default', opts);
+            }
+          }
+        } finally {
+          try { webviewPanel.dispose(); } catch {}
+        }
+      })();
     }
+    await this.defaultEditorHandoff;
   }
 
   private async confirmLargeFileOpen(
@@ -487,6 +502,7 @@ class CsvEditorController {
   }
 
   public refresh() {
+    if (this.disposed) { return; }
     const config = vscode.workspace.getConfiguration('csv', this.document.uri);
     const enabled = config.get<boolean>('enabled', true);
     if (this.failedCellEdits.size) {
@@ -497,13 +513,7 @@ class CsvEditorController {
       return;
     }
     if (!enabled) {
-      const panel = this.currentWebviewPanel;
-      if (this.document.uri.scheme === 'untitled') {
-        this.revealSourceAfterCommit();
-      } else {
-        panel?.dispose();
-        vscode.commands.executeCommand('vscode.openWith', this.document.uri, 'default');
-      }
+      this.revealSourceAfterCommit();
     } else {
       if (this.viewCommitRequested || this.failedCellEdits.size) {
         this.refreshAfterDraftCommit = true;
@@ -564,8 +574,7 @@ class CsvEditorController {
         this.updateWebviewContent();
         return;
       }
-      await vscode.window.showTextDocument(this.document, { viewColumn: panel.viewColumn, preview: false });
-      panel.dispose();
+      await this.openWithDefaultEditorAndClose(panel, this.document.uri);
     };
     this.requestViewCommit();
   }
@@ -2347,6 +2356,12 @@ class CsvEditorController {
     return !matches;
   }
 
+  private getMediaUri(...segments: string[]): vscode.Uri {
+    return this.context.extensionUri.with({
+      path: path.posix.join(this.context.extensionUri.path, 'media', ...segments)
+    });
+  }
+
   private wrapHtml(args: {
     webview: vscode.Webview;
     nonce: string;
@@ -2372,18 +2387,17 @@ class CsvEditorController {
     const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, headerEnabled, mouseWheelZoomEnabled, mouseWheelZoomInvert, columnSizes, frozenPanes, firstVisibleRow, realRowCount, visibleRowIds, filterMetadata } = args;
     const themeKind = vscode.window.activeColorTheme.kind;
     const isDark = themeKind === vscode.ColorThemeKind.Dark || themeKind === vscode.ColorThemeKind.HighContrast;
-    // Build script URI using file path for compatibility (older APIs may lack Uri.joinPath)
     const scriptUri = webview.asWebviewUri(
-      vscode.Uri.file(path.join(this.context.extensionPath, 'media', 'main.js'))
+      this.getMediaUri('main.js')
     );
 
-    const filterScriptUri = webview.asWebviewUri(vscode.Uri.file(path.join(this.context.extensionPath, 'media', 'column-filters.js')));
+    const filterScriptUri = webview.asWebviewUri(this.getMediaUri('column-filters.js'));
     const filterMetadataJson = JSON.stringify(filterMetadata).replace(/[<>&\u2028\u2029]/g, character => '\\u' + character.charCodeAt(0).toString(16).padStart(4, '0'));
     const frozenPanesScriptUri = webview.asWebviewUri(
-      vscode.Uri.file(path.join(this.context.extensionPath, 'media', 'frozen-panes.js'))
+      this.getMediaUri('frozen-panes.js')
     );
     const contrastStyleUri = webview.asWebviewUri(
-      vscode.Uri.file(path.join(this.context.extensionPath, 'media', 'high-contrast.css'))
+      this.getMediaUri('high-contrast.css')
     );
 
     // Safe separator transport (assumes single character; see assumptions)
@@ -3371,17 +3385,12 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
   ): Promise<void> {
     console.log(`CSV(reg): creating controller for ${document.uri.toString()}`);
     const controller = new CsvEditorController(this.context);
-    // Track active controller
-    webviewPanel.onDidChangeViewState(e => {
-      if (e.webviewPanel.active) {
-        CsvEditorProvider.currentActive = controller;
-      }
-    });
     await controller.resolveCustomTextEditor(document, webviewPanel, _token);
   }
 
   public static getActiveProvider(): CsvEditorController | undefined {
-    return CsvEditorProvider.currentActive || CsvEditorProvider.editors.find(ed => ed.isActive());
+    const current = CsvEditorProvider.currentActive;
+    return current?.isActive() ? current : CsvEditorProvider.editors.find(ed => ed.isActive());
   }
 
   public static hasHiddenRowsOverride(context: vscode.ExtensionContext, uri: vscode.Uri): boolean {

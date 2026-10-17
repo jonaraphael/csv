@@ -1,3 +1,5 @@
+import { TestExtensionUri } from './test-extension-uri';
+import { createTestMemento } from './test-memento';
 import fs from 'fs';
 import path from 'path';
 import Module from 'module';
@@ -13,6 +15,7 @@ class TestUri {
 let activeHarness: any;
 const vscodeStub = {
   Uri: TestUri,
+  ConfigurationTarget: { Global: 1, Workspace: 2 },
   ViewColumn: { Active: -1 },
   Range: class {},
   WorkspaceEdit: class {
@@ -42,6 +45,7 @@ const vscodeStub = {
     showInformationMessage: (text: string) => activeHarness.notifications.push(text),
     showErrorMessage: async (text: string) => { activeHarness.notifications.push(text); activeHarness.errors.push(text); },
     showOpenDialog: async () => activeHarness.dialogResults.shift(),
+    get visibleTextEditors() { return activeHarness.visibleTextEditors; },
     get activeTextEditor() { return activeHarness.activeTextDocument ? { document: activeHarness.activeTextDocument } : undefined; },
     createWebviewPanel: (...args: unknown[]) => activeHarness.createPanel(...args),
     tabGroups: {
@@ -77,9 +81,10 @@ const vscodeStub = {
   workspace: {
     onDidOpenTextDocument: () => ({ dispose() {} }),
     onDidCloseTextDocument: () => ({ dispose() {} }),
-    getConfiguration: (_section: string, resource?: TestUri) => {
+    getConfiguration: (section: string, resource?: TestUri) => {
       if (activeHarness) { activeHarness.configurationRequests.push(resource); }
-      return { get: (key: string, fallback: unknown) => {
+      return { inspect: (key: string) => section === 'csv' && key === 'enabled' ? { defaultValue: true, globalValue: activeHarness.configuration.enabled ?? activeHarness.enabled } : undefined,
+        get: (key: string, fallback: unknown) => {
         if (key in activeHarness.configuration) { return activeHarness.configuration[key]; }
         if (key === 'enabled') { return activeHarness?.enabled ?? true; }
         if (key === 'maxFileSizeMB') { return 0; }
@@ -177,8 +182,10 @@ export async function createEditorHarness(options: {
   };
   const context = {
     subscriptions: [] as unknown[],
-    extensionPath: process.cwd(),
+    extensionPath: process.cwd(), extensionUri: new TestExtensionUri(),
+    globalState: createTestMemento(),
     workspaceState: {
+      keys() { return Object.keys(this.values).filter(key => this.values[key] !== undefined); },
       values: {} as Record<string, unknown>,
       get(key: string, fallback: unknown) { return this.values[key] ?? fallback; },
       async update(key: string, value: unknown) { this.values[key] = value; }
@@ -226,6 +233,7 @@ export async function createEditorHarness(options: {
     errors: [] as string[],
     dialogResults: [] as Array<unknown>,
     activeTextDocument: undefined as any,
+    visibleTextEditors: [] as any[],
     createPanel: undefined as any,
     openedDocuments: [] as string[],
     sourceDocuments: new Map<string, any>(),

@@ -16,7 +16,7 @@ describe('unapplied ordinary cell drafts keep source row identities intact', () 
       for (const recovery of ['retry', 'discard'] as const) {
         it(`keeps a failed ${failure} draft when disabled until ${recovery} (${JSON.stringify(separator)})`, async () => {
           const host = await createEditorHarness({ separator });
-          const view = createWebviewDom(host.panel.webview.html);
+          let view = createWebviewDom(host.panel.webview.html);
           try {
             view.messages.length = 0;
             view.start(view.cell()); view.type(' failed draft'); view.cell().blur();
@@ -46,9 +46,14 @@ describe('unapplied ordinary cell drafts keep source row identities intact', () 
             await flushViewCommits(host, view);
             assert.strictEqual(host.rows()[1][0], recovery === 'retry' ? 'one failed draft' : 'one');
             assert.strictEqual(host.diskText, diskText, 'recovery must not force a save');
+            // Recovery creates a new webview session. A later disable must be
+            // acknowledged by that new DOM, never the discarded session.
+            view.close();
+            view = createWebviewDom(host.panel.webview.html);
             host.refresh();
+            await flushViewCommits(host, view);
             assert.strictEqual(host.isOpen, false, 'normal disable proceeds after the failed draft is resolved');
-            assert.deepStrictEqual(host.recordedCommands, [['vscode.openWith', host.document.uri, 'default']]);
+            assert.deepStrictEqual(host.recordedCommands, [['vscode.openWith', host.document.uri, 'default', { viewColumn: host.panel.viewColumn, preserveFocus: false }]]);
           } finally {
             view.close();
             if (host.isOpen) { host.panel.dispose(); }

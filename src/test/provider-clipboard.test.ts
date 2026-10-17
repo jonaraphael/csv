@@ -1,3 +1,4 @@
+import { TestExtensionUri } from './test-extension-uri';
 import assert from 'assert';
 import Module from 'module';
 import Papa from 'papaparse';
@@ -52,7 +53,7 @@ async function createEditor(initial: string, extension = 'csv') {
     onDidReceiveMessage: (callback: any) => { receive = callback; }
   };
   const panel = { active: true, title: 'test', webview, onDidChangeViewState() {}, onDidDispose() {} };
-  const context = { extensionPath: process.cwd(), workspaceState: { get: (_key: string, fallback: any) => fallback } };
+  const context = { extensionPath: process.cwd(), extensionUri: new TestExtensionUri(), workspaceState: { get: (_key: string, fallback: any) => fallback } };
   await new CsvEditorProvider(context as any).resolveCustomTextEditor(document as any, panel as any, { isCancellationRequested: false } as any);
   return {
     receive: (message: any) => receive(message), clipboardWrites, events, messages,

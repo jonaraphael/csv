@@ -108,8 +108,9 @@ describe('Read-only large file provider', () => {
   it('keeps a readonly preview from upgrading to a full text document when CSV is enabled', async () => {
     await previewFixture(async fixture => {
       fixture.host.tabGroups = [{ tabs: [{ input: { uri: fixture.document.uri, viewType: LargeFilePreviewProvider.viewType } }] }];
-      activate({ subscriptions: [], extensionPath: process.cwd() } as any);
-      fixture.host.configurationListeners[0]({ affectsConfiguration: (key: string) => key === 'csv.enabled' });
+      await activate(fixture.host.context as any);
+      assert.deepStrictEqual(fixture.host.errors, [], 'activation must complete routing recovery without fixture errors');
+      await fixture.host.configurationListeners[0]({ affectsConfiguration: (key: string) => key === 'csv.enabled' });
       await new Promise(resolve => setImmediate(resolve));
       assert.strictEqual(fixture.host.executedCommands.length, 0);
       assert.ok(fixture.host.providers.includes(LargeFilePreviewProvider.viewType));

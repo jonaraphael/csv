@@ -1,3 +1,4 @@
+import { TestExtensionUri } from './test-extension-uri';
 import assert from 'assert';
 import fs from 'fs';
 import path from 'path';
@@ -31,7 +32,7 @@ async function createLiveView(mode: string, palette: string) {
   const uri = { fsPath: '/draft.csv', toString: () => 'file:///draft.csv' };
   const values: Record<string, unknown> = {};
   const context = {
-    extensionPath: process.cwd(), workspaceState: {
+    extensionPath: process.cwd(), extensionUri: new TestExtensionUri(), workspaceState: {
       get: (key: string, fallback: unknown) => values[key] ?? fallback,
       update: async (key: string, value: unknown) => { values[key] = value; }
     }
