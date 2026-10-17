@@ -38,10 +38,10 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Add/Delete Rows:** Insert above/below or remove the selected row via context menu.
 - **Edit Empty CSVs:** Create or open an empty CSV file and start typing immediately.
 - **Column Sorting:** Right-click a header and choose A–Z or Z–A. With filters active, sorting rearranges matching rows within their source positions and leaves hidden rows in place.
-- **Column Filters:** Right-click a column and choose Filter this column. Combine contains, equals, empty or not-empty conditions across columns; text matching ignores case. The active-filter bar shows matching/total row counts, removable conditions and Clear all filters. Filters search the full file and are remembered per file.
+- **Column Filters:** Right-click a column and choose Filter this column. Combine contains, equals, empty or not-empty conditions across columns; text matching ignores case. The active-filter bar shows matching/total row counts, removable conditions and Clear all filters. Filters search the full file, retain the original source row numbers and are remembered per file.
 - **Custom Font Controls:** Choose a font family and optional font-size override, or inherit VS Code defaults.
 - **In-View Zoom:** Use `Ctrl/Cmd + Mouse Wheel` or `Ctrl/Cmd + +/-/0` to zoom the CSV view without changing global editor zoom.
-- **Find & Replace Overlay:** Built-in find/replace bar with match options (case, whole-word, regex), keyboard navigation, and single/all replace actions across the full file (including chunked rows).
+- **Find & Replace Overlay:** Built-in find/replace bar with match options (case, whole-word, regex), keyboard navigation, and single/all replace actions across the full file (including chunked rows), or the matching rows while column filters are active.
 - **Multiline Cell Display:** Cells with embedded newlines render as wrapped multi-line content (with preserved line breaks and matching row height).
 - **Clickable Links:** URLs in cells are automatically detected and displayed as clickable links. Ctrl/Cmd+click to open them in your browser.
 - **Preserved CSV Integrity:** Cell edits, expanding grid pastes, and row/column moves preserve existing field quoting and line endings. Appended values follow the existing column quote style when the column uses one consistently.
@@ -125,7 +125,7 @@ Per-file (stored by the extension; set via commands):
 - Serial index column (default `true`) — `CSV: Toggle Serial Index Column`
 - CSV separator override — `CSV: Change CSV Separator` (or clear it with `CSV: Reset CSV Separator (Inherit)`)
 - Hide first N rows (inherits `csv.defaultIgnoreRows`) — `CSV: Hide First N Rows`. An explicit `0` overrides a nonzero default; blank input clears the per-file override.
-- Column filter conditions — set from a column’s context menu and remove from the active-filter bar. Conditions, including any entered CSV text, are stored locally in VS Code workspace state. Clear all filters removes the saved conditions for that file. No CSV rows are removed by filtering.
+- Column filter conditions — set from a column’s context menu and remove from the active-filter bar. Conditions, including any entered CSV text, are stored in VS Code workspace state on the extension host (which may be remote). Clear all filters removes the saved conditions for that file. No CSV rows are removed by filtering.
 - Frozen leading visible rows/columns — `CSV: Freeze Leading Rows` / `CSV: Freeze Leading Columns`. Enter `0` to unfreeze that axis. The default keeps the first header row frozen; with headers off, no rows freeze until requested. Hidden metadata rows do not count; the virtual append row is never frozen as a leading row.
 
 ---

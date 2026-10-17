@@ -39,6 +39,7 @@ type PasteApplyResult = {
 };
 type ChunkRenderState = {
   rowIds: number[];
+  bodyStart: number;
   virtualRow: number;
   allRows: string[][];
   allRowsCount: number;
@@ -896,7 +897,7 @@ class CsvEditorController {
       const end = Math.min(start + state.chunkRows, state.allRowsCount);
       const html = state.allRows.slice(start, end).map((row, localR) => {
         const absRow = state.rowIds[start + localR];
-        const displayIdx = start + localR + 1;
+        const displayIdx = absRow - state.bodyStart + 1;
         let cells = '';
         for (let cIdx = 0; cIdx < state.numColumns; cIdx++) {
           const rawValue = row[cIdx] || '';
@@ -921,7 +922,7 @@ class CsvEditorController {
 
     if (start === state.allRowsCount && state.includeTrailingEmptyRow) {
       const virtualAbs = state.virtualRow;
-      const displayIdx = state.allRowsCount + 1;
+      const displayIdx = virtualAbs - state.bodyStart + 1;
       const idxCell = state.addSerialIndex
         ? `<td tabindex="0" style="min-width:${state.serialIndexWidthCh}ch;max-width:${state.serialIndexWidthCh}ch;border:1px solid ${state.isDark ? '#555' : '#ccc'};color:#888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>`
         : '';
@@ -1676,7 +1677,7 @@ class CsvEditorController {
     // Always keep one editable row for fully empty views; otherwise allow disabling the
     // trailing virtual row via settings.
     const includeTrailingEmptyRow = showTrailingEmptyRow || allRowsCount === 0;
-    const serialIndexMaxDisplay = includeTrailingEmptyRow ? allRowsCount + 1 : allRowsCount;
+    const serialIndexMaxDisplay = data.length - bodyStart + (includeTrailingEmptyRow ? 1 : 0);
     const serialIndexWidthCh = Math.max(4, String(Math.max(1, serialIndexMaxDisplay)).length + 1);
     const chunks: string[] = [];
     const chunked = allRowsCount > chunkRows;
@@ -1694,7 +1695,7 @@ class CsvEditorController {
         }
         const htmlChunk = allRows.slice(i, i + chunkRows).map((row, localR) => {
           const absRow = rowIds[i + localR];
-          const displayIdx = i + localR + 1; // numbering relative to first visible data row
+          const displayIdx = absRow - bodyStart + 1; // retain source numbering across filtered gaps
           let cells = '';
           for (let cIdx = 0; cIdx < numColumns; cIdx++) {
             const rawValue = row[cIdx] || '';
@@ -1740,7 +1741,7 @@ class CsvEditorController {
       initialBodyRows.forEach((row, r) => {
         tableHtml += `<tr>${
           addSerialIndex
-            ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${rowIds[r]}" data-col="-1">${r + 1}</td>`
+            ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${rowIds[r]}" data-col="-1">${rowIds[r] - bodyStart + 1}</td>`
             : ''
         }`;
         for (let i = 0; i < numColumns; i++) {
@@ -1753,7 +1754,7 @@ class CsvEditorController {
       });
       if (!chunked && includeTrailingEmptyRow) {
         const virtualAbs = data.length;
-        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${initialBodyRows.length + 1}</td>` : '';
+        const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${virtualAbs - bodyStart + 1}</td>` : '';
         const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
         tableHtml += `<tr>${idxCell}${dataCells}</tr>`;
       }
@@ -1764,7 +1765,7 @@ class CsvEditorController {
       nonHeaderRows.forEach((row, r) => {
         tableHtml += `<tr>${
           addSerialIndex
-            ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${rowIds[r]}" data-col="-1">${r + 1}</td>`
+            ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${rowIds[r]}" data-col="-1">${rowIds[r] - bodyStart + 1}</td>`
             : ''
         }`;
         for (let i = 0; i < numColumns; i++) {
@@ -1777,7 +1778,7 @@ class CsvEditorController {
       });
       if (!chunked && includeTrailingEmptyRow) {
         const virtualAbs = data.length;
-        const displayIdx = nonHeaderRows.length + 1;
+        const displayIdx = virtualAbs - bodyStart + 1;
         const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
         const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
         tableHtml += `<tr>${idxCell}${dataCells}</tr>`;
@@ -1789,7 +1790,7 @@ class CsvEditorController {
     if (chunked && includeTrailingEmptyRow) {
       if (nextChunkStart === -1 && serializedChunkCount < safeMaxSerializedChunks) {
         const virtualAbs = data.length;
-        const displayIdx = allRowsCount + 1;
+        const displayIdx = virtualAbs - bodyStart + 1;
         const idxCell = addSerialIndex ? `<td tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: #888;" data-row="${virtualAbs}" data-col="-1">${displayIdx}</td>` : '';
         const dataCells = Array.from({ length: numColumns }, (_, i) => `<td tabindex="0" style="min-width: ${Math.min(columnWidths[i] || 0, 100)}ch; max-width: 100ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; color: ${columnColors[i]}; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere;" data-row="${virtualAbs}" data-col="${i}"></td>`).join('');
         const vrow = `<tr>${idxCell}${dataCells}</tr>`;
@@ -1803,6 +1804,7 @@ class CsvEditorController {
     const chunkState: ChunkRenderState | undefined = chunked
       ? {
           rowIds,
+          bodyStart,
           virtualRow: data.length,
           allRows,
           allRowsCount,

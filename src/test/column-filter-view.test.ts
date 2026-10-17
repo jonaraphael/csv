@@ -26,6 +26,7 @@ describe('Full-source filtered view operations', () => {
     try {
       assert.strictEqual(view.cell(1501, 0).textContent, 'row1500');
       assert.strictEqual(view.cell(1999, 0).textContent, 'row1998');
+      assert.strictEqual(view.cell(1999, -1).textContent, '1999');
       assert.strictEqual(view.cell(1, 0), null);
       assert.ok(view.window.document.getElementById('filterStatus').textContent.includes('2 of 2004 rows'));
       assert.ok(view.window.document.querySelector('[data-clear-filter="1"]'));
@@ -48,6 +49,7 @@ describe('Full-source filtered view operations', () => {
       view.window.dispatchEvent(new view.window.MessageEvent('message', { data: response }));
       view.window.__csvLoadNextChunk();
       assert.strictEqual(view.cell(2001, 0).textContent, 'row2000');
+      assert.strictEqual(view.cell(2001, -1).textContent, '2001');
       assert.strictEqual(view.cell(2002, 0), null);
     } finally { view.close(); }
   });
@@ -250,6 +252,45 @@ describe('Full-source filtered view operations', () => {
       assert.strictEqual(view.window.document.querySelector('[contenteditable="true"]'), null);
       clear.click();
       assert.ok(view.messages.some((message: any) => message.type === 'clearAllFilters'));
+    } finally { view.close(); }
+  });
+
+  it('keeps cancelled or oversized filter edits unchanged and isolates saved conditions per URI', async () => {
+    const { host, view } = await fixture();
+    try {
+      const saved = () => CsvEditorProvider.getColumnFiltersForUri(host.context as any, host.document.uri as any);
+      await host.receive({ type: 'configureColumnFilter', column: 1 });
+      assert.deepStrictEqual(saved(), filter);
+      host.filterChoice = { label: 'Contains', operator: 'contains' };
+      await host.receive({ type: 'configureColumnFilter', column: 1 });
+      host.filterInput = 'x'.repeat(4097);
+      await host.receive({ type: 'configureColumnFilter', column: 1 });
+      assert.deepStrictEqual(saved(), filter);
+      assert.ok(!host.messages.some((message: any) => message.type === 'prepareViewRefresh'));
+      const other = { toString: () => 'file:///other.csv' } as any;
+      assert.deepStrictEqual(CsvEditorProvider.getColumnFiltersForUri(host.context as any, other), []);
+      await CsvEditorProvider.setColumnFiltersForUri(host.context as any, other, [{ column: 0, operator: 'empty', value: '' }]);
+      await host.receive({ type: 'clearAllFilters' });
+      assert.deepStrictEqual(saved(), []);
+      assert.deepStrictEqual(CsvEditorProvider.getColumnFiltersForUri(host.context as any, other), [{ column: 0, operator: 'empty', value: '' }]);
+    } finally { view.close(); }
+  });
+
+  it('removes one predicate through its chip and commits a live multiline draft before refresh', async () => {
+    const conditions = [...filter, { column: 0, operator: 'notEmpty', value: '' }];
+    const { host, view } = await fixture({ filters: conditions });
+    try {
+      const cell = view.cell(1, 0);
+      view.start(cell);
+      cell.textContent = 'unsaved\nmultiline draft';
+      view.window.document.querySelector('[data-clear-filter="0"]').click();
+      await host.receive(view.messages.find((message: any) => message.type === 'clearColumnFilter'));
+      await refresh(host, view);
+      assert.strictEqual(host.rows()[1][0], 'unsaved\nmultiline draft');
+      assert.deepStrictEqual(host.rows()[2], ['hidden', 'drop']);
+      assert.deepStrictEqual(CsvEditorProvider.getColumnFiltersForUri(host.context as any, host.document.uri as any), filter);
+      const next = createWebviewDom(host.panel.webview.html);
+      try { assert.strictEqual(next.cell(1, 0).textContent, 'unsaved\nmultiline draft'); } finally { next.close(); }
     } finally { view.close(); }
   });
 

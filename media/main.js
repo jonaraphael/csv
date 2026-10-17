@@ -1640,9 +1640,9 @@ document.addEventListener('keydown', e => {
         target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === max) || refCell;
       } else if (['ArrowUp','Up'].includes(e.key)) {
         if (hasHeader) {
-          target = table.querySelector('th[data-row="0"][data-col="'+col+'"]') || refCell;
+          target = table.querySelector('th[data-row="'+headerSourceRow+'"][data-col="'+col+'"]') || refCell;
         } else {
-          target = table.querySelector('td[data-row="0"][data-col="'+col+'"]') || refCell;
+          target = table.querySelector('td[data-row="'+getFirstDataRow()+'"][data-col="'+col+'"]') || refCell;
         }
       } else if (['ArrowDown','Down'].includes(e.key)) {
         const colCells = Array.from(table.querySelectorAll('td[data-col="'+col+'"]'));
