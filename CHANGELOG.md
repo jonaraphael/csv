@@ -4,6 +4,20 @@ All notable changes to the "CSV" extension will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - Unreleased
+
+Integration candidate; final contents remain subject to review. No release has been published.
+
+- Added: Column filters with matching-row counts, per-file persistence, and full-source saves.
+- Added: Frozen leading rows and columns, plus a configurable default for hidden metadata rows.
+- Added: Bounded, paginated read-only preview for large saved UTF-8 files.
+- Added: Table/text switching and untitled CSV/TSV editing with explicit Save As support.
+- Added: Explicit read-only comparison of two files as tables.
+- Fixed: Edit/save ordering and pending multiline edits across editor changes.
+- Fixed: Clipboard actions, delimiter fidelity, and CSV quote/line-ending preservation during data mutations.
+- Improved: Multiline-aware column sizing, remembered manual widths, and encoding guidance.
+- Documentation: Privacy and data handling, including remote workspaces and saved filter conditions.
+
 ## [1.2.1] - 2025-08-20
 - Fixed: Scrolling freeze at 1000 rows when header was enabled by making chunking consistent across modes and using a safe JSON transport to the webview.
 - Fixed: Phantom virtual row indices caused by EOF newlines; now trims trailing empty rows and uses stable counts for the final virtual row.

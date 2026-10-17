@@ -190,6 +190,15 @@ There are no new settings. The existing `csv.maxFileSizeMB` limit applies. Indep
 
 ## Release Notes
 
+### v1.4.0 (Unreleased)
+
+Integration candidate; final contents remain subject to review.
+
+- Add column filters, frozen rows/columns, a configurable hidden-row default, and a bounded read-only large-file preview.
+- Add table/text switching, untitled CSV/TSV editing, and explicit read-only table comparison.
+- Improve edit/save integrity, clipboard behavior, source-format preservation, column resizing, and encoding guidance.
+- Document privacy and data handling. See `CHANGELOG.md` for details.
+
 ### v1.2.1
 - Fix scrolling freeze at ~1000 rows when header is enabled by unifying chunking behavior and safely transporting chunks to the webview.
 - Trim trailing empty lines to avoid phantom last rows; correct final virtual row numbering.
