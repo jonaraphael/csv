@@ -1043,6 +1043,16 @@ table.addEventListener('mousedown', e => {
   
   selectionMode = (target.tagName === 'TH') ? "column" : (target.getAttribute('data-col') === '-1' ? "row" : "cell");
   startCell = target; endCell = target; rangeEndCell = target; isSelecting = true; e.preventDefault();
+  if (selectionMode === "column") {
+    const col = Number(target.getAttribute('data-col'));
+    selectFullColumnRange(col, col);
+  } else if (selectionMode === "row") {
+    const row = Number(target.getAttribute('data-row'));
+    selectFullRowRange(row, row);
+  } else {
+    const coords = getCellCoords(target);
+    selectRange(coords, coords);
+  }
   target.focus();
 });
 
@@ -1100,11 +1110,6 @@ table.addEventListener('mouseup', e => {
   if(!isSelecting) return;
   isSelecting = false;
   if(selectionMode === "cell"){
-    if(startCell === endCell){
-      clearSelection();
-      startCell.classList.add('selected');
-      currentSelection.push(startCell);
-    }
     anchorCell = startCell;
     rangeEndCell = endCell;
     persistState();
