@@ -28,6 +28,31 @@ function showUpdateGuidance(dirty: boolean): void {
   );
 }
 
+function observeEditorReplacement(uri: vscode.Uri, source: string, target: string, viewColumn: vscode.ViewColumn) {
+  let resolve!: (complete: boolean) => void;
+  let subscription: vscode.Disposable | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
+  const promise = new Promise<boolean>(finish => { resolve = finish; });
+  const finish = (complete: boolean) => {
+    if (settled) { return; }
+    settled = true;
+    subscription?.dispose();
+    if (timer) { clearTimeout(timer); }
+    resolve(complete);
+  };
+  const check = () => {
+    const group = vscode.window.tabGroups.all.find(candidate => candidate.viewColumn === viewColumn);
+    if (group?.tabs.some(tab => getInputUri(tab.input, target)?.toString() === uri.toString()) &&
+        !group.tabs.some(tab => getInputUri(tab.input, source)?.toString() === uri.toString())) { finish(true); }
+  };
+  // Native command completion can precede extension-host TabGroups events.
+  subscription = vscode.window.tabGroups.onDidChangeTabs(check);
+  return { promise, check, startTimeout: () => {
+    if (!settled) { timer = setTimeout(() => finish(false), 5000); }
+  }, cancel: () => finish(false) };
+}
+
 export async function toggleCsvEditor(prepareRouting?: (uri: vscode.Uri, target: 'default' | 'csv.editor') => Promise<EditorSwitchRouting>): Promise<void> {
   const untitled = getActiveUntitledCsvEditor();
   if (untitled) {
@@ -71,6 +96,7 @@ export async function toggleCsvEditor(prepareRouting?: (uri: vscode.Uri, target:
   switchingTabs.add(switchKey);
   let routing: EditorSwitchRouting | undefined;
   let replaced = false;
+  let replacement: ReturnType<typeof observeEditorReplacement> | undefined;
   try {
     if (!(await vscode.commands.getCommands(true)).includes('reopenActiveEditorWith')) {
       showUpdateGuidance(false);
@@ -177,15 +203,17 @@ export async function toggleCsvEditor(prepareRouting?: (uri: vscode.Uri, target:
     }
     // Native replacement opens the target before removing the source and retains
     // the shared dirty text working copy. A separate tab close can prompt/discard.
+    replacement = observeEditorReplacement(uri, source, target, group.viewColumn);
     await vscode.commands.executeCommand('reopenActiveEditorWith', target);
-    const completedGroup = vscode.window.tabGroups.all.find(candidate => candidate.viewColumn === group.viewColumn);
-    replaced = !!completedGroup?.tabs.some(candidate => getInputUri(candidate.input, target)?.toString() === uri.toString()) &&
-      !completedGroup.tabs.some(candidate => getInputUri(candidate.input, source)?.toString() === uri.toString());
+    replacement.check();
+    replacement.startTimeout();
+    replaced = await replacement.promise;
     if (replaced) { await routing?.commit(); }
   } catch (error) {
     console.error('CSV: could not switch editor', error);
     void vscode.window.showErrorMessage('CSV: Could not switch between the table and text editor.');
   } finally {
+    replacement?.cancel();
     if (!replaced) {
       try { await routing?.rollback(); } catch (error) { console.error('CSV: could not restore file routing after a cancelled switch', error); }
     }
