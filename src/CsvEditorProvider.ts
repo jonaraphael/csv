@@ -2,7 +2,8 @@ import Papa from 'papaparse';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { parseClipboardMatrix, serializeClipboardMatrix } from './clipboard';
-import { ColumnFilter, normalizeColumnFilters, rowMatchesFilters, visibleSourceRows, remapColumnFilters, MAX_FILTER_VALUE_LENGTH, MAX_COLUMN_FILTERS } from './column-filters';
+import { ColumnFilter, normalizeColumnFilters, compileColumnFilters, visibleSourceRows, remapColumnFilters, getFilterOperatorChoices, validateColumnFilterInput, formatColumnFilter, MAX_COLUMN_FILTERS } from './column-filters';
+import { FilterDataType, parseFilterDate } from './filter-values';
 
 type FrozenPanes = { rows: number; columns: number };
 
@@ -727,27 +728,50 @@ class CsvEditorController {
       void vscode.window.showInformationMessage(`CSV: Clear a column filter before adding another (maximum ${MAX_COLUMN_FILTERS}).`);
       return;
     }
-    const choices: Array<vscode.QuickPickItem & { operator: ColumnFilter['operator'] }> = [
-      { label: 'Contains', operator: 'contains' }, { label: 'Equals', operator: 'equals' },
-      { label: 'Is empty', operator: 'empty' }, { label: 'Is not empty', operator: 'notEmpty' }
-    ];
-    const choice = await vscode.window.showQuickPick(choices, { placeHolder: `Filter column ${column + 1} (text matching ignores case)` });
+    const offset = Math.min(Math.max(0, this.getHiddenRows()), data.length);
+    const bodyStart = offset + (this.getEffectiveHeader(data, offset) ? 1 : 0);
+    const originalValues = data.slice(bodyStart).map(row => row[column] ?? '');
+    const inferred = this.estimateColumnDataType(originalValues);
+    let dataType: FilterDataType = inferred === 'integer' || inferred === 'float' ? 'number'
+      : inferred === 'date' || inferred === 'boolean' ? inferred : 'string';
+    if (inferred === 'string') {
+      const nonblank = originalValues.filter(value => value.trim() !== '');
+      if (nonblank.length && nonblank.every(value => parseFilterDate(value) !== undefined)) {
+        dataType = 'date';
+      }
+    }
+    const typeLabel = dataType === 'string' ? 'text' : dataType;
+    const choices = getFilterOperatorChoices(dataType);
+    const selected = await vscode.window.showQuickPick([...choices], { placeHolder: `Filter column ${column + 1} (inferred ${typeLabel})` });
+    if (!selected) {
+      return;
+    }
+    const choice = choices.find(item => item.operator === selected.operator);
     if (!choice) {
       return;
     }
+    const typedComparison = !['contains', 'notContains', 'regex', 'empty', 'notEmpty'].includes(choice.operator);
+    const comparisonType = typedComparison && dataType !== 'string' ? dataType : undefined;
+    const validate = (text: string) => validateColumnFilterInput(choice.operator, text, comparisonType);
     let value = '';
-    if (choice.operator === 'contains' || choice.operator === 'equals') {
+    if (choice.operator !== 'empty' && choice.operator !== 'notEmpty') {
+      const guidance = choice.operator === 'regex' ? 'Plain patterns ignore case; /pattern/flags accepts i, m and s.'
+        : comparisonType === 'date' ? 'Use an explicit date/time; timezone-less values use UTC.'
+        : comparisonType === 'boolean' ? 'Use true/false, yes/no, on/off, t/f, y/n or 1/0.'
+        : comparisonType === 'number' ? 'Enter a finite number.' : 'Text matching ignores case.';
       const input = await vscode.window.showInputBox({
-        prompt: `Column ${column + 1}: ${choice.label.toLowerCase()} (case-insensitive)`,
+        prompt: `Column ${column + 1} (${typeLabel}): ${choice.label.toLowerCase()}. ${guidance}`,
         value: existing?.value ?? '',
-        validateInput: text => text.length > MAX_FILTER_VALUE_LENGTH ? `Use at most ${MAX_FILTER_VALUE_LENGTH} characters.` : undefined
+        validateInput: validate
       });
-      if (input === undefined || input.length > MAX_FILTER_VALUE_LENGTH) {
+      if (input === undefined || validate(input) !== undefined) {
         return;
       }
       value = input;
     }
-    await this.setColumnFilters([...filters.filter(filter => filter.column !== column), { column, operator: choice.operator, value }]);
+    await this.setColumnFilters([...filters.filter(filter => filter.column !== column), {
+      column, operator: choice.operator, value, ...(comparisonType ? { dataType: comparisonType } : {})
+    }]);
   }
 
   private async remapFilters(columnOrder: number[]): Promise<void> {
@@ -844,9 +868,10 @@ class CsvEditorController {
           : undefined;
 
       const filters = CsvEditorProvider.getColumnFiltersForUri(this.context, this.document.uri);
-      const previouslyMatched = rowMatchesFilters(data[row] ?? [], filters);
+      const matches = compileColumnFilters(filters);
+      const previouslyMatched = matches(data[row] ?? []);
       const { data: nextData, trimmed, createdRow, createdCol } = this.mutateDataForEdit(data, row, col, value);
-      filterMembershipChanged = filters.length > 0 && previouslyMatched !== rowMatchesFilters(nextData[row] ?? [], filters);
+      filterMembershipChanged = filters.length > 0 && previouslyMatched !== matches(nextData[row] ?? []);
       structuralChange = !!(trimmed || createdRow || createdCol || row >= hadRows || col >= hadColsAtRow);
 
       if (!structuralChange && previousValue === value) {
@@ -1600,7 +1625,8 @@ class CsvEditorController {
     };
 
     const filters = normalizeColumnFilters(CsvEditorProvider.getColumnFiltersForUri(this.context, this.document.uri), rows.reduce((max, row) => Math.max(max, row.length), 0));
-    const matchingSlots = body.map((_row, slot) => slot).filter(slot => rowMatchesFilters(body[slot], filters));
+    const matches = compileColumnFilters(filters);
+    const matchingSlots = body.map((_row, slot) => slot).filter(slot => matches(body[slot]));
     const sortedMatches = matchingSlots.map(slot => body[slot]).sort((r1, r2) => {
       const diff = cmp(r1[index] ?? '', r2[index] ?? '');
       return ascending ? diff : -diff;
@@ -1986,7 +2012,8 @@ class CsvEditorController {
       bodyData = data.slice(offset);
     }
     const bodyStart = headerFlag ? offset + 1 : offset;
-    const rowIds = bodyData.map((_row, index) => bodyStart + index).filter(row => rowMatchesFilters(data[row], filters));
+    const matches = compileColumnFilters(filters);
+    const rowIds = bodyData.map((_row, index) => bodyStart + index).filter(row => matches(data[row]));
     bodyData = rowIds.map(row => data[row]);
     const visibleForWidth = headerFlag ? [headerRow, ...bodyData] : bodyData;
     let numColumns = data.reduce((max, row) => Math.max(max, row.length), 0);
@@ -2462,7 +2489,7 @@ class CsvEditorController {
   </head>
   <body>
     <div id="csv-root" data-headerenabled="${headerEnabled ? '1' : '0'}" data-roworder="${this.escapeHtml(JSON.stringify(visibleRowIds))}" data-filtered="${filters.length ? '1' : '0'}" data-frozenrows="${frozenPanes.rows}" data-frozencolumns="${frozenPanes.columns}" data-firstrow="${firstVisibleRow}" data-realrowcount="${realRowCount}" data-columnsizes="${this.escapeHtml(JSON.stringify(columnSizes))}" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
-      ${filters.length ? `<div id="filterStatus" role="status" title="Sort and Replace All affect matching rows; saving keeps every source row."><span>Filtered: ${matchedRows} of ${totalFilterRows} rows</span><button type="button" id="clearAllFilters">Clear all filters</button>${filters.map(filter => `<button type="button" data-clear-filter="${filter.column}" title="Remove this column filter">${this.escapeHtml(filterHeader?.[filter.column] || `Column ${filter.column + 1}`)}: ${this.escapeHtml(filter.operator === 'empty' ? 'is empty' : filter.operator === 'notEmpty' ? 'is not empty' : `${filter.operator} “${filter.value}”`)} ×</button>`).join('')}</div>` : ''}
+      ${filters.length ? `<div id="filterStatus" role="status" title="Sort and Replace All affect matching rows; saving keeps every source row."><span>Filtered: ${matchedRows} of ${totalFilterRows} rows</span><button type="button" id="clearAllFilters">Clear all filters</button>${filters.map(filter => `<button type="button" data-clear-filter="${filter.column}" title="Remove this column filter">${this.escapeHtml(filterHeader?.[filter.column] || `Column ${filter.column + 1}`)}: ${this.escapeHtml(formatColumnFilter(filter))} ×</button>`).join('')}</div>` : ''}
       ${tableHtml}
     </div>
 
