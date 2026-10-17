@@ -1034,6 +1034,19 @@ const selectFullRowRange = (row1, row2) => {
   });
 };
 
+const extendSelectionTo = target => {
+  rangeEndCell = target;
+  const start = getCellCoords(anchorCell);
+  const end = getCellCoords(target);
+  if (isColumnHeaderCell(anchorCell)) {
+    selectFullColumnRange(start.col, end.col);
+  } else if (isRowIndexCell(anchorCell)) {
+    selectFullRowRange(start.row, end.row);
+  } else {
+    selectRange(start, end);
+  }
+};
+
 const getDataCellCoords = cell => {
   if (!cell || typeof cell.getAttribute !== 'function') return null;
   const coords = getCellCoords(cell);
@@ -1481,9 +1494,9 @@ window.addEventListener('csvChunkLoaded', () => {
   }
 });
 
-// Capture-phase handler to intercept Cmd/Ctrl + Arrow and move to extremes
+// Handle modified arrow jumps once; Shift extends the existing selection.
 document.addEventListener('keydown', e => {
-  if (isGridControlTarget(e.target)) {
+  if (isGridControlTarget(e.target) || isTextInputTarget(e.target)) {
     return;
   }
   const isArrowKey = (k) => ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Up','Down','Left','Right','Home','End'].includes(k);
@@ -1491,6 +1504,11 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     e.stopImmediatePropagation();
     e.stopPropagation();
+
+    // Select All has no fixed cell anchor; preserve the complete selection.
+    if (e.shiftKey && !anchorCell && currentSelection.length > 1) {
+      return;
+    }
 
     const sc = document.querySelector('.table-container');
     if (sc) {
@@ -1511,19 +1529,21 @@ document.addEventListener('keydown', e => {
       }
     }
 
-    const ref = anchorCell || currentSelection[0] || document.querySelector('td.selected, th.selected') || document.querySelector('td, th');
+    const fixedAnchor = anchorCell || currentSelection.find(cell => {
+      const { row, col } = getCellCoords(cell);
+      return Number.isInteger(row) && Number.isInteger(col);
+    }) || table.querySelector('td[data-row][data-col], th[data-row][data-col]');
+    const ref = e.shiftKey && anchorCell ? (rangeEndCell || fixedAnchor) : fixedAnchor;
     let target = null;
     if (ref) {
       const { row, col } = getCellCoords(ref);
       if (['ArrowLeft','Left','Home'].includes(e.key)) {
-        const tag = (hasHeader && row === headerSourceRow ? 'th' : 'td');
-        const rowCells = Array.from(table.querySelectorAll(tag + '[data-row="'+row+'"]'))
+        const rowCells = Array.from(table.querySelectorAll('td[data-row="'+row+'"], th[data-row="'+row+'"]'))
           .filter(el => el.getAttribute('data-col') !== null && el.getAttribute('data-col') !== '-1');
         const min = rowCells.reduce((acc, el) => Math.min(acc, parseInt(el.getAttribute('data-col'))), Infinity);
         target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === min) || ref;
       } else if (['ArrowRight','Right','End'].includes(e.key)) {
-        const tag = (hasHeader && row === headerSourceRow ? 'th' : 'td');
-        const rowCells = Array.from(table.querySelectorAll(tag + '[data-row="'+row+'"]'))
+        const rowCells = Array.from(table.querySelectorAll('td[data-row="'+row+'"], th[data-row="'+row+'"]'))
           .filter(el => el.getAttribute('data-col') !== null && el.getAttribute('data-col') !== '-1');
         const max = rowCells.reduce((acc, el) => Math.max(acc, parseInt(el.getAttribute('data-col'))), -1);
         target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === max) || ref;
@@ -1537,13 +1557,18 @@ document.addEventListener('keydown', e => {
     }
 
     if (target) {
-      clearSelection();
-      target.classList.add('selected');
-      currentSelection.push(target);
-      anchorCell = target;
-      rangeEndCell = target;
+      if (e.shiftKey && fixedAnchor) {
+        anchorCell = fixedAnchor;
+        extendSelectionTo(target);
+      } else {
+        clearSelection();
+        target.classList.add('selected');
+        currentSelection.push(target);
+        anchorCell = target;
+        rangeEndCell = target;
+      }
       persistState();
-      target.focus({preventScroll:true});
+      (e.shiftKey ? anchorCell : target).focus({preventScroll:true});
       if (['ArrowUp','Up'].includes(e.key)) {
         const topRow = getFirstDataRow();
         const below = table.querySelector('td[data-row="'+topRow+'"][data-col="'+getCellCoords(target).col+'"]');
@@ -1622,61 +1647,6 @@ document.addEventListener('keydown', e => {
     return;
   }
 
-  const isArrowKey = (k) => ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Up','Down','Left','Right','Home','End'].includes(k);
-  if (!editingCell && (e.ctrlKey || e.metaKey) && isArrowKey(e.key)) {
-    e.preventDefault();
-    const sc = document.querySelector('.table-container');
-    if (sc) {
-      if (['ArrowLeft','Left','Home'].includes(e.key))  sc.scrollTo({ left: 0, behavior: 'smooth' });
-      if (['ArrowRight','Right','End'].includes(e.key)) sc.scrollTo({ left: sc.scrollWidth, behavior: 'smooth' });
-      if (['ArrowUp','Up'].includes(e.key))    sc.scrollTo({ top: 0, behavior: 'smooth' });
-      if (['ArrowDown','Down'].includes(e.key))  sc.scrollTo({ top: sc.scrollHeight, behavior: 'smooth' });
-    }
-
-    let refCell = anchorCell;
-    if (!refCell) {
-      refCell = currentSelection[0] || document.querySelector('td.selected, th.selected');
-    }
-    let target = null;
-    if (refCell) {
-      const { row, col } = getCellCoords(refCell);
-      if (['ArrowLeft','Left','Home'].includes(e.key)) {
-        const tag = (hasHeader && row === headerSourceRow ? 'th' : 'td');
-        const rowCells = Array.from(table.querySelectorAll(tag + '[data-row="'+row+'"]'))
-          .filter(el => el.getAttribute('data-col') !== null && el.getAttribute('data-col') !== '-1');
-        const min = rowCells.reduce((acc, el) => Math.min(acc, parseInt(el.getAttribute('data-col'))), Infinity);
-        target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === min) || refCell;
-      } else if (['ArrowRight','Right','End'].includes(e.key)) {
-        const tag = (hasHeader && row === headerSourceRow ? 'th' : 'td');
-        const rowCells = Array.from(table.querySelectorAll(tag + '[data-row="'+row+'"]'))
-          .filter(el => el.getAttribute('data-col') !== null && el.getAttribute('data-col') !== '-1');
-        const max = rowCells.reduce((acc, el) => Math.max(acc, parseInt(el.getAttribute('data-col'))), -1);
-        target = rowCells.find(el => parseInt(el.getAttribute('data-col')) === max) || refCell;
-      } else if (['ArrowUp','Up'].includes(e.key)) {
-        if (hasHeader) {
-          target = table.querySelector('th[data-row="'+headerSourceRow+'"][data-col="'+col+'"]') || refCell;
-        } else {
-          target = table.querySelector('td[data-row="'+getFirstDataRow()+'"][data-col="'+col+'"]') || refCell;
-        }
-      } else if (['ArrowDown','Down'].includes(e.key)) {
-        const colCells = Array.from(table.querySelectorAll('td[data-col="'+col+'"]'));
-        target = (colCells.length ? colCells[colCells.length - 1] : null) || refCell;
-      }
-    }
-
-    if (target) {
-      clearSelection();
-      target.classList.add('selected');
-      currentSelection.push(target);
-      anchorCell = target;
-      rangeEndCell = target;
-      persistState();
-      target.focus({preventScroll:true});
-      target.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
-    }
-    return;
-  }
-
   if (!editingCell && e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault();
     const refCell = anchorCell || getCellTarget(document.activeElement) || currentSelection[0] || document.querySelector('td.selected, th.selected');
@@ -1745,13 +1715,11 @@ document.addEventListener('keydown', e => {
       case 'ArrowLeft': targetCol = col - 1; break;
       case 'ArrowRight':targetCol = col + 1; break;
     }
-    if(targetRow < 0 || targetCol < 0) return;
-    const tag = (hasHeader && targetRow === headerSourceRow ? 'th' : 'td');
+    if(targetRow < 0 || targetCol < (isRowIndexCell(anchorCell) ? -1 : 0)) return;
     const nextCell = ensureRenderedCellByCoords(targetRow, targetCol);
     if(nextCell){
       e.preventDefault();
-      rangeEndCell = nextCell;
-      selectRange(getCellCoords(anchorCell), getCellCoords(rangeEndCell));
+      extendSelectionTo(nextCell);
       persistState();
       anchorCell.focus({preventScroll:true});
       rangeEndCell.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });

@@ -186,6 +186,7 @@ There are no new settings. The existing `csv.maxFileSizeMB` limit applies. Indep
   - Replace: `Ctrl/Cmd + H`
   - Next/Previous match: `F3` / `Shift + F3` (also `Enter` / `Shift + Enter` in the Find box)
   - Select all: `Ctrl/Cmd + A`
+  - Jump to an edge: `Ctrl/Cmd + Arrow`. Add `Shift` to extend the current selection from its fixed starting cell; whole-row and whole-column selections retain their shape.
 
 ---
 
