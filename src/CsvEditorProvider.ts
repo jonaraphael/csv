@@ -1102,7 +1102,7 @@ class CsvEditorController {
     const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const data = result.data as string[][];
+    const data = this.trimTrailingEmptyRows(result.data as string[][]);
     const order = Array.from({ length: data.reduce((max, row) => Math.max(max, row.length), 0) }, (_, column) => column);
     for (const row of data) {
       if (index > row.length) {
@@ -1110,7 +1110,9 @@ class CsvEditorController {
       }
       row.splice(index, 0, '');
     }
-    const newText = Papa.unparse(data, { delimiter: separator });
+    order.splice(index, 0, -1);
+    const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, data, undefined, order)
+      ?? Papa.unparse(data, { delimiter: separator });
     const fullRange = new vscode.Range(
       0, 0,
       this.document.lineCount,
@@ -1120,7 +1122,6 @@ class CsvEditorController {
     edit.replace(this.document.uri, fullRange, newText);
     await vscode.workspace.applyEdit(edit);
     this.isUpdatingDocument = false;
-    order.splice(index, 0, -1);
     await this.remapFilters(order);
     this.updateWebviewContent();
   }
@@ -1131,7 +1132,7 @@ class CsvEditorController {
     const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const data = result.data as string[][];
+    const data = this.trimTrailingEmptyRows(result.data as string[][]);
     const order = Array.from({ length: data.reduce((max, row) => Math.max(max, row.length), 0) }, (_, column) => column);
     for (let k = 0; k < count; k++) {
       for (const row of data) {
@@ -1141,7 +1142,9 @@ class CsvEditorController {
         row.splice(index, 0, '');
       }
     }
-    const newText = Papa.unparse(data, { delimiter: separator });
+    order.splice(index, 0, ...Array(count).fill(-1));
+    const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, data, undefined, order)
+      ?? Papa.unparse(data, { delimiter: separator });
     const fullRange = new vscode.Range(
       0, 0,
       this.document.lineCount,
@@ -1151,7 +1154,6 @@ class CsvEditorController {
     edit.replace(this.document.uri, fullRange, newText);
     await vscode.workspace.applyEdit(edit);
     this.isUpdatingDocument = false;
-    order.splice(index, 0, ...Array(count).fill(-1));
     await this.remapFilters(order);
     this.updateWebviewContent();
   }
@@ -1161,14 +1163,16 @@ class CsvEditorController {
     const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const data = result.data as string[][];
+    const data = this.trimTrailingEmptyRows(result.data as string[][]);
     const order = Array.from({ length: data.reduce((max, row) => Math.max(max, row.length), 0) }, (_, column) => column);
     for (const row of data) {
       if (index < row.length) {
         row.splice(index, 1);
       }
     }
-    const newText = Papa.unparse(data, { delimiter: separator });
+    order.splice(index, 1);
+    const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, data, undefined, order)
+      ?? Papa.unparse(data, { delimiter: separator });
     const fullRange = new vscode.Range(
       0, 0,
       this.document.lineCount,
@@ -1178,7 +1182,6 @@ class CsvEditorController {
     edit.replace(this.document.uri, fullRange, newText);
     await vscode.workspace.applyEdit(edit);
     this.isUpdatingDocument = false;
-    order.splice(index, 1);
     await this.remapFilters(order);
     this.updateWebviewContent();
   }
@@ -1189,7 +1192,7 @@ class CsvEditorController {
     const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const data = result.data as string[][];
+    const data = this.trimTrailingEmptyRows(result.data as string[][]);
     const order = Array.from({ length: data.reduce((max, row) => Math.max(max, row.length), 0) }, (_, column) => column);
     const sorted = [...indices].sort((a,b)=>b-a);
     for (const idx of sorted) {
@@ -1199,7 +1202,9 @@ class CsvEditorController {
         }
       }
     }
-    const newText = Papa.unparse(data, { delimiter: separator });
+    for (const column of sorted) { order.splice(column, 1); }
+    const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, data, undefined, order)
+      ?? Papa.unparse(data, { delimiter: separator });
     const fullRange = new vscode.Range(
       0, 0,
       this.document.lineCount,
@@ -1209,7 +1214,6 @@ class CsvEditorController {
     edit.replace(this.document.uri, fullRange, newText);
     await vscode.workspace.applyEdit(edit);
     this.isUpdatingDocument = false;
-    for (const column of sorted) { order.splice(column, 1); }
     await this.remapFilters(order);
     this.updateWebviewContent();
   }
@@ -1272,18 +1276,10 @@ class CsvEditorController {
     const prefix = rows.slice(0, offset);
     const combined = treatHeader ? [...prefix, header, ...body] : [...prefix, ...body];
 
-    // Sanitize before unparse: ensure undefined/null/NaN become empty strings
-    const sanitized: string[][] = combined.map(r => r.map((v: any) => {
-      if (v === undefined || v === null) return '';
-      const t = typeof v;
-      if (t === 'number') {
-        return Number.isNaN(v) ? '' : String(v);
-      }
-      const s = String(v);
-      return s.toLowerCase() === 'nan' ? '' : s;
-    }));
-
-    const newCsv = Papa.unparse(sanitized, { delimiter: separator });
+    const originalIndex = new Map(rows.map((row, position) => [row, position]));
+    const rowOrder = combined.map(row => originalIndex.get(row)!);
+    const newCsv = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, combined, rowOrder)
+      ?? Papa.unparse(combined, { delimiter: separator });
 
     const fullRange = new vscode.Range(
       0, 0,
@@ -1305,14 +1301,17 @@ class CsvEditorController {
     const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const data = result.data as string[][];
+    const data = this.trimTrailingEmptyRows(result.data as string[][]);
+    const order = data.map((_row, position) => position);
     const numColumns = data.reduce((max, r) => Math.max(max, r.length), 0);
     const newRow = Array(numColumns).fill('');
     if (index > data.length) {
       while (data.length < index) data.push(Array(numColumns).fill(''));
     }
     data.splice(index, 0, newRow);
-    const newText = Papa.unparse(data, { delimiter: separator });
+    order.splice(index, 0, -1);
+    const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, data, order)
+      ?? Papa.unparse(data, { delimiter: separator });
     const fullRange = new vscode.Range(
       0, 0,
       this.document.lineCount,
@@ -1331,7 +1330,8 @@ class CsvEditorController {
     const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const data = result.data as string[][];
+    const data = this.trimTrailingEmptyRows(result.data as string[][]);
+    const order = data.map((_row, position) => position);
     const numColumns = data.reduce((max, r) => Math.max(max, r.length), 0);
     for (let k = 0; k < count; k++) {
       const newRow = Array(numColumns).fill('');
@@ -1340,7 +1340,9 @@ class CsvEditorController {
       }
       data.splice(index, 0, newRow);
     }
-    const newText = Papa.unparse(data, { delimiter: separator });
+    order.splice(index, 0, ...Array(count).fill(-1));
+    const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, data, order)
+      ?? Papa.unparse(data, { delimiter: separator });
     const fullRange = new vscode.Range(
       0, 0,
       this.document.lineCount,
@@ -1358,11 +1360,14 @@ class CsvEditorController {
     const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const data = result.data as string[][];
+    const data = this.trimTrailingEmptyRows(result.data as string[][]);
+    const order = data.map((_row, position) => position);
     if (index < data.length) {
       data.splice(index, 1);
     }
-    const newText = Papa.unparse(data, { delimiter: separator });
+    order.splice(index, 1);
+    const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, data, order)
+      ?? Papa.unparse(data, { delimiter: separator });
     const fullRange = new vscode.Range(
       0, 0,
       this.document.lineCount,
@@ -1381,14 +1386,17 @@ class CsvEditorController {
     const separator = this.getSeparator();
     const text = this.document.getText();
     const result = Papa.parse(text, { dynamicTyping: false, delimiter: separator });
-    const data = result.data as string[][];
+    const data = this.trimTrailingEmptyRows(result.data as string[][]);
+    const order = data.map((_row, position) => position);
     const sorted = [...indices].sort((a,b)=>b-a);
     for (const idx of sorted) {
       if (idx < data.length) {
         data.splice(idx, 1);
       }
     }
-    const newText = Papa.unparse(data, { delimiter: separator });
+    for (const row of sorted) { order.splice(row, 1); }
+    const newText = CsvEditorProvider.applyStructuralUpdatesPreservingFormat(text, separator, data, order)
+      ?? Papa.unparse(data, { delimiter: separator });
     const fullRange = new vscode.Range(
       0, 0,
       this.document.lineCount,

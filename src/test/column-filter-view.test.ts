@@ -192,4 +192,65 @@ describe('Full-source filtered view operations', () => {
       assert.deepStrictEqual(host.rows()[2], ['hidden', 'drop']);
     } finally { view.close(); }
   });
+  it('preserves exact metadata and hidden record formatting during filtered paste, fill and sort', async () => {
+    const text = '"metadata","preserve"\r\nName,"State"\r\n"z","keep"\r\nNaN,"drop"\r\n"a",KEEP\r\n';
+    const { host, view } = await fixture({ text, hiddenRows: 1 });
+    try {
+      await host.receive({ type: 'pasteCells', text: 'changed', anchorRow: 2, anchorCol: 0 });
+      assert.strictEqual(host.document.getText(), '"metadata","preserve"\r\nName,"State"\r\n"changed","keep"\r\nNaN,"drop"\r\n"a",KEEP\r\n');
+      await host.receive({ type: 'sortColumn', index: 0, ascending: true });
+      assert.strictEqual(host.document.getText(), '"metadata","preserve"\r\nName,"State"\r\n"a",KEEP\r\nNaN,"drop"\r\n"changed","keep"\r\n');
+      await host.receive({ type: 'pasteCells', text: 'new,keep', anchorRow: 5, anchorCol: 0 });
+      assert.ok(host.document.getText().startsWith('"metadata","preserve"\r\nName,"State"\r\n"a",KEEP\r\nNaN,"drop"\r\n"changed","keep"\r\n'));
+      await host.receive({ type: 'pasteCells', text: 'filled', anchorRow: 2, anchorCol: 0, selection: { minRow: 2, maxRow: 4, minCol: 0, maxCol: 0, rectangular: true } });
+      assert.ok(host.document.getText().includes('NaN,"drop"\r\n'));
+      assert.ok(host.document.getText().startsWith('"metadata","preserve"\r\nName,"State"\r\n'));
+    } finally { view.close(); }
+  });
+
+  it('preserves raw tokens for hidden records during filtered row/column structural actions', async () => {
+    const text = '"Name","State"\n"one","keep"\nhidden,"drop"\n"three",KEEP\n';
+    const { host, view } = await fixture({ text });
+    try {
+      await host.receive({ type: 'deleteRows', indices: [1, 3] });
+      assert.strictEqual(host.document.getText(), '"Name","State"\nhidden,"drop"\n');
+      await host.receive({ type: 'insertColumns', index: 0, count: 2 });
+      assert.ok(host.document.getText().includes(',,hidden,"drop"\n'));
+      await host.receive({ type: 'deleteColumns', indices: [0, 1] });
+      assert.strictEqual(host.document.getText(), '"Name","State"\nhidden,"drop"\n');
+    } finally { view.close(); }
+  });
+
+  it('retains quoted tabs/newlines in filtered TSV clipboard and paste flows', async () => {
+    const source = [['Name', 'State'], ['tab\tand\nnewline', 'keep'], ['hidden', 'drop'], ['three', 'keep']];
+    const { host, view } = await fixture({ rows: source, separator: '\t' });
+    try {
+      view.window.editingTestApi.setSingleSelection(view.cell(1, 0));
+      view.cell(1, 0).dispatchEvent(new view.window.Event('copy', { bubbles: true, cancelable: true }));
+      await host.receive(view.messages.find((message: any) => message.type === 'copyCells'));
+      await host.receive({ type: 'pasteCells', text: host.clipboardText, anchorRow: 3, anchorCol: 0 });
+      assert.strictEqual(host.rows()[3][0], 'tab\tand\nnewline');
+      assert.deepStrictEqual(host.rows()[2], ['hidden', 'drop']);
+    } finally { view.close(); }
+  });
+
+  it('leaves filter-bar keyboard activation native and tab navigation follows visible rows', async () => {
+    const { view } = await fixture();
+    try {
+      view.window.editingTestApi.setSingleSelection(view.cell(1, 1));
+      view.key('Tab');
+      assert.strictEqual(view.window.document.activeElement, view.cell(3, 0));
+      view.key('Tab', { shiftKey: true });
+      assert.strictEqual(view.window.document.activeElement, view.cell(1, 1));
+      const clear = view.window.document.getElementById('clearAllFilters');
+      clear.focus();
+      const event = new view.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+      clear.dispatchEvent(event);
+      assert.strictEqual(event.defaultPrevented, false);
+      assert.strictEqual(view.window.document.querySelector('[contenteditable="true"]'), null);
+      clear.click();
+      assert.ok(view.messages.some((message: any) => message.type === 'clearAllFilters'));
+    } finally { view.close(); }
+  });
+
 });
