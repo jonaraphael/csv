@@ -13,6 +13,7 @@ class TestUri {
 let activeHarness: any;
 const vscodeStub = {
   Uri: TestUri,
+  ViewColumn: { Active: -1 },
   Range: class {},
   WorkspaceEdit: class {
     text = '';
@@ -26,6 +27,10 @@ const vscodeStub = {
       return activeHarness.warningChoice;
     },
     showInformationMessage() {},
+    showErrorMessage: async (message: string) => { activeHarness.errors.push(message); },
+    showOpenDialog: async () => activeHarness.dialogResults.shift(),
+    get activeTextEditor() { return activeHarness.activeTextDocument ? { document: activeHarness.activeTextDocument } : undefined; },
+    createWebviewPanel: (...args: unknown[]) => activeHarness.createPanel(...args),
     tabGroups: {
       get all() { return activeHarness.tabGroups ?? [{ tabs: [{ input: { uri: activeHarness.document.uri, viewType: 'csv.editor' } }] }]; },
       close: async () => activeHarness.closeResult
@@ -51,6 +56,19 @@ const vscodeStub = {
     }
   },
   workspace: {
+    fs: {
+      stat: async (uri: TestUri) => {
+        if (activeHarness.statError) { throw activeHarness.statError; }
+        return { size: activeHarness.statSize ?? Buffer.byteLength(activeHarness.sourceDocuments.get(uri.toString())?.getText() ?? '') };
+      }
+    },
+    get textDocuments() { return activeHarness.existingDocuments; },
+    openTextDocument: async (uri: TestUri) => {
+      activeHarness.openedDocuments.push(uri.toString());
+      const document = activeHarness.sourceDocuments.get(uri.toString());
+      if (!document) { throw new Error('Unknown test document'); }
+      return document;
+    },
     getConfiguration: () => ({ get: (key: string, fallback: unknown) =>
       key in activeHarness.configuration ? activeHarness.configuration[key] : key === 'maxFileSizeMB' ? 0 : fallback }),
     applyEdit: (edit: { text: string }) => activeHarness.applyEdit(edit.text),
@@ -144,6 +162,15 @@ export async function createEditorHarness(options: {
     configurationListeners: [] as Array<(event: any) => void>,
     providers: [] as string[],
     tabGroups: undefined as any[] | undefined,
+    errors: [] as string[],
+    dialogResults: [] as Array<unknown>,
+    activeTextDocument: undefined as any,
+    createPanel: undefined as any,
+    openedDocuments: [] as string[],
+    sourceDocuments: new Map<string, any>(),
+    existingDocuments: [] as any[],
+    statError: undefined as Error | undefined,
+    statSize: undefined as number | undefined,
     warnings: [] as string[],
     warningChoice: options.warningChoice,
     commandError: undefined as Error | undefined,
