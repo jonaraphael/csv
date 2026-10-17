@@ -19,6 +19,15 @@ export function getActiveUntitledCsvEditor(): UntitledEditor | undefined {
   return Array.from(editors.values()).find(editor => editor.panel.active && !editor.document.isClosed);
 }
 
+export function saveActiveUntitledCsvEditor(): void {
+  const editor = getActiveUntitledCsvEditor();
+  if (!editor) {
+    return;
+  }
+  CsvEditorProvider.editors.find(controller => controller.getDocumentUri().toString() === editor.document.uri.toString())
+    ?.saveUntitledAfterCommit();
+}
+
 export async function openUntitledCsvEditor(document: vscode.TextDocument, viewColumn?: vscode.ViewColumn): Promise<void> {
   if (!extensionContext || document.isClosed || !isUntitledCsv(document) ||
     !vscode.workspace.getConfiguration('csv', document.uri).get<boolean>('enabled', true)) {
@@ -94,11 +103,16 @@ export function registerUntitledCsvEditors(context: vscode.ExtensionContext): vo
       setTimeout(() => {
         const replacement = vscode.workspace.textDocuments.find(candidate => candidate.uri.toString() === key && !candidate.isClosed);
         const editor = editors.get(key);
-        if (replacement && isUntitledCsv(replacement)) {
+        if (replacement) {
           if (editor) {
             editor.document = replacement;
             CsvEditorProvider.editors.filter(controller => controller.getDocumentUri().toString() === key)
-              .forEach(controller => controller.updateDocumentReference(replacement));
+              .forEach(controller => {
+                controller.updateDocumentReference(replacement);
+                if (!isUntitledCsv(replacement)) {
+                  controller.revealSourceAfterCommit('language');
+                }
+              });
           }
           return;
         }
@@ -128,6 +142,7 @@ export function registerUntitledCsvEditors(context: vscode.ExtensionContext): vo
         return;
       }
       opened.clear();
+      editors.forEach((_editor, key) => opened.add(key));
       maybeOpen(vscode.window.activeTextEditor?.document);
     }),
     { dispose: () => {

@@ -1497,6 +1497,12 @@ document.addEventListener('keydown', e => {
     return;
   }
   const key = typeof e.key === 'string' ? e.key.toLowerCase() : '';
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && key === 's') {
+    e.preventDefault();
+    if (editingCell) { editingCell.blur(); }
+    vscode.postMessage({ type: 'save' });
+    return;
+  }
   if ((e.ctrlKey || e.metaKey) && key === 'f') {
     e.preventDefault();
     openFindReplace(false);
@@ -1758,11 +1764,6 @@ document.addEventListener('keydown', e => {
     return;
   }
 
-  if (editingCell && ((e.ctrlKey || e.metaKey) && e.key === 's')) {
-    e.preventDefault();
-    editingCell.blur();
-    vscode.postMessage({ type: 'save' });
-  }
   if (editingCell && e.key === 'Enter') {
     e.preventDefault();
     if (e.shiftKey) {
@@ -2041,7 +2042,7 @@ window.addEventListener('message', event => {
   if (message.type === 'prepareViewRefresh') {
     if (editingCell) editingCell.blur();
     persistState();
-    vscode.postMessage({ type: 'viewRefreshReady' });
+    vscode.postMessage({ type: 'viewRefreshReady', requestId: message.requestId });
   } else if(message.type === 'focus'){
     if (anchorCell) {
       try { anchorCell.focus({ preventScroll: true }); } catch { try { anchorCell.focus(); } catch {} }
@@ -2200,3 +2201,6 @@ document.addEventListener('keydown', e => {
     clearSelection();
   }
 });
+
+// The host may be waiting to commit a draft while this webview initializes.
+vscode.postMessage({ type: 'webviewReady' });

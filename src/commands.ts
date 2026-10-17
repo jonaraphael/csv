@@ -2,6 +2,7 @@ import { getFonts } from 'font-list';
 import * as vscode from 'vscode';
 import { CsvEditorProvider } from './CsvEditorProvider';
 import { toggleCsvEditor } from './editor-switch';
+import { saveActiveUntitledCsvEditor } from './untitled-editors';
 
 function displaySeparator(separator: string): string {
   return separator === '\t' ? '\\t' : separator;
@@ -23,6 +24,7 @@ async function toggleBooleanConfig(key: string, defaultVal: boolean, messagePref
 export function registerCsvCommands(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('csv.toggleEditor', toggleCsvEditor),
+    vscode.commands.registerCommand('csv.saveUntitled', saveActiveUntitledCsvEditor),
     vscode.commands.registerCommand('csv.toggleExtension', () =>
       toggleBooleanConfig('enabled', true, 'CSV extension')
     ),

@@ -27,6 +27,7 @@ const state = {
   subscriptions: [] as any[],
   tokens: [] as any[],
   failResolve: false,
+  saveRequests: 0,
   commands: new Map<string, (...args: any[]) => any>(),
   information: [] as string[]
 };
@@ -42,6 +43,7 @@ class FakeProvider {
       document,
       getDocumentUri: () => controller.document.uri,
       isActive: () => panel.active,
+      saveUntitledAfterCommit: () => { state.saveRequests += 1; },
       updateDocumentReference: (replacement: any) => { controller.document = replacement; },
       revealSourceAfterCommit: async () => {
         await vscode.window.showTextDocument(controller.document, { viewColumn: panel.viewColumn });
@@ -154,6 +156,7 @@ beforeEach(() => {
   state.subscriptions = [];
   state.tokens = [];
   state.failResolve = false;
+  state.saveRequests = 0;
   state.commands.clear();
   state.information = [];
   FakeProvider.editors = [];
@@ -275,6 +278,17 @@ describe('untitled CSV document ownership and routing', () => {
     assert.strictEqual(state.panels[0].disposed, true);
     assert.strictEqual(FakeProvider.currentActive, undefined);
     assert.strictEqual(getActiveUntitledCsvEditor(), undefined);
+  });
+
+  it('routes the registered untitled Save As action to the active owner controller', async () => {
+    activate(document());
+    await settle();
+    registerCsvCommands({ subscriptions: [] } as any);
+    await state.commands.get('csv.saveUntitled')!();
+    assert.strictEqual(state.saveRequests, 1);
+    await toggleCsvEditor();
+    await state.commands.get('csv.saveUntitled')!();
+    assert.strictEqual(state.saveRequests, 1, 'source/native save owns text editor focus');
   });
 
   it('requires saving before encoding commands can close or reopen an untitled owner', async () => {

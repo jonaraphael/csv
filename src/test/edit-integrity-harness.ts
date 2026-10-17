@@ -26,8 +26,14 @@ const vscodeStub = {
       return { document };
     }
   },
+  commands: {
+    executeCommand: async (command: string) => {
+      activeHarness.nativeSaveCommands.push(command);
+      return activeHarness.document.save();
+    }
+  },
   workspace: {
-    getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'maxFileSizeMB' ? 0 : fallback }),
+    getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'maxFileSizeMB' ? 0 : key === 'enabled' ? activeHarness?.enabled ?? true : fallback }),
     applyEdit: (edit: { text: string }) => activeHarness.applyEdit(edit.text),
     onDidChangeTextDocument: (listener: (event: unknown) => void) => {
       activeHarness.changeListeners.push(listener);
@@ -56,6 +62,10 @@ export async function createEditorHarness(options: {
   header?: boolean;
   remote?: boolean;
   untitled?: boolean;
+  fileName?: string;
+  separatorOverride?: string;
+  cancelInitialization?: boolean;
+  closeDuringInitialization?: boolean;
 } = {}) {
   const separator = options.separator ?? ',';
   let text = Papa.unparse(options.rows ?? [['name', 'value'], ['one', 'two']], { delimiter: separator });
@@ -69,9 +79,10 @@ export async function createEditorHarness(options: {
   const messages: any[] = [];
   const delayedEdits: Array<() => void> = [];
   let deferEdits = false;
-  const uri = new TestUri(`/test/data.${separator === '\t' ? 'tsv' : 'csv'}`, options.untitled ? 'untitled' : options.remote ? 'vscode-remote' : 'file');
+  const uri = new TestUri(options.fileName ?? `/test/data.${separator === '\t' ? 'tsv' : 'csv'}`, options.untitled ? 'untitled' : options.remote ? 'vscode-remote' : 'file');
   const document = {
     uri,
+    isClosed: false,
     languageId: separator === '\t' ? 'tsv' : 'csv',
     version: 1,
     getText: () => text,
@@ -94,6 +105,9 @@ export async function createEditorHarness(options: {
     }
   };
   await CsvEditorProvider.setHeaderForUri(context as any, uri as any, options.header ?? true);
+  if (options.separatorOverride) {
+    await CsvEditorProvider.setSeparatorForUri(context as any, uri as any, options.separatorOverride);
+  }
   const panel = {
     active: true,
     visible: true,
@@ -118,8 +132,26 @@ export async function createEditorHarness(options: {
   };
   const harness = {
     document, panel, messages, changeListeners, saveListeners,
+    enabled: true,
     sourceReveals: [] as string[],
-    revealSourceAfterCommit() { controller.revealSourceAfterCommit(); },
+    nativeSaveCommands: [] as string[],
+    get controllerCount() { return CsvEditorProvider.editors.length; },
+    get activeController() { return CsvEditorProvider.currentActive; },
+    saveUntitledAfterCommit() { controller.saveUntitledAfterCommit(); },
+    requestViewCommit() { controller.requestViewCommit(); },
+    revealSourceAfterCommit() { harness.enabled = false; controller.revealSourceAfterCommit(); },
+    setEnabled(enabled: boolean) { harness.enabled = enabled; controller.refresh(); },
+    getCurrentSeparator() { return controller.getCurrentSeparator() as string; },
+    rebindDocument(languageId: string) {
+      const replacement = {
+        ...document, languageId,
+        get version() { return document.version; },
+        getText: () => text,
+        get lineCount() { return text.split(/\r\n|\n|\r/).length; }
+      };
+      controller.updateDocumentReference(replacement);
+      return replacement;
+    },
     get diskText() { return diskText; },
     get pendingEdits() { return delayedEdits.length; },
     deferEdits() { deferEdits = true; },
@@ -149,7 +181,14 @@ export async function createEditorHarness(options: {
     rows() { return Papa.parse<string[]>(text, { delimiter: separator }).data; }
   };
   activeHarness = harness;
-  await new CsvEditorProvider(context as any).resolveCustomTextEditor(document as any, panel as any, { isCancellationRequested: false } as any);
+  const token = { isCancellationRequested: false };
+  const initializing = new CsvEditorProvider(context as any).resolveCustomTextEditor(document as any, panel as any, token as any);
+  if (options.cancelInitialization || options.closeDuringInitialization) {
+    token.isCancellationRequested = !!options.cancelInitialization;
+    document.isClosed = !!options.closeDuringInitialization;
+    panel.dispose();
+  }
+  await initializing;
   controller = CsvEditorProvider.currentActive;
   return harness;
 }
