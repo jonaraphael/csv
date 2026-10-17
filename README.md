@@ -31,11 +31,12 @@ Working with CSV files shouldn’t be a chore. With CSV, you get:
 - **Interactive Editing:** Two modes — type to start a quick edit, or press Enter/double‑click for detail edit. Changes commit to the document when focus leaves the cell or CSV view; unsaved changes remain visible when you switch tabs.
 - **Smart Resizing:** Automatic calculation of column widths for improved readability.
 - **Dynamic Color Coding:** Visual cues based on data type help you quickly identify numbers, dates, booleans, and more (with opt‑in cool palette and theme-foreground mode settings).
-- **Sticky Headers:** Keep column titles in view as you scroll through large datasets.
+- **Serial Index Column:** Right-click a serial index cell or its top-left corner and choose **Hide serial index column** for that file. Restore it with **CSV: Toggle Serial Index Column** in the Command Palette.
+- **Sticky Headers:** Keep column titles in view as you scroll through large datasets. Right-click a cell in the first visible row and choose **Use first row as header** or **Treat first row as data** to toggle the header for that file. With leading metadata rows hidden, this applies to the first visible row; the CSV contents stay unchanged.
 - **Enhanced Keyboard Navigation:** Navigate cells with arrows and Tab/Shift+Tab; quick edits can commit with arrow keys; `Ctrl/Cmd + A` selects all; `Ctrl/Cmd + C` copies selection.
 - **Advanced Multi-Cell Selection:** Easily select and copy blocks of data, then paste them elsewhere as properly formatted CSV.
 - **Add/Delete Columns:** Right-click any cell to add a column left or right, or remove the selected column.
-- **Add/Delete Rows:** Insert above/below or remove the selected row via context menu.
+- **Add/Delete Rows:** Insert above/below or remove the selected row via context menu. Menus open toward available space and remain scrollable in small editor panes.
 - **Edit Empty CSVs:** Create or open an empty CSV file and start typing immediately.
 - **Column Sorting:** Right-click a header and choose A–Z or Z–A.
 - **Custom Font Controls:** Choose a font family and optional font-size override, or inherit VS Code defaults.

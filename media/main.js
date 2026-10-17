@@ -95,6 +95,8 @@ const setZoomScale = (nextScale, persist = true) => {
     return false;
   }
   zoomScale = normalized;
+  const menu = document.getElementById('contextMenu');
+  if (menu) { menu.style.display = 'none'; }
   document.body.style.fontSize = `${Math.max(1, BASE_FONT_SIZE_PX * zoomScale)}px`;
   applySizeStateToRenderedCells();
   if (persist) {
@@ -178,14 +180,14 @@ const restoreState = () => {
       }
     }
     if (typeof st.anchorRow === 'number' && typeof st.anchorCol === 'number') {
-      const tag = (hasHeader && st.anchorRow === 0 ? 'th' : 'td');
-      let sel = table.querySelector(`${tag}[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"]`);
+      const selector = `td[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"], th[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"]`;
+      let sel = table.querySelector(selector);
       // If not present yet (due to chunking), load chunks until available or exhausted
       if (!sel && typeof window.__csvLoadNextChunk === 'function') {
         let guard = 100; // prevent infinite loops
         while (!sel && typeof window.__csvLoadNextChunk === 'function' && guard-- > 0) {
           if (!window.__csvLoadNextChunk()) break;
-          sel = table.querySelector(`${tag}[data-row="${st.anchorRow}"][data-col="${st.anchorCol}"]`);
+          sel = table.querySelector(selector);
         }
       }
       applySizeStateToRenderedCells();
@@ -367,6 +369,7 @@ const handleZoomWheel = e => {
 window.addEventListener('wheel', handleZoomWheel, { passive: false });
 
 const hasHeader = document.querySelector('thead') !== null;
+const headerEnabled = root?.dataset?.headerenabled === '1';
 const getCellCoords = cell => ({ row: parseInt(cell.getAttribute('data-row')), col: parseInt(cell.getAttribute('data-col')) });
 const clearSelection = () => { currentSelection.forEach(c => c.classList.remove('selected')); currentSelection = []; };
 const contextMenu = document.getElementById('contextMenu');
@@ -386,6 +389,32 @@ const showContextMenu = (x, y, row, col) => {
     d.style.margin = '1px 0';
     contextMenu.appendChild(d);
   };
+  if (col === -1) {
+    item('Hide serial index column', () => {
+      const anchor = anchorCell ? getCellCoords(anchorCell) : null;
+      if (!anchor || !Number.isFinite(anchor.col) || anchor.col < 0) {
+        const row = anchor && Number.isFinite(anchor.row) ? anchor.row : Number(root?.dataset?.firstrow || '0');
+        const surviving = table.querySelector(`td[data-row="${row}"][data-col="0"], th[data-row="${row}"][data-col="0"]`);
+        if (surviving) {
+          clearSelection();
+          surviving.classList.add('selected');
+          currentSelection.push(surviving);
+          anchorCell = surviving;
+          rangeEndCell = surviving;
+        }
+      }
+      persistState();
+      vscode.postMessage({ type: 'setSerialIndex', enabled: false });
+    });
+    divider();
+  }
+  if (row === Number(root?.dataset?.firstrow)) {
+    item(headerEnabled ? 'Treat first row as data' : 'Use first row as header', () => {
+      persistState();
+      vscode.postMessage({ type: 'setHeader', enabled: !headerEnabled });
+    });
+    divider();
+  }
   item('Cut', () => copySelectionToClipboard(true));
   item('Copy', () => copySelectionToClipboard());
   item('Paste', () => pasteFromClipboard());
@@ -460,10 +489,25 @@ const showContextMenu = (x, y, row, col) => {
     });
   }
 
-  contextMenu.style.left = x + 'px';
-  contextMenu.style.top = y + 'px';
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const marginX = Math.min(8, viewportWidth / 4);
+  const marginY = Math.min(8, viewportHeight / 4);
+  contextMenu.style.maxWidth = `${Math.max(0, viewportWidth - 2 * marginX)}px`;
+  contextMenu.style.maxHeight = `${Math.max(0, viewportHeight - 2 * marginY)}px`;
+  // Measure all actions at their natural width, bounded by the viewport, before placing.
+  contextMenu.style.left = `${marginX}px`;
+  contextMenu.style.top = `${marginY}px`;
   contextMenu.style.display = 'block';
+  contextMenu.scrollTop = 0;
+  contextMenu.scrollLeft = 0;
+  const { width, height } = contextMenu.getBoundingClientRect();
+  const left = x + width <= viewportWidth - marginX ? x : x - width;
+  const top = y + height <= viewportHeight - marginY ? y : y - height;
+  contextMenu.style.left = `${clamp(left, marginX, Math.max(marginX, viewportWidth - marginX - width))}px`;
+  contextMenu.style.top = `${clamp(top, marginY, Math.max(marginY, viewportHeight - marginY - height))}px`;
 };
+window.addEventListener('resize', () => { contextMenu.style.display = 'none'; });
 
 const getElementTarget = target => {
   if (target instanceof Element) return target;
@@ -753,12 +797,13 @@ table.addEventListener('contextmenu', e => {
   if (!target || editingCell) return;
   const colAttr = target.getAttribute('data-col');
   const rowAttr = target.getAttribute('data-row');
-  const col = parseInt(colAttr);
+  const serialCorner = target.hasAttribute('data-serial-index');
+  const col = serialCorner ? -1 : parseInt(colAttr);
   const row = parseInt(rowAttr);
-  if ((isNaN(col) || col === -1) && (isNaN(row) || row === -1)) return;
+  if (!serialCorner && (isNaN(col) || col === -1) && (isNaN(row) || row === -1)) return;
   e.preventDefault();
-  lastContextIsHeader = target.tagName === 'TH';
-  showContextMenu(e.pageX, e.pageY, row, col);
+  lastContextIsHeader = target.tagName === 'TH' && !serialCorner;
+  showContextMenu(e.clientX, e.clientY, row, col);
 });
 
 table.addEventListener('mousedown', e => {

@@ -148,6 +148,28 @@ class CsvEditorController {
         case 'save':
           await this.handleSave();
           break;
+        case 'setHeader': {
+          if (typeof e.enabled === 'boolean') {
+            const uri = this.document.uri;
+            await CsvEditorProvider.setHeaderForUri(this.context, uri, e.enabled);
+            CsvEditorProvider.editors
+              .filter(editor => editor.getDocumentUri().toString() === uri.toString())
+              .forEach(editor => editor.refresh());
+          }
+          break;
+        }
+        case 'setSerialIndex': {
+          if (typeof e.enabled === 'boolean') {
+            const uri = this.getDocumentUri();
+            if (CsvEditorProvider.getSerialIndexForUri(this.context, uri) !== e.enabled) {
+              await CsvEditorProvider.setSerialIndexForUri(this.context, uri, e.enabled);
+              CsvEditorProvider.editors
+                .filter(editor => editor.getDocumentUri().toString() === uri.toString())
+                .forEach(editor => editor.refresh());
+            }
+          }
+          break;
+        }
         case 'copyCells':
           await this.copyCells(e.matrix, e.startRow, e.startCol, e.cut === true);
           break;
@@ -1451,6 +1473,8 @@ class CsvEditorController {
       extraColumnColorCss: colorCss,
       nextChunkStart,
       hasRemoteChunks,
+      headerEnabled: treatHeader,
+      firstVisibleRow: Math.min(Math.max(0, hiddenRows), data.length),
       mouseWheelZoomEnabled,
       mouseWheelZoomInvert
     });
@@ -1563,7 +1587,7 @@ class CsvEditorController {
     if (headerFlag) {
       tableHtml += `<thead><tr>${
         addSerialIndex
-          ? `<th tabindex="0" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: #888;"></th>`
+          ? `<th tabindex="0" data-serial-index="1" style="min-width: ${serialIndexWidthCh}ch; max-width: ${serialIndexWidthCh}ch; border: 1px solid ${isDark ? '#555' : '#ccc'}; background-color: ${isDark ? '#1e1e1e' : '#ffffff'}; color: #888;"></th>`
           : ''
       }`;
       for (let i = 0; i < numColumns; i++) {
@@ -1703,10 +1727,12 @@ class CsvEditorController {
     extraColumnColorCss: string;
     nextChunkStart: number;
     hasRemoteChunks: boolean;
+    headerEnabled: boolean;
+    firstVisibleRow: number;
     mouseWheelZoomEnabled: boolean;
     mouseWheelZoomInvert: boolean;
   }): string {
-    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, mouseWheelZoomEnabled, mouseWheelZoomInvert } = args;
+    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, headerEnabled, firstVisibleRow, mouseWheelZoomEnabled, mouseWheelZoomInvert } = args;
     const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
     // Build script URI using file path for compatibility (older APIs may lack Uri.joinPath)
     const scriptUri = webview.asWebviewUri(
@@ -1909,7 +1935,7 @@ class CsvEditorController {
         font-size: inherit;
       }
       #findReplaceWidget .fr-overflow-item:hover { background: rgba(255,255,255,0.05); }
-      #contextMenu { position: absolute; display: none; background: ${isDark ? '#2d2d2d' : '#ffffff'}; border: 1px solid ${isDark ? '#555' : '#ccc'}; z-index: 10000; font-family: ${this.escapeCss(fontFamily)}; font-size: inherit; }
+      #contextMenu { position: fixed; display: none; width: max-content; box-sizing: border-box; overflow: auto; overflow-wrap: anywhere; background: ${isDark ? '#2d2d2d' : '#ffffff'}; border: 1px solid ${isDark ? '#555' : '#ccc'}; z-index: 10000; font-family: ${this.escapeCss(fontFamily)}; font-size: inherit; }
       #contextMenu div { padding: 4px 12px; cursor: pointer; }
       #contextMenu div:hover { background: ${isDark ? '#3d3d3d' : '#eeeeee'}; }
 
@@ -1918,7 +1944,7 @@ class CsvEditorController {
     </style>
   </head>
   <body>
-    <div id="csv-root" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
+    <div id="csv-root" class="table-container" data-firstrow="${firstVisibleRow}" data-headerenabled="${headerEnabled ? '1' : '0'}" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
       ${tableHtml}
     </div>
 

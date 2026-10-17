@@ -46,6 +46,7 @@ function createWebview() {
     contains(other: Element): boolean { return other === this || this.children.some(child => child.contains(other)); }
     focus() { document.activeElement = this; }
     scrollIntoView() {}
+    getBoundingClientRect() { return { width: 200, height: 300 }; }
     matches(selector: string): boolean {
       if (selector.includes(' ')) {
         const [ancestor, child] = selector.split(' ');
@@ -102,6 +103,8 @@ function createWebview() {
   }
   const window = new Element('WINDOW') as any;
   window.getComputedStyle = () => ({ fontSize: '14px' });
+  window.innerWidth = 1024;
+  window.innerHeight = 768;
   const messages: any[] = [];
   const context = vm.createContext({
     document, window, Element, Node: Element,
@@ -191,7 +194,7 @@ describe('Shipped webview clipboard interactions', () => {
     const second = view.cell(1, 1, 'two');
     view.select(1, 0, 1, 1);
     view.dispatch(second, 'mousedown', { button: 2 });
-    view.dispatch(second, 'contextmenu', { pageX: 10, pageY: 20 });
+    view.dispatch(second, 'contextmenu', { clientX: 10, clientY: 20 });
     const menu = view.byId('contextMenu');
     for (const label of ['Copy', 'Cut', 'Paste']) {
       const item = menu.children.find(child => child.textContent === label)!;
