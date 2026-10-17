@@ -468,10 +468,25 @@ const showContextMenu = (x, y, row, col) => {
     });
   }
 
-  contextMenu.style.left = x + 'px';
-  contextMenu.style.top = y + 'px';
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const marginX = Math.min(8, viewportWidth / 4);
+  const marginY = Math.min(8, viewportHeight / 4);
+  contextMenu.style.maxWidth = `${Math.max(0, viewportWidth - 2 * marginX)}px`;
+  contextMenu.style.maxHeight = `${Math.max(0, viewportHeight - 2 * marginY)}px`;
+  // Measure all actions at their natural width, bounded by the viewport, before placing.
+  contextMenu.style.left = `${marginX}px`;
+  contextMenu.style.top = `${marginY}px`;
   contextMenu.style.display = 'block';
+  contextMenu.scrollTop = 0;
+  contextMenu.scrollLeft = 0;
+  const { width, height } = contextMenu.getBoundingClientRect();
+  const left = x + width <= viewportWidth - marginX ? x : x - width;
+  const top = y + height <= viewportHeight - marginY ? y : y - height;
+  contextMenu.style.left = `${clamp(left, marginX, Math.max(marginX, viewportWidth - marginX - width))}px`;
+  contextMenu.style.top = `${clamp(top, marginY, Math.max(marginY, viewportHeight - marginY - height))}px`;
 };
+window.addEventListener('resize', () => { contextMenu.style.display = 'none'; });
 
 const getElementTarget = target => {
   if (target instanceof Element) return target;
@@ -766,7 +781,7 @@ table.addEventListener('contextmenu', e => {
   if ((isNaN(col) || col === -1) && (isNaN(row) || row === -1)) return;
   e.preventDefault();
   lastContextIsHeader = target.tagName === 'TH';
-  showContextMenu(e.pageX, e.pageY, row, col);
+  showContextMenu(e.clientX, e.clientY, row, col);
 });
 
 table.addEventListener('mousedown', e => {
