@@ -126,6 +126,7 @@ export async function createEditorHarness(options: {
   rows?: string[][];
   separator?: string;
   header?: boolean;
+  serialIndex?: boolean;
   remote?: boolean;
   frozenRows?: number;
   frozenColumns?: number;
@@ -178,6 +179,7 @@ export async function createEditorHarness(options: {
     }
   };
   await CsvEditorProvider.setHeaderForUri(context as any, uri as any, options.header ?? true);
+  await CsvEditorProvider.setSerialIndexForUri(context as any, uri as any, options.serialIndex ?? true);
   if (options.separatorOverride) {
     await CsvEditorProvider.setSeparatorForUri(context as any, uri as any, options.separatorOverride);
   }

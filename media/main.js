@@ -422,6 +422,25 @@ const showContextMenu = (x, y, row, col) => {
     d.style.margin = '1px 0';
     contextMenu.appendChild(d);
   };
+  if (col === -1) {
+    item('Hide serial index column', () => {
+      const anchor = anchorCell ? getCellCoords(anchorCell) : null;
+      if (!anchor || !Number.isFinite(anchor.col) || anchor.col < 0) {
+        const row = anchor && Number.isFinite(anchor.row) ? anchor.row : Number(root?.dataset?.firstrow || '0');
+        const surviving = table.querySelector(`td[data-row="${row}"][data-col="0"], th[data-row="${row}"][data-col="0"]`);
+        if (surviving) {
+          clearSelection();
+          surviving.classList.add('selected');
+          currentSelection.push(surviving);
+          anchorCell = surviving;
+          rangeEndCell = surviving;
+        }
+      }
+      persistState();
+      vscode.postMessage({ type: 'setSerialIndex', enabled: false });
+    });
+    divider();
+  }
   if (row === Number(root?.dataset?.firstrow)) {
     item(headerEnabled ? 'Treat first row as data' : 'Use first row as header', () => {
       persistState();
@@ -867,11 +886,12 @@ table.addEventListener('contextmenu', e => {
   if (!target || editingCell) return;
   const colAttr = target.getAttribute('data-col');
   const rowAttr = target.getAttribute('data-row');
-  const col = parseInt(colAttr);
+  const serialCorner = target.hasAttribute('data-serial-index');
+  const col = serialCorner ? -1 : parseInt(colAttr);
   const row = parseInt(rowAttr);
-  if ((isNaN(col) || col === -1) && (isNaN(row) || row === -1)) return;
+  if (!serialCorner && (isNaN(col) || col === -1) && (isNaN(row) || row === -1)) return;
   e.preventDefault();
-  lastContextIsHeader = target.tagName === 'TH';
+  lastContextIsHeader = target.tagName === 'TH' && !serialCorner;
   showContextMenu(e.clientX, e.clientY, row, col);
 });
 
