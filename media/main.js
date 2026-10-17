@@ -33,6 +33,7 @@ let editingCell = null, originalCellValue = "";
 let editMode = null; // 'quick' | 'detail' | null
 const DRAG_THRESHOLD_PX = 4;
 const RESIZE_HANDLE_PX = 6;
+const COLUMN_RESIZE_HANDLE_PX = 10;
 let resizeState = null;
 let reorderState = null;
 
@@ -45,6 +46,9 @@ dragIndicator.style.zIndex = '20000';
 dragIndicator.style.background = '#0a84ff';
 dragIndicator.style.display = 'none';
 document.body.appendChild(dragIndicator);
+const automaticColumnSizes = new WeakMap();
+let persistedColumnSizes = {};
+try { persistedColumnSizes = JSON.parse(root?.dataset?.columnsizes || '{}'); } catch {}
 let columnSizeState = {};
 let rowSizeState = {};
 
@@ -61,13 +65,22 @@ const normalizeSizeState = (raw, minSize) => {
   return out;
 };
 
+const setRenderedColumnWidth = (cell, px) => {
+  if (!automaticColumnSizes.has(cell)) {
+    automaticColumnSizes.set(cell, { width: cell.style.width, minWidth: cell.style.minWidth, maxWidth: cell.style.maxWidth });
+  }
+  cell.style.width = `${px}px`;
+  cell.style.minWidth = `${px}px`;
+  cell.style.maxWidth = `${px}px`;
+};
+const persistColumnSizes = () => {
+  vscode.postMessage({ type: 'columnSizesChanged', columnSizes: { ...columnSizeState } });
+};
 const applySizeStateToRenderedCells = () => {
   for (const [col, width] of Object.entries(columnSizeState)) {
     const px = Math.max(40, Math.round(Number(width)));
     table.querySelectorAll(`[data-col="${col}"]`).forEach(cell => {
-      cell.style.width = `${px}px`;
-      cell.style.minWidth = `${px}px`;
-      cell.style.maxWidth = `${px}px`;
+      setRenderedColumnWidth(cell, px);
     });
   }
   for (const [row, height] of Object.entries(rowSizeState)) {
@@ -153,7 +166,7 @@ const restoreState = () => {
     const st = vscode.getState() || {};
     const restoredZoom = parsePositiveNumber(st.zoomScale);
     setZoomScale(restoredZoom ?? 1, false);
-    columnSizeState = normalizeSizeState(st.columnSizes, 40);
+    columnSizeState = normalizeSizeState(st.columnSizes ?? persistedColumnSizes, 40);
     rowSizeState = normalizeSizeState(st.rowSizes, getMinRowHeight());
     applySizeStateToRenderedCells();
     if (typeof st.scrollX === 'number' && scrollContainer) {
@@ -561,13 +574,18 @@ const getRowDropTarget = clientY => {
 };
 const getResizeEdgeInfo = (target, e) => {
   if (!target) return null;
-  if (isColumnHeaderCell(target)) {
-    const col = parseInt(target.getAttribute('data-col') || 'NaN', 10);
-    if (!Number.isNaN(col)) {
-      const rect = target.getBoundingClientRect();
-      const edgeDelta = rect.right - e.clientX;
-      if (edgeDelta >= 0 && edgeDelta <= RESIZE_HANDLE_PX) {
-        return { axis: 'column', index: col, rect };
+  const coords = getDataCellCoords(target);
+  if (coords) {
+    const rect = target.getBoundingClientRect();
+    const rightDistance = rect.right - e.clientX;
+    if (rightDistance >= 0 && rightDistance <= COLUMN_RESIZE_HANDLE_PX) {
+      return { axis: 'column', index: coords.col, rect };
+    }
+    const leftDistance = e.clientX - rect.left;
+    if (coords.col > 0 && leftDistance >= 0 && leftDistance <= COLUMN_RESIZE_HANDLE_PX) {
+      const previous = getRenderedCellByCoords(coords.row, coords.col - 1);
+      if (previous) {
+        return { axis: 'column', index: coords.col - 1, rect: previous.getBoundingClientRect() };
       }
     }
   }
@@ -587,17 +605,14 @@ const applyColumnWidth = (col, widthPx) => {
   const width = Math.max(40, Math.round(widthPx));
   columnSizeState[String(col)] = width;
   table.querySelectorAll(`[data-col="${col}"]`).forEach(cell => {
-    cell.style.width = `${width}px`;
-    cell.style.minWidth = `${width}px`;
-    cell.style.maxWidth = `${width}px`;
+    setRenderedColumnWidth(cell, width);
   });
 };
 const resetColumnWidth = col => {
   delete columnSizeState[String(col)];
   table.querySelectorAll(`[data-col="${col}"]`).forEach(cell => {
-    cell.style.width = '';
-    cell.style.minWidth = '';
-    cell.style.maxWidth = '';
+    const automatic = automaticColumnSizes.get(cell);
+    if (automatic) Object.assign(cell.style, automatic);
   });
 };
 const applyRowHeight = (row, heightPx) => {
@@ -700,6 +715,7 @@ const onGlobalDragMove = e => {
 };
 const onGlobalDragEnd = () => {
   if (resizeState) {
+    if (resizeState.axis === 'column') persistColumnSizes();
     resizeState = null;
     table.style.cursor = '';
     persistState();
@@ -2022,6 +2038,7 @@ table.addEventListener('dblclick', e => {
     e.stopPropagation();
     if (edge.axis === 'column') {
       resetColumnWidth(edge.index);
+      persistColumnSizes();
     } else {
       resetRowHeight(edge.index);
     }
