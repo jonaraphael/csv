@@ -79,8 +79,16 @@ describe('Provider system clipboard integration', () => {
   it('clears cut cells in one batch only after the clipboard write succeeds', async () => {
     const editor = await createEditor('one,two\nthree,four');
     let finishWrite: () => void = () => {};
-    writeClipboard = async () => { await new Promise<void>(resolve => { finishWrite = resolve; }); editor.events.push('write'); };
+    let signalWriteStarted: () => void = () => {};
+    const writeStarted = new Promise<void>(resolve => { signalWriteStarted = resolve; });
+    writeClipboard = async () => {
+      const pendingWrite = new Promise<void>(resolve => { finishWrite = resolve; });
+      signalWriteStarted();
+      await pendingWrite;
+      editor.events.push('write');
+    };
     const cut = editor.receive({ type: 'copyCells', matrix: [['one', 'two']], startRow: 0, startCol: 0, cut: true });
+    await writeStarted;
     assert.strictEqual(editor.text, 'one,two\nthree,four');
     finishWrite();
     await cut;
