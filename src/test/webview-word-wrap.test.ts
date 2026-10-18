@@ -1,11 +1,56 @@
 import assert from 'assert';
+import fs from 'fs';
 import { describe, it } from 'node:test';
 import { createEditorHarness, createWebviewDom } from './edit-integrity-harness';
 
 const paint = (view: ReturnType<typeof createWebviewDom>) =>
   new Promise<void>(resolve => view.window.requestAnimationFrame(() => resolve()));
 
+const setWrap = (view: ReturnType<typeof createWebviewDom>, enabled: boolean) =>
+  view.window.dispatchEvent(new view.window.MessageEvent('message', { data: { type: 'setWordWrap', enabled } }));
+
 describe('Word wrap display toggle', () => {
+  it('contributes mutually exclusive icon actions immediately beside the table/text switch', () => {
+    const manifest = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+    const actions = manifest.contributes.menus['editor/title'];
+    const mode = actions.find((entry: any) => entry.command === 'csv.toggleEditor');
+    for (const [command, condition] of [['csv.enableWordWrap', '!csv.wordWrapEnabled'], ['csv.disableWordWrap', 'csv.wordWrapEnabled']]) {
+      const action = actions.find((entry: any) => entry.command === command);
+      const contribution = manifest.contributes.commands.find((entry: any) => entry.command === command);
+      assert.strictEqual(action.group, 'navigation@2');
+      assert.strictEqual(mode.group, 'navigation@1');
+      assert.ok(action.when.endsWith(` && ${condition}`));
+      assert.match(action.when, /activeCustomEditorId == csv\.editor/);
+      assert.match(action.when, /activeWebviewPanelId == csv\.untitledEditor/);
+      assert.strictEqual(contribution.icon, '$(word-wrap)');
+      assert.ok(manifest.activationEvents.includes(`onCommand:${command}`));
+    }
+  });
+
+  it('routes title actions to the active table and follows restored state across view changes', async () => {
+    const host = await createEditorHarness();
+    try {
+      host.registerCommands();
+      await host.commands.get('csv.enableWordWrap')!();
+      assert.deepStrictEqual(host.messages.at(-1), { type: 'setWordWrap', enabled: true });
+      await host.receive({ type: 'wordWrapChanged', enabled: true });
+      const context = () => host.contextUpdates.at(-1);
+      assert.deepStrictEqual(context(), ['csv.wordWrapEnabled', true]);
+      await host.receive({ type: 'wordWrapChanged', enabled: 'false' });
+      assert.deepStrictEqual(context(), ['csv.wordWrapEnabled', true]);
+      await host.view(false, true);
+      const cursor = host.messages.length;
+      await host.commands.get('csv.disableWordWrap')!();
+      assert.strictEqual(host.messages.length, cursor, 'an inactive table cannot be changed by a title action');
+      await host.receive({ type: 'wordWrapChanged', enabled: false });
+      await host.view(true, true);
+      assert.deepStrictEqual(context(), ['csv.wordWrapEnabled', false]);
+      await host.commands.get('csv.disableWordWrap')!();
+      assert.deepStrictEqual(host.messages.at(-1), { type: 'setWordWrap', enabled: false });
+      assert.strictEqual(host.document.version, 1);
+    } finally { host.dispose(); }
+  });
+
   for (const separator of [',', '\t']) {
     it(`preserves a selected range and full clipboard values (${JSON.stringify(separator)})`, async () => {
       const value = 'complete value\n' + 'long text '.repeat(200);
@@ -17,19 +62,22 @@ describe('Word wrap display toggle', () => {
         view.window.editingTestApi.selectRange({ row: 1, col: 0 }, { row: 2, col: 1 });
         const selection = () => Array.from(view.window.document.querySelectorAll('.selected'));
         const before = selection();
-        const button = view.window.document.getElementById('toggleWordWrap');
-        assert.strictEqual(button.title, 'Disable word wrap');
-        button.click();
-        assert.strictEqual(button.title, 'Enable word wrap');
-        assert.strictEqual(button.getAttribute('aria-pressed'), 'false');
+        view.window.dispatchEvent(new view.window.Event('focus'));
+        await paint(view);
+        assert.deepStrictEqual(selection(), before, 'returning from a native title action must retain the live range');
+        assert.ok(view.window.document.getElementById('csv-root').classList.contains('csv-cutoff'));
+        assert.strictEqual(view.window.document.querySelector('#csvViewToolbar, #toggleWordWrap'), null, 'display control lives in the native title bar');
+        setWrap(view, true);
+        setWrap(view, false);
+        assert.strictEqual((view.state() as any).wordWrapEnabled, false);
         assert.deepStrictEqual(selection(), before);
         assert.strictEqual(view.window.document.activeElement, view.cell(1, 0));
         assert.strictEqual(view.cell(1, 0).textContent, value);
         view.cell(1, 0).dispatchEvent(new view.window.Event('copy', { bubbles: true, cancelable: true }));
         const copied = JSON.parse(JSON.stringify(view.messages.find(message => message.type === 'copyCells').matrix));
         assert.deepStrictEqual(copied, [[value, 'two'], ['three', 'four']]);
-        button.click();
-        assert.strictEqual(button.getAttribute('aria-pressed'), 'true');
+        setWrap(view, true);
+        assert.strictEqual((view.state() as any).wordWrapEnabled, true);
         assert.deepStrictEqual(selection(), before);
         assert.strictEqual(host.document.version, 1);
       } finally { view.close(); host.dispose(); }
@@ -45,12 +93,8 @@ describe('Word wrap display toggle', () => {
       view.start(cell);
       cell.textContent = 'unsaved draft\nwith a second line';
       view.caret(cell.firstChild, 4);
-      const button = view.window.document.getElementById('toggleWordWrap');
       const cursor = view.messages.length;
-      const down = new view.window.MouseEvent('mousedown', { button: 0, bubbles: true, cancelable: true });
-      button.dispatchEvent(down);
-      assert.strictEqual(down.defaultPrevented, true);
-      button.click();
+      setWrap(view, true);
       await paint(view);
       assert.strictEqual(view.window.document.activeElement, cell);
       assert.ok(cell.classList.contains('editing'));
@@ -62,25 +106,20 @@ describe('Word wrap display toggle', () => {
     } finally { view.close(); host.dispose(); }
   });
 
-  it('restores cutoff and manual sizes without treating toolbar keys as grid navigation', async () => {
+  it('restores a file’s wrap choice and manual sizes', async () => {
     const host = await createEditorHarness();
     const view = createWebviewDom(host.panel.webview.html, {
-      wordWrapEnabled: false, columnSizes: { 0: 150 }, rowSizes: { 1: 32 }, anchorRow: 1, anchorCol: 0
+      wordWrapEnabled: true, columnSizes: { 0: 150 }, rowSizes: { 1: 32 }, anchorRow: 1, anchorCol: 0
     });
     try {
       await paint(view);
-      assert.ok(view.window.document.getElementById('csv-root').classList.contains('csv-cutoff'));
+      assert.ok(!view.window.document.getElementById('csv-root').classList.contains('csv-cutoff'));
       const cell = view.cell();
       assert.strictEqual(cell.style.width, '150px');
       assert.strictEqual(cell.style.height, '32px');
-      const button = view.window.document.getElementById('toggleWordWrap');
-      button.focus();
-      button.dispatchEvent(new view.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
-      assert.strictEqual(view.window.document.activeElement, button);
-      assert.ok(cell.classList.contains('selected'));
-      button.click();
+      setWrap(view, false);
       const state = view.state() as any;
-      assert.strictEqual(state.wordWrapEnabled, true);
+      assert.strictEqual(state.wordWrapEnabled, false);
       assert.strictEqual(state.columnSizes[0], 150);
       assert.strictEqual(state.rowSizes[1], 32);
     } finally { view.close(); host.dispose(); }
@@ -116,8 +155,8 @@ describe('Word wrap display toggle', () => {
       const target = view.cell(40, 0);
       view.window.editingTestApi.setSingleSelection(target);
       await paint(view);
-      for (let i = 0; i < 2; i++) {
-        view.window.document.getElementById('toggleWordWrap').click();
+      for (const enabled of [true, false]) {
+        setWrap(view, enabled);
         await paint(view);
         const rect = target.getBoundingClientRect();
         assert.ok(target.classList.contains('selected'));

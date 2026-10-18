@@ -68,14 +68,10 @@ let persistedColumnSizes = {};
 try { persistedColumnSizes = JSON.parse(root?.dataset?.columnsizes || '{}'); } catch {}
 let columnSizeState = {};
 let rowSizeState = {};
-let wordWrapEnabled = true;
-const wordWrapButton = document.getElementById('toggleWordWrap');
+let wordWrapEnabled = false;
 const applyWordWrapMode = () => {
   root?.classList.toggle('csv-cutoff', !wordWrapEnabled);
-  if (wordWrapButton) {
-    wordWrapButton.setAttribute('aria-pressed', String(wordWrapEnabled));
-    wordWrapButton.title = wordWrapEnabled ? 'Disable word wrap' : 'Enable word wrap';
-  }
+  vscode.postMessage({ type: 'wordWrapChanged', enabled: wordWrapEnabled });
 };
 
 const normalizeSizeState = (raw, minSize) => {
@@ -258,24 +254,20 @@ const scheduleCellReveal = (cell, center = false) => {
   });
 };
 
-wordWrapButton?.addEventListener('mousedown', event => {
-  // A display-only toggle must not blur a live edit or move its text caret.
-  if (event.button === 0) event.preventDefault();
-});
-wordWrapButton?.addEventListener('click', () => {
+const setWordWrap = enabled => {
   const selectedCell = editingCell || rangeEndCell || anchorCell;
-  wordWrapEnabled = !wordWrapEnabled;
+  wordWrapEnabled = enabled;
   applyWordWrapMode();
   window.csvFrozenPanes?.layout();
   if (selectedCell) scheduleCellReveal(selectedCell);
   persistState();
-});
+};
 
 const restoreState = () => {
-  if (document.activeElement?.closest?.('#filterStatus, #csvViewToolbar')) return;
+  if (document.activeElement?.closest?.('#filterStatus')) return;
   try {
     const st = vscode.getState() || {};
-    wordWrapEnabled = st.wordWrapEnabled !== false;
+    wordWrapEnabled = st.wordWrapEnabled === true;
     applyWordWrapMode();
     const restoredZoom = parsePositiveNumber(st.zoomScale);
     setZoomScale(restoredZoom ?? 1, false);
@@ -438,15 +430,20 @@ if (scrollContainer) {
 }
 
 // Persist on blur/visibility change and restore on focus/visibility
+const restoreRecreatedView = () => {
+  // A live DOM already owns its range and caret; a snapshot only has its anchor.
+  if (anchorCell?.isConnected || editingCell) return;
+  try { restoreState(); } catch {}
+};
 window.addEventListener('blur', () => { persistState(); }, { passive: true });
 window.addEventListener('focus', () => {
-  setTimeout(() => { try { restoreState(); } catch {} }, 0);
+  setTimeout(restoreRecreatedView, 0);
 }, { passive: true });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
     persistState();
   } else if (document.visibilityState === 'visible') {
-    setTimeout(() => { try { restoreState(); } catch {} }, 0);
+    setTimeout(restoreRecreatedView, 0);
   }
 });
 
@@ -1294,7 +1291,7 @@ const isFindWidgetTarget = target => {
   const el = getElementTarget(target);
   return !!(el && el.closest('#findReplaceWidget'));
 };
-const isGridControlTarget = target => isFindWidgetTarget(target) || !!getElementTarget(target)?.closest('#filterStatus, #csvViewToolbar');
+const isGridControlTarget = target => isFindWidgetTarget(target) || !!getElementTarget(target)?.closest('#filterStatus');
 const preventPendingGridAction = event => {
   if (!filterSnapshotPending || isGridControlTarget(event.target)) return;
   event.preventDefault();
@@ -2265,7 +2262,9 @@ const copySelectionToClipboard = (cut = false) => {
 
 window.addEventListener('message', event => {
   const message = event.data;
-  if (message.type === 'prepareViewRefresh') {
+  if (message.type === 'setWordWrap') {
+    if (typeof message.enabled === 'boolean') setWordWrap(message.enabled);
+  } else if (message.type === 'prepareViewRefresh') {
     if (editingCell) { editingCell.blur(); }
     persistState();
     vscode.postMessage({ type: 'viewRefreshReady', requestId: message.requestId, session: filterSession, filterDraft: window.csvColumnFilters?.captureDraft() });
@@ -2280,7 +2279,7 @@ window.addEventListener('message', event => {
     const cell = table.querySelector(`[data-row="${message.row}"][data-col="${message.col}"]`);
     if (message.retry && cell && !editingCell) { editCell(cell, undefined, 'detail'); }
   } else if(message.type === 'focus'){
-    if (document.activeElement?.closest?.('#filterStatus, #csvViewToolbar')) return;
+    if (document.activeElement?.closest?.('#filterStatus')) return;
     if (anchorCell) {
       try { anchorCell.focus({ preventScroll: true }); } catch { try { anchorCell.focus(); } catch {} }
     } else {
@@ -2404,7 +2403,7 @@ window.addEventListener('message', event => {
 
 // After initial restoreState, if there's a pending edit request, perform it
 const maybeResumePendingEdit = () => {
-  if (document.activeElement?.closest?.('#filterStatus, #csvViewToolbar')) return;
+  if (document.activeElement?.closest?.('#filterStatus')) return;
   try {
     const st = vscode.getState() || {};
     if (st && typeof st.anchorRow === 'number' && typeof st.anchorCol === 'number' && st.pendingEdit === 'detail') {

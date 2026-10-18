@@ -129,7 +129,7 @@ describe('Resize boundary event hit testing', () => {
     it(`resizes a cutoff column when fractional border paint rounds into its neighbor (header ${header})`, async () => {
       const view = await fixture(header);
       try {
-        view.window.document.getElementById('toggleWordWrap').click();
+        view.window.dispatchEvent(new view.window.MessageEvent('message', { data: { type: 'setWordWrap', enabled: false } }));
         const first = view.cell(0, 0), next = view.cell(0, 1);
         view.fixed.set(first, { left: 30, right: 130.359, top: 0, bottom: 30, width: 100.359, height: 30 });
         view.fixed.set(next, { left: 130.359, right: 147.359, top: 0, bottom: 30, width: 17, height: 30 });

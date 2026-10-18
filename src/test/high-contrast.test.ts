@@ -16,6 +16,7 @@ Module.prototype.require = function (id: string) {
   if (id === 'vscode') {
     return {
       ColorThemeKind: kinds,
+      commands: { executeCommand: async () => {} },
       window: { activeColorTheme: theme },
       Uri: { file: (filePath: string) => ({ fsPath: filePath, toString: () => `test-resource:${filePath}` }) },
       workspace: {

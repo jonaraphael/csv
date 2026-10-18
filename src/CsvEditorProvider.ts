@@ -112,6 +112,7 @@ class CsvEditorController {
   private separatorCache: { version: number; configKey: string; separator: string } | undefined;
   private isDiffContext = false;
   private currentHeader = false;
+  private wordWrapEnabled = false;
   private chunkRenderState: ChunkRenderState | undefined;
   private currentFilterView: FilterRender | undefined;
   private latestFilterRevision = 0;
@@ -148,6 +149,7 @@ class CsvEditorController {
       this.resolveDraftCommitWaiters(false);
       if (CsvEditorProvider.currentActive === this) {
         CsvEditorProvider.currentActive = undefined;
+        void vscode.commands.executeCommand('setContext', 'csv.wordWrapEnabled', false);
       }
     });
     if (_token.isCancellationRequested) { return; }
@@ -180,6 +182,7 @@ class CsvEditorController {
 
     if (webviewPanel.active) {
       CsvEditorProvider.currentActive = this;
+      this.updateWordWrapContext();
     }
     void this.warnAboutPossibleDecoding().catch(error => {
       console.warn('CSV: Encoding warning action failed', error);
@@ -199,12 +202,21 @@ class CsvEditorController {
         }
         e.webviewPanel.webview.postMessage({ type: 'focus' });
         CsvEditorProvider.currentActive = this;
+        this.updateWordWrapContext();
       } else if (CsvEditorProvider.currentActive === this) {
         CsvEditorProvider.currentActive = undefined;
+        void vscode.commands.executeCommand('setContext', 'csv.wordWrapEnabled', false);
       }
     });
 
     webviewPanel.webview.onDidReceiveMessage(e => {
+      if (e.type === 'wordWrapChanged') {
+        if (typeof e.enabled === 'boolean') {
+          this.wordWrapEnabled = e.enabled;
+          this.updateWordWrapContext();
+        }
+        return;
+      }
       if (e.type === 'filterDraftChanged') {
         if (e.session === this.filterSession) { this.draftActivityRevision += 1; }
         return;
@@ -1018,6 +1030,16 @@ class CsvEditorController {
 
   public getCurrentFrozenPanes(): FrozenPanes {
     return CsvEditorProvider.getFrozenPanesForUri(this.context, this.document.uri, this.currentHeader);
+  }
+
+  private updateWordWrapContext(): void {
+    if (this.isActive()) {
+      void vscode.commands.executeCommand('setContext', 'csv.wordWrapEnabled', this.wordWrapEnabled);
+    }
+  }
+
+  public setWordWrap(enabled: boolean): void {
+    void this.currentWebviewPanel?.webview.postMessage({ type: 'setWordWrap', enabled });
   }
 
   public async setFrozenPanes(change: Partial<FrozenPanes>): Promise<void> {
@@ -2530,16 +2552,8 @@ class CsvEditorController {
         --csv-menu-background: #2d2d2d;
         --csv-menu-hover-background: #3d3d3d;
       }
-      body { font-family: ${this.escapeCss(fontFamily)}; font-size: ${fontSize}px; margin: 0; padding: 0; user-select: none; display: flex; flex-direction: column; height: 100vh; }
-      #csvViewToolbar { display: flex; flex: 0 0 32px; box-sizing: border-box; justify-content: flex-end; align-items: center; padding: 2px 8px; border-bottom: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); background: var(--vscode-editor-background, ${isDark ? '#1e1e1e' : '#ffffff'}); }
-      #toggleWordWrap { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 2px 6px; font: 12px var(--vscode-font-family, system-ui); color: var(--vscode-foreground, ${isDark ? '#d4d4d4' : '#333'}); background: transparent; border: 1px solid var(--vscode-contrastBorder, transparent); border-radius: 3px; cursor: pointer; }
-      #toggleWordWrap:hover { background: var(--vscode-toolbar-hoverBackground, ${isDark ? '#333' : '#eee'}); }
-      #toggleWordWrap[aria-pressed="true"] { background: var(--vscode-toolbar-activeBackground, ${isDark ? '#333' : '#eee'}); }
-      #toggleWordWrap:focus-visible { outline: 2px solid var(--vscode-focusBorder, #007fd4); outline-offset: -2px; }
-      #toggleWordWrap svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; }
-      #toggleWordWrap .wrap-off, #toggleWordWrap[aria-pressed="false"] .wrap-on { display: none; }
-      #toggleWordWrap[aria-pressed="false"] .wrap-off { display: inline; }
-      .table-container { overflow: auto; flex: 1; min-height: 0; }
+      body { font-family: ${this.escapeCss(fontFamily)}; font-size: ${fontSize}px; margin: 0; padding: 0; user-select: none; }
+      .table-container { overflow: auto; height: 100vh; }
       table { border-collapse: collapse; width: max-content; }
       th, td { padding: ${cellPadding}px 8px; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); font-size: inherit; }
       th { position: static; background-color: var(--csv-header-background, ${isDark ? '#1e1e1e' : '#ffffff'}); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -2553,7 +2567,7 @@ class CsvEditorController {
       .csv-link:hover { color: var(--csv-link-hover-color, ${isDark ? '#8ecfff' : '#0044aa'}); }
       #findReplaceWidget {
         position: fixed;
-        top: 44px;
+        top: 12px;
         right: 20px;
         width: 592px;
         min-width: 592px;
@@ -2777,13 +2791,7 @@ class CsvEditorController {
     <link rel="stylesheet" href="${contrastStyleUri}">
   </head>
   <body>
-    <div id="csvViewToolbar" role="toolbar" aria-label="Table display">
-      <button id="toggleWordWrap" type="button" aria-label="Word wrap" aria-pressed="true" title="Disable word wrap">
-        <svg aria-hidden="true" viewBox="0 0 16 16"><path class="wrap-on" d="M1 3h13M1 7h10a3 3 0 0 1 0 6H7m2-2-2 2 2 2M1 11h3"/><path class="wrap-off" d="M1 4h13M1 8h13m-3-3 3 3-3 3M1 12h5"/></svg>
-        <span>Word wrap</span>
-      </button>
-    </div>
-    <div id="csv-root" data-headerenabled="${headerEnabled ? '1' : '0'}" data-roworder="${this.escapeHtml(JSON.stringify(visibleRowIds))}" data-filtered="${filterMetadata.filters.length ? '1' : '0'}" data-filterepoch="0" data-frozenrows="${frozenPanes.rows}" data-frozencolumns="${frozenPanes.columns}" data-firstrow="${firstVisibleRow}" data-realrowcount="${realRowCount}" data-columnsizes="${this.escapeHtml(JSON.stringify(columnSizes))}" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
+    <div id="csv-root" data-headerenabled="${headerEnabled ? '1' : '0'}" data-roworder="${this.escapeHtml(JSON.stringify(visibleRowIds))}" data-filtered="${filterMetadata.filters.length ? '1' : '0'}" data-filterepoch="0" data-frozenrows="${frozenPanes.rows}" data-frozencolumns="${frozenPanes.columns}" data-firstrow="${firstVisibleRow}" data-realrowcount="${realRowCount}" data-columnsizes="${this.escapeHtml(JSON.stringify(columnSizes))}" class="table-container csv-cutoff" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
       <div id="filterStatus" aria-label="Column filters"${filterMetadata.filters.length ? '' : ' hidden'}></div>
       ${tableHtml}
     </div>

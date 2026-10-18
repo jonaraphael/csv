@@ -72,6 +72,8 @@ export function registerCsvCommands(context: vscode.ExtensionContext, synchroniz
     vscode.commands.registerCommand('csv.changeFrozenColumns', () => changeFrozenPaneCount('columns')),
     vscode.commands.registerCommand('csv.openLargeFilePreview', openLargeFilePreview),
     vscode.commands.registerCommand('csv.toggleEditor', () => toggleCsvEditor(prepareEditorRouting)),
+    vscode.commands.registerCommand('csv.enableWordWrap', () => CsvEditorProvider.getActiveProvider()?.setWordWrap(true)),
+    vscode.commands.registerCommand('csv.disableWordWrap', () => CsvEditorProvider.getActiveProvider()?.setWordWrap(false)),
     vscode.commands.registerCommand('csv.compareFilesAsTable', (resource?: vscode.Uri, selected?: vscode.Uri[]) => compareFilesAsTable(context, resource, selected)),
     vscode.commands.registerCommand('csv.saveUntitled', saveActiveUntitledCsvEditor),
     vscode.commands.registerCommand('csv.toggleExtension', () => {

@@ -56,6 +56,7 @@ const vscode = {
   },
   commands: {
     executeCommand: async (...args: any[]) => {
+      if (args[0] === 'setContext') { return; }
       state.commands.push(args);
       await state.executeCommand(...args);
     }
