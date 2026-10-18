@@ -14,6 +14,7 @@ Module.prototype.require = function (id: string) {
   if (id === 'vscode') {
     return {
       ColorThemeKind: kinds, window: { activeColorTheme: theme },
+      commands: { executeCommand: async () => {} },
       Uri: { file: (filePath: string) => ({ fsPath: filePath, toString: () => `test:${filePath}` }) },
       workspace: {
         getConfiguration: () => ({ get: (key: string, fallback: unknown) => key === 'maxFileSizeMB' ? 0 : (settings[key] ?? fallback) }),

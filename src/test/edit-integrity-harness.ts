@@ -65,6 +65,10 @@ const vscodeStub = {
       return { dispose() {} };
     },
     executeCommand: async (name: string, ...args: unknown[]) => {
+      if (name === 'setContext') {
+        activeHarness.contextUpdates.push(args);
+        return;
+      }
       activeHarness.executedCommands.push({ name, args });
       activeHarness.recordedCommands.push([name, ...args]);
       if (activeHarness.commandError) {
@@ -250,6 +254,7 @@ export async function createEditorHarness(options: {
     closeResult: true,
     commands: new Map<string, (...args: any[]) => unknown>(),
     executedCommands: [] as Array<{ name: string; args: unknown[] }>,
+    contextUpdates: [] as unknown[][],
     registerCommands() {
       const { registerCsvCommands } = require('../commands') as typeof import('../commands');
       registerCsvCommands(context as any);
@@ -335,11 +340,11 @@ export async function createEditorHarness(options: {
   return harness;
 }
 
-export function createWebviewDom(html: string) {
+export function createWebviewDom(html: string, initialState: unknown = {}) {
   const dom = new JSDOM(html, { runScripts: 'outside-only', pretendToBeVisual: true });
   const { window } = dom;
   const messages: any[] = [];
-  let state: unknown = {};
+  let state: unknown = initialState;
   window.acquireVsCodeApi = () => ({
     postMessage: (message: unknown) => messages.push(message),
     getState: () => state,

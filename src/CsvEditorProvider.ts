@@ -112,6 +112,7 @@ class CsvEditorController {
   private separatorCache: { version: number; configKey: string; separator: string } | undefined;
   private isDiffContext = false;
   private currentHeader = false;
+  private wordWrapEnabled = false;
   private chunkRenderState: ChunkRenderState | undefined;
   private currentFilterView: FilterRender | undefined;
   private latestFilterRevision = 0;
@@ -148,6 +149,7 @@ class CsvEditorController {
       this.resolveDraftCommitWaiters(false);
       if (CsvEditorProvider.currentActive === this) {
         CsvEditorProvider.currentActive = undefined;
+        void vscode.commands.executeCommand('setContext', 'csv.wordWrapEnabled', false);
       }
     });
     if (_token.isCancellationRequested) { return; }
@@ -180,6 +182,7 @@ class CsvEditorController {
 
     if (webviewPanel.active) {
       CsvEditorProvider.currentActive = this;
+      this.updateWordWrapContext();
     }
     void this.warnAboutPossibleDecoding().catch(error => {
       console.warn('CSV: Encoding warning action failed', error);
@@ -199,12 +202,21 @@ class CsvEditorController {
         }
         e.webviewPanel.webview.postMessage({ type: 'focus' });
         CsvEditorProvider.currentActive = this;
+        this.updateWordWrapContext();
       } else if (CsvEditorProvider.currentActive === this) {
         CsvEditorProvider.currentActive = undefined;
+        void vscode.commands.executeCommand('setContext', 'csv.wordWrapEnabled', false);
       }
     });
 
     webviewPanel.webview.onDidReceiveMessage(e => {
+      if (e.type === 'wordWrapChanged') {
+        if (typeof e.enabled === 'boolean') {
+          this.wordWrapEnabled = e.enabled;
+          this.updateWordWrapContext();
+        }
+        return;
+      }
       if (e.type === 'filterDraftChanged') {
         if (e.session === this.filterSession) { this.draftActivityRevision += 1; }
         return;
@@ -1018,6 +1030,16 @@ class CsvEditorController {
 
   public getCurrentFrozenPanes(): FrozenPanes {
     return CsvEditorProvider.getFrozenPanesForUri(this.context, this.document.uri, this.currentHeader);
+  }
+
+  private updateWordWrapContext(): void {
+    if (this.isActive()) {
+      void vscode.commands.executeCommand('setContext', 'csv.wordWrapEnabled', this.wordWrapEnabled);
+    }
+  }
+
+  public setWordWrap(enabled: boolean): void {
+    void this.currentWebviewPanel?.webview.postMessage({ type: 'setWordWrap', enabled });
   }
 
   public async setFrozenPanes(change: Partial<FrozenPanes>): Promise<void> {
@@ -2536,6 +2558,7 @@ class CsvEditorController {
       th, td { padding: ${cellPadding}px 8px; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); font-size: inherit; }
       th { position: static; background-color: var(--csv-header-background, ${isDark ? '#1e1e1e' : '#ffffff'}); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
       td { overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
+      #csv-root.csv-cutoff td:not(.editing) { overflow: hidden !important; white-space: nowrap !important; overflow-wrap: normal !important; text-overflow: ellipsis; }
       td.selected, th.selected { background-color: var(--csv-selection-background, ${isDark ? '#333333' : '#cce0ff'}) !important; }
       td.editing, th.editing { overflow: visible !important; white-space: pre-wrap !important; overflow-wrap: anywhere !important; max-width: none !important; }
       .highlight { background-color: var(--csv-find-highlight-background, ${isDark ? '#2a2a2a' : '#fefefe'}) !important; }
@@ -2731,6 +2754,17 @@ class CsvEditorController {
         box-sizing: border-box;
         pointer-events: none;
       }
+      /* An outline paints the divider outside clipped cell contents. Keep its
+         specificity below the high-contrast selection and Find outlines. */
+      .csv-cutoff .csv-frozen-row {
+        outline: 2px solid var(--csv-contrast-border, var(--csv-table-border, ${isDark ? '#555' : '#ccc'}));
+        outline-offset: -1px;
+      }
+      /* Retain state outline colors while covering the outer seam in HC themes. */
+      .csv-cutoff .csv-frozen-row:is(.selected, .highlight, .active-match) {
+        outline-width: 2px;
+        outline-offset: -1px;
+      }
       #csv-root .csv-frozen-row.selected, #csv-root .csv-frozen-column.selected {
         background-image: linear-gradient(var(--vscode-editor-selectionBackground, ${isDark ? '#333333' : '#cce0ff'}), var(--vscode-editor-selectionBackground, ${isDark ? '#333333' : '#cce0ff'}));
       }
@@ -2757,7 +2791,7 @@ class CsvEditorController {
     <link rel="stylesheet" href="${contrastStyleUri}">
   </head>
   <body>
-    <div id="csv-root" data-headerenabled="${headerEnabled ? '1' : '0'}" data-roworder="${this.escapeHtml(JSON.stringify(visibleRowIds))}" data-filtered="${filterMetadata.filters.length ? '1' : '0'}" data-filterepoch="0" data-frozenrows="${frozenPanes.rows}" data-frozencolumns="${frozenPanes.columns}" data-firstrow="${firstVisibleRow}" data-realrowcount="${realRowCount}" data-columnsizes="${this.escapeHtml(JSON.stringify(columnSizes))}" class="table-container" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
+    <div id="csv-root" data-headerenabled="${headerEnabled ? '1' : '0'}" data-roworder="${this.escapeHtml(JSON.stringify(visibleRowIds))}" data-filtered="${filterMetadata.filters.length ? '1' : '0'}" data-filterepoch="0" data-frozenrows="${frozenPanes.rows}" data-frozencolumns="${frozenPanes.columns}" data-firstrow="${firstVisibleRow}" data-realrowcount="${realRowCount}" data-columnsizes="${this.escapeHtml(JSON.stringify(columnSizes))}" class="table-container csv-cutoff" data-sepcode="${sepCode}" data-fontsize="${fontSize}" data-wheelzoomenabled="${mouseWheelZoomEnabled ? '1' : '0'}" data-wheelzoominvert="${mouseWheelZoomInvert ? '1' : '0'}" data-nextchunkstart="${nextChunkStart >= 0 ? nextChunkStart : ''}" data-hasmorechunks="${hasRemoteChunks ? '1' : '0'}">
       <div id="filterStatus" aria-label="Column filters"${filterMetadata.filters.length ? '' : ' hidden'}></div>
       ${tableHtml}
     </div>

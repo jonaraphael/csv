@@ -18,6 +18,7 @@ Module.prototype.require = function (id: string) {
       env: { clipboard: { writeText: (text: string) => writeClipboard(text), readText: () => readClipboard() } },
       window: { activeColorTheme: { kind: 1 }, showErrorMessage: (message: string) => errors.push(message) },
       ColorThemeKind: { Dark: 1 },
+      commands: { executeCommand: async () => {} },
       workspace: {
         getConfiguration: () => ({ get: (key: string, fallback: any) => key === 'maxFileSizeMB' ? 0 : fallback }),
         onDidChangeTextDocument: () => ({ dispose() {} }),

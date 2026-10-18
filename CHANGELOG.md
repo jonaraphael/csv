@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.5.1] - Unreleased
+
+- Add an icon-only word-wrap action beside the editor title bar’s table/text switch. Default each file to single-line cutoff at the automatic width cap, with Enable/Disable Word Wrap shown on hover. Preserve selection, viewport visibility, live drafts and manual sizes; copying and saving retain complete values.
+- Keep fractional column borders resizable without widening the grab area.
+
 ## [1.4.2] - 2026-10-17
 
 This release combines the editing, navigation, and table tools developed since the public 1.3 release.

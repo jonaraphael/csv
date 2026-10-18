@@ -8,7 +8,7 @@
     "type": "git",
     "url": "https://github.com/jonaraphael/csv.git"
   },
-  "version": "1.4.2",
+  "version": "1.5.1",
   "engines": {
     "vscode": "^1.70.0",
     "node": ">=14"
@@ -37,7 +37,9 @@
     "onCommand:csv.changeEncoding",
     "onCommand:csv.toggleClickableLinks",
     "onCommand:csv.changeFrozenRows",
-    "onCommand:csv.changeFrozenColumns"
+    "onCommand:csv.changeFrozenColumns",
+    "onCommand:csv.enableWordWrap",
+    "onCommand:csv.disableWordWrap"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -80,6 +82,16 @@
         "command": "csv.toggleEditor",
         "title": "CSV: Switch Between Table and Text",
         "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "csv.enableWordWrap",
+        "title": "CSV: Enable Word Wrap",
+        "icon": "$(word-wrap)"
+      },
+      {
+        "command": "csv.disableWordWrap",
+        "title": "CSV: Disable Word Wrap",
+        "icon": "$(word-wrap)"
       },
       {
         "command": "csv.compareFilesAsTable",
@@ -141,18 +153,36 @@
         {
           "command": "csv.toggleEditor",
           "when": "!isInDiffEditor && (activeCustomEditorId == csv.editor || activeWebviewPanelId == csv.untitledEditor || (activeEditor == workbench.editors.files.textFileEditor && resourceScheme != untitled && resourceExtname =~ /\\.(csv|tsv|tab|psv)$/i) || (activeEditor == workbench.editors.textResourceEditor && resourceScheme == untitled && editorLangId =~ /^(csv|tsv)$/))",
-          "group": "navigation"
+          "group": "navigation@1"
+        },
+        {
+          "command": "csv.enableWordWrap",
+          "when": "!isInDiffEditor && (activeCustomEditorId == csv.editor || activeWebviewPanelId == csv.untitledEditor) && !csv.wordWrapEnabled",
+          "group": "navigation@2"
+        },
+        {
+          "command": "csv.disableWordWrap",
+          "when": "!isInDiffEditor && (activeCustomEditorId == csv.editor || activeWebviewPanelId == csv.untitledEditor) && csv.wordWrapEnabled",
+          "group": "navigation@2"
         },
         {
           "command": "csv.saveUntitled",
           "when": "activeWebviewPanelId == csv.untitledEditor",
-          "group": "navigation@1"
+          "group": "navigation@3"
         }
       ],
       "commandPalette": [
         {
           "command": "csv.saveUntitled",
           "when": "activeWebviewPanelId == csv.untitledEditor"
+        },
+        {
+          "command": "csv.enableWordWrap",
+          "when": "!isInDiffEditor && (activeCustomEditorId == csv.editor || activeWebviewPanelId == csv.untitledEditor) && !csv.wordWrapEnabled"
+        },
+        {
+          "command": "csv.disableWordWrap",
+          "when": "!isInDiffEditor && (activeCustomEditorId == csv.editor || activeWebviewPanelId == csv.untitledEditor) && csv.wordWrapEnabled"
         }
       ],
       "explorer/context": [
