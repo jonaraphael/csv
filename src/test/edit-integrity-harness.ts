@@ -24,7 +24,15 @@ const vscodeStub = {
     replace(_uri: unknown, _range: unknown, text: string) { this.text = text; }
   },
   ColorThemeKind: { Dark: 1 },
+  StatusBarAlignment: { Right: 2 },
   window: {
+    createStatusBarItem: () => {
+      const item = { text: '', name: '', tooltip: '', visible: false, disposed: false,
+        show() { this.visible = true; }, hide() { this.visible = false; },
+        dispose() { this.disposed = true; this.visible = false; } };
+      activeHarness.statusBarItems.push(item);
+      return item;
+    },
     activeColorTheme: { kind: 1 },
     onDidChangeActiveTextEditor: () => ({ dispose() {} }),
     showTextDocument: async (document: any) => {
@@ -255,6 +263,7 @@ export async function createEditorHarness(options: {
     commands: new Map<string, (...args: any[]) => unknown>(),
     executedCommands: [] as Array<{ name: string; args: unknown[] }>,
     contextUpdates: [] as unknown[][],
+    statusBarItems: [] as Array<{ text: string; name: string; tooltip: string; visible: boolean; disposed: boolean }>,
     registerCommands() {
       const { registerCsvCommands } = require('../commands') as typeof import('../commands');
       registerCsvCommands(context as any);

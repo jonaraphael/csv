@@ -68,9 +68,9 @@ describe('Default hidden rows', () => {
     assert.strictEqual(setting.default, 0);
     assert.strictEqual(setting.minimum, 0);
     assert.strictEqual(setting.scope, 'resource');
-    const readme = fs.readFileSync(path.join(process.cwd(), 'README.md'), 'utf8');
-    assert.ok(readme.includes('csv.defaultIgnoreRows'));
-    assert.ok(readme.includes('blank'));
-    assert.ok(readme.includes('explicit `0`'));
+    const guide = fs.readFileSync(path.join(process.cwd(), 'docs', 'user-guide.md'), 'utf8');
+    assert.ok(guide.includes('csv.defaultIgnoreRows'));
+    assert.ok(guide.includes('blank'));
+    assert.ok(guide.includes('explicit `0`'));
   });
 });

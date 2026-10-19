@@ -4,6 +4,7 @@ import * as path from 'path';
 import { parseClipboardMatrix, serializeClipboardMatrix } from './clipboard';
 import { ColumnFilter, normalizeColumnFilters, compileColumnFilters, visibleSourceRows, remapColumnFilters, getFilterOperatorChoices, validateColumnFilterInput, MAX_COLUMN_FILTERS, MAX_FILTER_VALUE_LENGTH } from './column-filters';
 import { FilterDataType, parseFilterDate } from './filter-values';
+import { NumericSelection, computeSelectionStatistics, formatSelectionStatistics, parseNumericSelection } from './selection-statistics';
 
 type FrozenPanes = { rows: number; columns: number };
 
@@ -121,6 +122,11 @@ class CsvEditorController {
   private filterSessionUri = '';
   private filterColumnsRevision = 0;
   private pendingFilterDraft: { uri: string; draft: FilterDraft } | undefined;
+  private numericSelection: NumericSelection | undefined;
+  private selectionStatusBar: vscode.StatusBarItem | undefined;
+  private selectionStatusText: string | undefined;
+  private selectionStatisticsVersion = -1;
+  private selectionData: { version: number; data: string[][] } | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -138,6 +144,9 @@ class CsvEditorController {
     // Register before remote stat/prompt awaits: a closed panel stays closed.
     webviewPanel.onDidDispose(() => {
       this.disposed = true;
+      this.selectionStatusBar?.dispose();
+      this.selectionStatusBar = undefined;
+      this.selectionData = undefined;
       changeDocumentSubscription?.dispose();
       saveDocumentSubscription?.dispose();
       CsvEditorProvider.editors = CsvEditorProvider.editors.filter(ed => ed !== this);
@@ -183,6 +192,7 @@ class CsvEditorController {
     if (webviewPanel.active) {
       CsvEditorProvider.currentActive = this;
       this.updateWordWrapContext();
+      this.updateSelectionStatusBar();
     }
     void this.warnAboutPossibleDecoding().catch(error => {
       console.warn('CSV: Encoding warning action failed', error);
@@ -203,10 +213,12 @@ class CsvEditorController {
         e.webviewPanel.webview.postMessage({ type: 'focus' });
         CsvEditorProvider.currentActive = this;
         this.updateWordWrapContext();
+        this.updateSelectionStatusBar();
       } else if (CsvEditorProvider.currentActive === this) {
         CsvEditorProvider.currentActive = undefined;
         void vscode.commands.executeCommand('setContext', 'csv.wordWrapEnabled', false);
       }
+      if (!e.webviewPanel.active) { this.selectionStatusBar?.hide(); }
     });
 
     webviewPanel.webview.onDidReceiveMessage(e => {
@@ -240,6 +252,12 @@ class CsvEditorController {
         return;
       }
       switch (e.type) {
+        case 'selectionChanged':
+          if (e.session === this.filterSession && e.filterEpoch === this.filterEpoch) {
+            this.numericSelection = parseNumericSelection(e.selection);
+            this.refreshSelectionStatistics(true);
+          }
+          break;
         case 'webviewReady': {
           if (this.viewCommitRequested) {
             this.postViewCommitRequest();
@@ -388,7 +406,10 @@ class CsvEditorController {
   private enqueueOperation(operation: () => void | Promise<void>): Promise<void> {
     // Event listeners are not awaited by VS Code. Serialize mutations, reads and
     // saves so every command sees the result of the preceding document edit.
-    this.pendingOperation = this.pendingOperation.then(operation).catch(error => {
+    this.pendingOperation = this.pendingOperation.then(async () => {
+      await operation();
+      this.refreshSelectionStatistics();
+    }).catch(error => {
       console.error('CSV: Editor operation failed', error);
     });
     return this.pendingOperation;
@@ -955,6 +976,7 @@ class CsvEditorController {
     this.currentFilterView = view;
     this.currentHeader = view.headerEnabled;
     this.filterEpoch = rawRevision;
+    this.resetSelectionStatistics(data);
     reply({});
   }
 
@@ -1036,6 +1058,49 @@ class CsvEditorController {
     if (this.isActive()) {
       void vscode.commands.executeCommand('setContext', 'csv.wordWrapEnabled', this.wordWrapEnabled);
     }
+  }
+
+  private resetSelectionStatistics(data: string[][]): void {
+    this.selectionData = { version: this.document.version, data };
+    this.numericSelection = undefined;
+    this.selectionStatusText = undefined;
+    this.selectionStatisticsVersion = -1;
+    this.selectionStatusBar?.hide();
+  }
+
+  private refreshSelectionStatistics(force = false): void {
+    if (this.disposed || (!force && this.selectionStatisticsVersion === this.document.version)) { return; }
+    this.selectionStatisticsVersion = this.document.version;
+    const view = this.currentFilterView;
+    if (!this.numericSelection || !view) {
+      this.selectionStatusText = undefined;
+    } else {
+      if (this.selectionData?.version !== this.document.version) {
+        this.selectionData = {
+          version: this.document.version,
+          data: this.trimTrailingEmptyRows(Papa.parse<string[]>(this.document.getText(), { delimiter: this.getSeparator() }).data)
+        };
+      }
+      const stats = computeSelectionStatistics(this.selectionData.data, this.numericSelection,
+        view.firstVisibleRow + (view.headerEnabled ? 1 : 0), view.filters.length ? view.visibleRowIds : undefined);
+      this.selectionStatusText = stats.count ? formatSelectionStatistics(stats) : undefined;
+    }
+    this.updateSelectionStatusBar();
+  }
+
+  private updateSelectionStatusBar(): void {
+    if (!this.isActive() || !this.selectionStatusText || this.disposed) {
+      this.selectionStatusBar?.hide();
+      return;
+    }
+    if (!this.selectionStatusBar) {
+      this.selectionStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+      this.selectionStatusBar.name = 'CSV Numeric Selection';
+      this.selectionStatusBar.tooltip = 'Sum, average, and count of selected numeric data cells. Headers, hidden rows, blanks, and text are excluded.';
+      this.context.subscriptions.push(this.selectionStatusBar);
+    }
+    this.selectionStatusBar.text = this.selectionStatusText;
+    this.selectionStatusBar.show();
   }
 
   public setWordWrap(enabled: boolean): void {
@@ -2181,6 +2246,7 @@ class CsvEditorController {
     this.filterEpoch = 0;
     this.filterSession = this.getNonce();
     this.filterSessionUri = this.document.uri.toString();
+    this.resetSelectionStatistics(data);
     const mouseWheelZoomEnabled = config.get<boolean>('mouseWheelZoom', true);
     const mouseWheelZoomInvert = config.get<boolean>('mouseWheelZoomInvert', false);
     const { tableHtml, chunksJson, colorCss, nextChunkStart, hasRemoteChunks } = view;
