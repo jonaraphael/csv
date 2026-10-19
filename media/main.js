@@ -465,7 +465,35 @@ window.addEventListener('wheel', handleZoomWheel, { passive: false });
 let hasHeader = document.querySelector('thead') !== null;
 let headerEnabled = root?.dataset?.headerenabled === '1';
 const getCellCoords = cell => ({ row: parseInt(cell.getAttribute('data-row')), col: parseInt(cell.getAttribute('data-col')) });
-const clearSelection = () => { currentSelection.forEach(c => c.classList.remove('selected')); currentSelection = []; };
+let numericSelectionScope = null;
+let selectionReportScheduled = false;
+const scheduleSelectionReport = () => {
+  if (selectionReportScheduled) return;
+  selectionReportScheduled = true;
+  requestAnimationFrame(() => {
+    selectionReportScheduled = false;
+    let selection = editingCell ? null : numericSelectionScope;
+    if (!selection && !editingCell) {
+      let minRow = Infinity, maxRow = -1, minCol = Infinity, maxCol = -1;
+      for (const cell of currentSelection) {
+        if (!cell.classList.contains('selected')) continue;
+        const { row, col } = getCellCoords(cell);
+        if (row < 0 || col < 0) continue;
+        minRow = Math.min(minRow, row); maxRow = Math.max(maxRow, row);
+        minCol = Math.min(minCol, col); maxCol = Math.max(maxCol, col);
+      }
+      selection = maxRow >= 0 && maxCol >= 0 ? { kind: 'cells', minRow, maxRow, minCol, maxCol } : null;
+    }
+    vscode.postMessage({ type: 'selectionChanged', selection, session: filterSession, filterEpoch });
+  });
+};
+const clearSelection = () => {
+  currentSelection.forEach(c => c.classList.remove('selected'));
+  currentSelection = [];
+  numericSelectionScope = null;
+  // Read the final selection after synchronous mouse/keyboard handlers finish.
+  scheduleSelectionReport();
+};
 const contextMenu = document.getElementById('contextMenu');
 
 /* ──────── UPDATED showContextMenu ──────── */
@@ -1163,6 +1191,7 @@ const selectRange = (start, end) => {
   clearSelection();
   const minRow = Math.min(start.row, end.row), maxRow = Math.max(start.row, end.row);
   const minCol = Math.min(start.col, end.col), maxCol = Math.max(start.col, end.col);
+  numericSelectionScope = { kind: 'cells', minRow, maxRow, minCol: Math.max(0, minCol), maxCol };
   const selectedRows = visibleRowOrder.length ? visibleRowOrder.filter(row => row >= minRow && row <= maxRow) : Array.from({ length: maxRow - minRow + 1 }, (_, index) => minRow + index);
   for (const r of selectedRows) {
     for(let c = minCol; c <= maxCol; c++){
@@ -1176,6 +1205,7 @@ const selectRange = (start, end) => {
 const selectFullColumnRange = (col1, col2) => {
   clearSelection();
   const minCol = Math.min(col1, col2), maxCol = Math.max(col1, col2);
+  numericSelectionScope = { kind: 'columns', minCol: Math.max(0, minCol), maxCol };
   table.querySelectorAll('tr').forEach(row => {
     Array.from(row.children).forEach(cell => {
       const cellCol = cell.getAttribute('data-col');
@@ -1189,6 +1219,7 @@ const selectFullColumnRange = (col1, col2) => {
 const selectFullRowRange = (row1, row2) => {
   clearSelection();
   const minRow = Math.min(row1, row2), maxRow = Math.max(row1, row2);
+  numericSelectionScope = { kind: 'rows', minRow, maxRow };
   table.querySelectorAll('tr').forEach(row => {
     Array.from(row.children).forEach(cell => {
       const r = cell.getAttribute('data-row');
@@ -1198,6 +1229,19 @@ const selectFullRowRange = (row1, row2) => {
     });
   });
 };
+
+// Newly loaded cells belong to an existing whole-column/table or range selection.
+window.addEventListener('csvChunkLoaded', () => {
+  const scope = numericSelectionScope;
+  if (!scope || editingCell) return;
+  table.querySelectorAll('td:not(.selected), th:not(.selected)').forEach(cell => {
+    const { row, col } = getCellCoords(cell);
+    if ('minRow' in scope && (row < scope.minRow || row > scope.maxRow)) return;
+    if ('minCol' in scope && (col < scope.minCol || col > scope.maxCol)) return;
+    cell.classList.add('selected');
+    currentSelection.push(cell);
+  });
+});
 
 const extendSelectionTo = target => {
   rangeEndCell = target;
@@ -2075,7 +2119,11 @@ document.addEventListener('paste', e => {
   });
 });
 
-const selectAllCells = () => { clearSelection(); document.querySelectorAll('td, th').forEach(cell => { cell.classList.add('selected'); currentSelection.push(cell); }); };
+const selectAllCells = () => {
+  clearSelection();
+  numericSelectionScope = { kind: 'all' };
+  table.querySelectorAll('td, th').forEach(cell => { cell.classList.add('selected'); currentSelection.push(cell); });
+};
 
 const setCursorToEnd = cell => {
   const range = document.createRange(); range.selectNodeContents(cell); range.collapse(false);
@@ -2184,6 +2232,8 @@ const editCell = (cell, event, mode = 'detail') => {
   cell.classList.remove('selected');
   originalCellValue = cell.textContent;
   editingCell = cell;
+  numericSelectionScope = null;
+  scheduleSelectionReport();
   vscode.postMessage({ type: 'cellEditStarted' });
   editMode = mode;
   cell.classList.add('editing');
@@ -2199,6 +2249,7 @@ const editCell = (cell, event, mode = 'detail') => {
     cell.removeAttribute('contenteditable');
     cell.classList.remove('editing');
     editingCell = null;
+    scheduleSelectionReport();
     editMode = null;
     cell.removeEventListener('blur', onBlurHandler);
   };

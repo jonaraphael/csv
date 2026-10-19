@@ -128,7 +128,7 @@ async function fixture(options: { separator?: string; rowCount?: number; columnC
     assert.ok(rect.left >= viewport.left + leftInset && rect.right <= viewport.right, `column ${target.getAttribute('data-col')} must remain in the usable viewport`);
   };
   return { host, window, container, table, messages, scrollCalls, focusCalls, cell, select, key, flush, finishSmooth, visible,
-    get state() { return state; }, get pendingSmooth() { return pendingSmooth; }, get frameCount() { return frames.size; },
+    get state() { return state; }, get pendingSmooth() { return pendingSmooth; },
     anchor: () => window.navigationTestApi.anchor(), endpoint: () => window.navigationTestApi.endpoint(),
     close: () => window.close() };
 }
@@ -157,11 +157,16 @@ describe('Keyboard navigation viewport reveal', () => {
     const view = await fixture();
     try {
       view.select(1, 0);
+      view.messages.length = 0;
       for (let column = 1; column <= 10; column++) { view.key('ArrowRight', { repeat: true }); }
       assert.strictEqual(view.window.document.activeElement, view.cell(1, 10));
-      assert.strictEqual(view.frameCount, 1, 'one pending reveal for the newest target');
+      assert.strictEqual(view.scrollCalls.length, 0, 'reveals wait for the next paint');
       view.flush();
-      assert.strictEqual(view.scrollCalls.length, 1);
+      assert.strictEqual(view.scrollCalls.length, 1, 'one reveal for the newest target');
+      const selections = view.messages.filter(message => message.type === 'selectionChanged');
+      assert.strictEqual(selections.length, 1, 'selection reporting also coalesces the burst');
+      assert.strictEqual(selections[0].selection.minCol, 10);
+      assert.strictEqual(selections[0].selection.maxCol, 10);
       view.visible(view.cell(1, 10));
       for (let column = 9; column >= 1; column--) {
         view.key('ArrowLeft', { repeat: true });

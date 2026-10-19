@@ -302,9 +302,9 @@ describe('single-view CSV table/text switching', () => {
     assert.ok(action.when.includes('!isInDiffEditor'));
     assert.ok(action.when.includes('resourceScheme != untitled'));
     assert.ok(!action.when.includes('workbench.editors.textEditor'));
-    const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
-    assert.ok(!readme.includes('Both representations may remain open'));
-    assert.ok(readme.includes('one representation remains'));
+    const guide = fs.readFileSync(path.join(root, 'docs', 'user-guide.md'), 'utf8');
+    assert.ok(!guide.includes('Both representations may remain open'));
+    assert.ok(guide.includes('one representation remains'));
   });
 });
 

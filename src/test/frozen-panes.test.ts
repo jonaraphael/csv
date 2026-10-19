@@ -340,11 +340,11 @@ describe('Frozen panes', () => {
 
   it('adds documented command contributions and opaque sticky theme surfaces', () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'));
-    const readme = fs.readFileSync(path.join(process.cwd(), 'README.md'), 'utf8');
+    const guide = fs.readFileSync(path.join(process.cwd(), 'docs', 'user-guide.md'), 'utf8');
     for (const command of ['csv.changeFrozenRows', 'csv.changeFrozenColumns']) {
       assert.ok(manifest.contributes.commands.some((item: any) => item.command === command));
       assert.ok(manifest.activationEvents.includes(`onCommand:${command}`));
-      assert.ok(readme.includes(command));
+      assert.ok(guide.includes(command));
     }
     const provider = fs.readFileSync(path.join(process.cwd(), 'src', 'CsvEditorProvider.ts'), 'utf8');
     assert.ok(provider.includes('background-color: var(--vscode-editor-background,'));
