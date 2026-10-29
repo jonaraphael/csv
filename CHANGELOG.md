@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.5.2] - 2026-10-28
+
+- Show Sum, Average, and Count for selected numeric cells in the VS Code status bar. Respect filters, hidden metadata, and headers; include matching rows beyond the rendered table in whole-column and whole-table totals. Refresh totals after committed edits and when switching editors.
+- Refresh the marketplace README around inspecting and fixing data, with the full command, setting, and compatibility reference moved to the user guide.
+
 ## [1.5.1] - 2026-10-17
 
 - Add an icon-only word-wrap action beside the editor title bar’s table/text switch. Default each file to single-line cutoff at the automatic width cap, with Enable/Disable Word Wrap shown on hover. Preserve selection, viewport visibility, live drafts and manual sizes; copying and saving retain complete values.
