@@ -206,3 +206,11 @@ Ctrl/Cmd means Ctrl on Windows/Linux and Command on macOS. Table shortcuts apply
 See [Privacy and data handling](../PRIVACY.md) for local/remote processing, clipboard and link actions, diagnostics, and saved preferences. CSV has no upload service or extension-specific analytics client. Remote workspaces can process files in the remote extension host.
 
 For development, use Node 20 and run `npm ci`, `npm test`, and `npm run lint`. `npm run package` creates the VSIX. See [the changelog](../CHANGELOG.md) for release history and [REVIEW.md](../REVIEW.md) for repository priorities.
+
+### Publishing a release
+
+Update the version in `package.json` and `package-lock.json`, add the changelog entry, and push the release commit and its bare version tag (for example, `1.5.2`). Then run **Actions → Publish release → Run workflow** on `main`, entering that tag. Leave **dry_run** enabled to build, test, and verify publishing credentials; disable it to publish the same packaged VSIX to Visual Studio Marketplace and Open VSX.
+
+The workflow checks that the tag belongs to `main` and matches the extension version. Marketplace uses trusted publishing scoped to `jonaraphael/csv`, `release.yml`, and the `marketplace` environment. Open VSX uses the environment's `OVSX_PAT` secret because ReprEng is not yet a verified namespace. The environment permits only `main`; ordinary pushes and tags do not publish automatically. Publishing tools use Node 22; extension tests continue to use Node 20.
+
+If one upload fails, rerun the failed job to reuse the retained VSIX artifact, and check both listings before retrying. A version already present is skipped. Never overwrite an existing version or move its tag. The web upload interfaces remain available for publishing the same verified VSIX manually.

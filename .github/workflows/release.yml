@@ -1,0 +1,98 @@
+name: Publish release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing release tag (for example, 1.5.2)
+        required: true
+        type: string
+      dry_run:
+        description: Build, test, and check credentials without publishing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: marketplace-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate and check out the release tag
+        shell: bash
+        run: |
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git rev-parse --verify "refs/tags/$RELEASE_VERSION^{commit}"
+          git merge-base --is-ancestor "refs/tags/$RELEASE_VERSION" HEAD
+          git checkout --detach "refs/tags/$RELEASE_VERSION"
+          node -e 'const p = require("./package.json"); if (p.version !== process.env.RELEASE_VERSION || p.publisher !== "ReprEng" || p.name !== "csv") process.exit(1);'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - name: Package once for both registries
+        run: |
+          mkdir -p dist
+          npm run package -- --out "dist/csv-$RELEASE_VERSION.vsix"
+          cd dist
+          sha256sum "csv-$RELEASE_VERSION.vsix" > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: csv-${{ inputs.version }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: marketplace
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: csv-${{ inputs.version }}
+          path: dist
+      - run: cd dist && sha256sum --check SHA256SUMS
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install publishing clients
+        run: npm install --prefix "$RUNNER_TEMP/publish-tools" --no-audit --no-fund @vscode/vsce@4.1.0 ovsx@1.3.0
+      - name: Check Marketplace trusted publishing
+        if: inputs.dry_run
+        run: |
+          node -e 'require(process.env.RUNNER_TEMP + "/publish-tools/node_modules/@vscode/vsce/out/oidc.js").getOIDCCredential("ReprEng").then(() => console.log("Marketplace trusted publishing authenticated")).catch(error => { console.error(error.message); process.exit(1); });'
+      - name: Check Open VSX credentials
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          test -n "$OVSX_PAT"
+          "$RUNNER_TEMP/publish-tools/node_modules/.bin/ovsx" verify-pat ReprEng
+      - name: Publish to Visual Studio Marketplace
+        if: ${{ !inputs.dry_run }}
+        run: '"$RUNNER_TEMP/publish-tools/node_modules/.bin/vsce" publish --oidc --packagePath "dist/csv-$RELEASE_VERSION.vsix" --skip-duplicate'
+      - name: Publish to Open VSX
+        if: ${{ !inputs.dry_run }}
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: '"$RUNNER_TEMP/publish-tools/node_modules/.bin/ovsx" publish "dist/csv-$RELEASE_VERSION.vsix" --skip-duplicate'
