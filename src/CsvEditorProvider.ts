@@ -2567,7 +2567,12 @@ class CsvEditorController {
     visibleRowIds: number[];
     filterMetadata: { session: string; filterColumnsRevision: number; filters: ColumnFilter[]; columns: FilterColumn[]; matchedRows: number; totalRows: number; maxFilters: number; revision: number; filterDraft?: FilterDraft };
   }): string {
-    const { webview, nonce, fontFamily, fontSize, cellPadding, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, headerEnabled, mouseWheelZoomEnabled, mouseWheelZoomInvert, columnSizes, frozenPanes, firstVisibleRow, realRowCount, visibleRowIds, filterMetadata } = args;
+    const { webview, nonce, separator, tableHtml, chunksJson, extraColumnColorCss, nextChunkStart, hasRemoteChunks, headerEnabled, mouseWheelZoomEnabled, mouseWheelZoomInvert, columnSizes, frozenPanes, firstVisibleRow, realRowCount, visibleRowIds, filterMetadata } = args;
+    // These come from settings, which an untrusted workspace can set to any JSON value.
+    // Sanitize them so they can't break out of the CSS or HTML they're interpolated into.
+    const fontFamily = CsvEditorController.sanitizeFontFamily(args.fontFamily);
+    const fontSize = CsvEditorController.normalizeFontSize(args.fontSize) ?? 14;
+    const cellPadding = CsvEditorController.normalizeCellPadding(args.cellPadding);
     const themeKind = vscode.window.activeColorTheme.kind;
     const isDark = themeKind === vscode.ColorThemeKind.Dark || themeKind === vscode.ColorThemeKind.HighContrast;
     const scriptUri = webview.asWebviewUri(
@@ -2618,7 +2623,7 @@ class CsvEditorController {
         --csv-menu-background: #2d2d2d;
         --csv-menu-hover-background: #3d3d3d;
       }
-      body { font-family: ${this.escapeCss(fontFamily)}; font-size: ${fontSize}px; margin: 0; padding: 0; user-select: none; }
+      body { font-family: ${fontFamily}; font-size: ${fontSize}px; margin: 0; padding: 0; user-select: none; }
       .table-container { overflow: auto; height: 100vh; }
       table { border-collapse: collapse; width: max-content; }
       th, td { padding: ${cellPadding}px 8px; border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); font-size: inherit; }
@@ -2647,7 +2652,7 @@ class CsvEditorController {
         display: none;
         align-items: stretch;
         color: #d4d4d4;
-        font-family: ${this.escapeCss(fontFamily)};
+        font-family: ${fontFamily};
         font-size: inherit;
       }
       #findReplaceWidget.open { display: flex; }
@@ -2803,7 +2808,7 @@ class CsvEditorController {
         font-size: inherit;
       }
       #findReplaceWidget .fr-overflow-item:hover { background: rgba(255,255,255,0.05); }
-      #contextMenu { position: fixed; display: none; width: max-content; box-sizing: border-box; overflow: auto; overflow-wrap: anywhere; background: var(--csv-menu-background, ${isDark ? '#2d2d2d' : '#ffffff'}); border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); z-index: 10000; font-family: ${this.escapeCss(fontFamily)}; font-size: inherit; }
+      #contextMenu { position: fixed; display: none; width: max-content; box-sizing: border-box; overflow: auto; overflow-wrap: anywhere; background: var(--csv-menu-background, ${isDark ? '#2d2d2d' : '#ffffff'}); border: 1px solid var(--csv-table-border, ${isDark ? '#555' : '#ccc'}); z-index: 10000; font-family: ${fontFamily}; font-size: inherit; }
       #contextMenu div { padding: 4px 12px; cursor: pointer; }
       #contextMenu div:hover { background: var(--csv-menu-hover-background, ${isDark ? '#3d3d3d' : '#eeeeee'}); }
 
@@ -3045,9 +3050,25 @@ class CsvEditorController {
     return ` title="${this.escapeHtml(text)}"`;
   }
 
-  private escapeCss(text: string): string {
-    // conservative; ok for font-family lists
-    return text.replace(/[\\"]/g, m => (m === '\\' ? '\\\\' : '\\"'));
+  // Font-family lists only need names, commas, spaces and quotes. Drop anything that could end
+  // the declaration or the <style> element, start a comment or at-rule, or call a CSS function
+  // such as url().
+  private static sanitizeFontFamily(value: unknown): string {
+    const cleaned = typeof value === 'string'
+      ? value.replace(/[\u0000-\u001f\u007f;{}<>\\/()@!]/g, '').trim()
+      : '';
+    return cleaned || 'monospace';
+  }
+
+  private static normalizeCellPadding(value: unknown): number {
+    const parsed =
+      typeof value === 'number' ? value
+      : typeof value === 'string' && value.trim() !== '' ? Number(value)
+      : NaN;
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return 4;
+    }
+    return Math.min(Math.round(parsed * 100) / 100, 100);
   }
 
   private isDate(value: string): boolean {
@@ -3834,6 +3855,19 @@ export class CsvEditorProvider implements vscode.CustomTextEditorProvider {
     },
     resolveEffectiveFontSize(csvFontSize: unknown, editorFontSize: unknown): number {
       return (CsvEditorController as any).resolveEffectiveFontSize(csvFontSize, editorFontSize);
+    },
+    sanitizeFontFamily(value: unknown): string {
+      return (CsvEditorController as any).sanitizeFontFamily(value);
+    },
+    normalizeCellPadding(value: unknown): number {
+      return (CsvEditorController as any).normalizeCellPadding(value);
+    },
+    wrapHtml(args: Record<string, unknown>): string {
+      const c: any = new (CsvEditorController as any)({
+        extensionPath: '/ext',
+        extensionUri: { path: '/ext', with(change: Record<string, unknown>) { return { ...this, ...change }; } }
+      } as any);
+      return c.wrapHtml(args);
     },
     hslToHex(h: number, s: number, l: number): string {
       const c: any = new (CsvEditorController as any)({} as any);

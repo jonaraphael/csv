@@ -18,6 +18,11 @@
     "Programming Languages",
     "Other"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
   "activationEvents": [
     "onStartupFinished",
     "onLanguage:csv",

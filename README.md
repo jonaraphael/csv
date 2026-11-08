@@ -62,6 +62,8 @@ Working from scratch? Create an untitled document and choose CSV or TSV as its l
 
 CSV supports VS Code 1.70+. Switching saved files between table and text requires 1.100+, or 1.120+ when there are unsaved changes. [Editing and compatibility details](docs/user-guide.md#open-and-edit-a-file).
 
+CSV also works in [Restricted Mode](https://code.visualstudio.com/docs/editing/workspaces/workspace-trust) (untrusted workspaces). It never runs code from the workspace, and settings that reach the table view are sanitized, so a workspace's `.vscode/settings.json` can't inject content into it.
+
 ## Your files stay in your workspace
 
 CSV requires no account or upload service and has no extension-specific analytics client. Processing runs in your VS Code environment, including the remote extension host when you use a remote workspace. [Privacy and data handling](PRIVACY.md).
