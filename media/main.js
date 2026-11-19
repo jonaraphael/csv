@@ -1,7 +1,18 @@
 // Webview script moved out of inline <script>. Kept logic changes minimal.
 
 document.body.setAttribute('tabindex', '0');
-try { document.body.focus({ preventScroll: true }); } catch { try { document.body.focus(); } catch {} }
+// Explorer previews open with preserveFocus, so the Explorer must keep keyboard
+// focus (F2, Delete, arrows). Only move focus inside the table once VS Code has
+// focused this webview's frame; programmatic focus would otherwise steal it.
+const frameHasFocus = () => { try { return document.hasFocus(); } catch { return false; } };
+let webviewFocused = frameHasFocus();
+window.addEventListener('focus', () => { webviewFocused = true; }, { passive: true });
+window.addEventListener('blur', () => { webviewFocused = false; }, { passive: true });
+const focusWithinWebview = target => {
+  if (!target || !(webviewFocused || frameHasFocus())) return;
+  try { target.focus({ preventScroll: true }); } catch { try { target.focus(); } catch {} }
+};
+focusWithinWebview(document.body);
 
 const vscode = acquireVsCodeApi();
 
@@ -312,7 +323,7 @@ const restoreState = () => {
         sel.classList.add('selected');
         currentSelection.push(sel);
         anchorCell = sel; rangeEndCell = sel;
-        try { sel.focus({ preventScroll: true }); } catch { try { sel.focus(); } catch {} }
+        focusWithinWebview(sel);
       }
     }
     // Re-apply scroll after any late chunk loads from selection restoration
@@ -431,8 +442,14 @@ if (scrollContainer) {
 
 // Persist on blur/visibility change and restore on focus/visibility
 const restoreRecreatedView = () => {
+  if (editingCell) return;
   // A live DOM already owns its range and caret; a snapshot only has its anchor.
-  if (anchorCell?.isConnected || editingCell) return;
+  if (anchorCell?.isConnected) {
+    // Focus deferred while the Explorer kept it lands on the selection now.
+    const active = document.activeElement;
+    if (!active || active === document.body || active === document.documentElement) { focusWithinWebview(anchorCell); }
+    return;
+  }
   try { restoreState(); } catch {}
 };
 window.addEventListener('blur', () => { persistState(); }, { passive: true });
@@ -2331,11 +2348,9 @@ window.addEventListener('message', event => {
     if (message.retry && cell && !editingCell) { editCell(cell, undefined, 'detail'); }
   } else if(message.type === 'focus'){
     if (document.activeElement?.closest?.('#filterStatus')) return;
-    if (anchorCell) {
-      try { anchorCell.focus({ preventScroll: true }); } catch { try { anchorCell.focus(); } catch {} }
-    } else {
-      try { document.body.focus({ preventScroll: true }); } catch { try { document.body.focus(); } catch {} }
-    }
+    // The panel also becomes active for preserveFocus opens (Explorer preview);
+    // the window focus listener restores the selection once the frame is focused.
+    focusWithinWebview(anchorCell || document.body);
   } else if (message.type === 'chunkData') {
     const requestId = Number(message.requestId);
     const start = Number(message.start);

@@ -198,6 +198,8 @@ class CsvEditorController {
       console.warn('CSV: Encoding warning action failed', error);
     });
 
+    // A hint only: the webview moves focus to its selection solely when VS Code
+    // has focused its frame, so preserveFocus opens (Explorer preview) keep focus.
     webviewPanel.webview.postMessage({ type: 'focus' });
     let wasVisible = webviewPanel.visible;
     webviewPanel.onDidChangeViewState(e => {
