@@ -46,6 +46,14 @@ describe('CsvEditorProvider utility methods', () => {
     assert.ok(html.includes('>www.google.com</span>,'));
   });
 
+  it('formatCellContent linkifies file:/// URLs when enabled', () => {
+    const format = CsvEditorProvider.__test.formatCellContent;
+    const html = format('Open file:///tmp/example.csv and continue.', true);
+    assert.ok(html.includes('class="csv-link"'));
+    assert.ok(html.includes('data-href="file:///tmp/example.csv"'));
+    assert.ok(html.includes('>file:///tmp/example.csv</span>'));
+  });
+
   it('formatCellContent leaves URLs as plain text when linkify is disabled', () => {
     const format = CsvEditorProvider.__test.formatCellContent;
     const html = format('https://example.com?a=1&b=2', false);
@@ -66,9 +74,9 @@ describe('CsvEditorProvider utility methods', () => {
     assert.strictEqual(allowed('http://example.com'), true);
     assert.strictEqual(allowed('ftp://example.com/file.txt'), true);
     assert.strictEqual(allowed('mailto:user@example.com'), true);
+    assert.strictEqual(allowed('file:///tmp/x.csv'), true);
     assert.strictEqual(allowed('javascript:alert(1)'), false);
     assert.strictEqual(allowed('data:text/plain,hello'), false);
-    assert.strictEqual(allowed('file:///tmp/x.csv'), false);
     assert.strictEqual(allowed(''), false);
   });
 
